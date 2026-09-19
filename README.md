@@ -4,6 +4,10 @@ Nix flake configuration for my machines. One repo, one lockfile, one commit per
 change — every host here shares `modules/`, so a change to a shared module and
 all the hosts that consume it lands atomically.
 
+Migration in progress: this config was extracted from `commons.systems` and the
+machines have not all been switched onto it yet. See [TODO.md](TODO.md) for the
+remaining steps and the QA checklist.
+
 ## Hosts
 
 | Attribute | Machine | Rebuild |
@@ -34,25 +38,76 @@ A `pkgs.stdenv.isLinux` guard is for behavior that genuinely differs by
 *platform*; it is not a substitute for host scoping, because a future native
 NixOS box is also Linux and would wrongly pick up WSL-only modules.
 
-## Everyday commands
+## Applying updates
+
+Same loop on every machine: **check, preview, apply.** Only the rebuild command
+differs. Run it from a clone of this repo on the machine being updated — a host
+can only build and activate itself.
 
 ```sh
-# check before switching — runs the module tests
-nix flake check
+cd ~/natb1/nix-config
+git pull
+nix flake check          # module tests; do this before any switch
+```
 
-# build without activating, then inspect what would change
+### WSL (`wsl`)
+
+```sh
+# preview: build without activating, then see exactly what would change
 nixos-rebuild build --flake .#wsl
 nix store diff-closures /run/current-system ./result
 
 # apply
 sudo nixos-rebuild switch --flake .#wsl
 
-# roll back
+# undo the last switch
 sudo nixos-rebuild switch --rollback
 
-# bump all inputs (review the closure diff before switching)
-nix flake update
+# what generations exist
+nixos-rebuild list-generations
 ```
+
+`nixos-rebuild` defaults to `nixosConfigurations.$(hostname)`, and this host *is*
+named `wsl`, so once switched the `#wsl` suffix is optional — `sudo
+nixos-rebuild switch --flake .` resolves to the same thing.
+
+### macOS (`mba`)
+
+```sh
+# preview
+darwin-rebuild build --flake .#mba
+nix store diff-closures /run/current-system ./result
+
+# apply — activation must run as root on this nix-darwin version
+sudo darwin-rebuild switch --flake .#mba
+
+# undo the last switch
+sudo darwin-rebuild --rollback
+
+# what generations exist
+darwin-rebuild --list-generations
+```
+
+The `#mba` suffix is **not** optional here: `darwin-rebuild` also defaults to the
+hostname, and the MacBook's hostname is not `mba`.
+
+### A future native NixOS host
+
+Add `hosts/<name>/` (with the `nixos-generate-config`-produced
+`hardware-configuration.nix`) plus a `nixosConfigurations.<name>` block in
+`flake.nix` importing `./modules/nixos`, then use the WSL commands with the new
+attribute.
+
+### Updating inputs
+
+```sh
+nix flake update                    # all inputs
+nix flake update nixpkgs            # just one
+```
+
+`flake.lock` is shared by every host, so a bump moves all of them at once.
+Review the closure diff on one machine before switching the rest, and commit the
+lockfile in its own commit so a regression is attributable.
 
 ## State this repo does not manage
 
