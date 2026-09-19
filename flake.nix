@@ -59,14 +59,24 @@
         # in the NixOS/nix-darwin module, not in standalone home-manager.
         home-manager.backupFileExtension = "backup";
 
-        home-manager.users.n8 = {
+        # lib.mkForce is load-bearing, not redundant. home-manager's own
+        # nixos/common.nix derives home.homeDirectory from
+        # config.users.users.n8.home at priority 100. On darwin, hosts/mba
+        # defines no users.users.n8, so that derivation yields null and eval
+        # fails with "not of type `absolute path'". mkForce (priority 50) makes
+        # the value here win. Do not drop it.
+        home-manager.users.n8 = { lib, ... }: {
           imports = [ ./modules/home ] ++ extraModules;
-          home.username = "n8";
-          home.homeDirectory = homeDirectory;
+          home.username = lib.mkForce "n8";
+          home.homeDirectory = lib.mkForce homeDirectory;
         };
       };
 
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      # The platforms this repo actually targets: the WSL box and a future native
+      # NixOS machine (x86_64-linux), and the Apple Silicon Mac (aarch64-darwin).
+      # x86_64-darwin is deliberately absent — nixpkgs 26.11 dropped support for
+      # it, so listing it breaks `nix flake check --all-systems`.
+      systems = [ "x86_64-linux" "aarch64-darwin" ];
       forAllSystems = fn: nixpkgs.lib.genAttrs systems (system: fn {
         pkgs = nixpkgs.legacyPackages.${system};
         inherit system;
