@@ -25,6 +25,7 @@ The expected closure diff, for comparison — anything beyond this is unexpected
 and worth stopping for:
 
 ```
+claude-daemon.service                       ∅ → ε
 dispatch-claude-daemon.service              ε → ∅
 hm_environment.ddispatchusagesamples.conf   ε → ∅
 office-hours-producer                       ε → ∅
@@ -32,6 +33,25 @@ unit-office-hours-producer.service/.timer   ε → ∅
 nixos-system-nixos → nixos-system-wsl
 + ~128 MB of nodejs/icu4c/simdjson/…        ε → ∅   (office-hours' closure)
 ```
+
+The first two lines are one unit being renamed. The unit's bytes are identical
+apart from its `Description=`; `ExecStart`, the PATH anchors, `Restart` and the
+`StartLimit*` settings all carry over verbatim.
+
+**Run this from a plain interactive shell, not from a background Claude
+session.** The daemon unit sets no `KillMode`, so it defaults to control-group
+and every background session lives in the daemon's cgroup. Activation stops the
+old `dispatch-claude-daemon` unit, which SIGKILLs that whole cgroup — including
+the shell, if you launched the switch from inside it. Check before switching:
+
+```sh
+cat /proc/self/cgroup      # must NOT name dispatch-claude-daemon.service
+```
+
+The activation itself runs in `home-manager-n8.service`, a separate cgroup, so
+the switch completes either way; it is your shell that dies. Any in-flight
+background session is lost regardless — that is inherent to the restart, and the
+new `claude-daemon` unit comes up empty.
 
 Rollback if anything below fails: `sudo nixos-rebuild switch --rollback`.
 
@@ -87,6 +107,9 @@ Nix proves the closure is right; it cannot prove any of this. Work down the list
 **Confirm the intended removals actually happened**
 
 - [ ] `systemctl --user status dispatch-claude-daemon` → no such unit
+- [ ] `systemctl --user status claude-daemon` → **active**; it is the same unit
+      under a neutral name, so background Claude sessions still work
+- [ ] Start a background session and confirm it survives closing its terminal
 - [ ] `systemctl list-timers | grep office-hours` → empty
 
 ---
@@ -245,8 +268,6 @@ Not regressions; you asked for these to go. Listed so the loss is explicit and
 recoverable from `commons.systems` `main` history if any of it turns out to
 matter.
 
-- **`dispatch-claude-daemon`** systemd user service — the durable Claude
-  background supervisor. Every background dispatch worker lived in its cgroup.
 - **`dispatch` / `office-hours` packages** — `nix/packages/`. The `dispatch`
   wrapper exec'd `.claude/skills/dispatch-propagate/scripts/dispatch-tick` out of
   the repo checkout, so it only ever worked from inside `commons.systems`.
@@ -261,7 +282,12 @@ matter.
   toolchain and `core.hooksPath` claim for developing `commons.systems` itself.
   They belong with that repo, not with a machine's configuration. If you want a
   dev shell for `commons.systems`, it needs one in its own flake.
-- **`nix/home/claude-code.test.nix`** — all four of its tests asserted the
-  dispatch daemon unit's invariants, so it went with the daemon.
+
+**Kept after all, renamed:** the `dispatch-claude-daemon` unit was named and
+justified by dispatch, but what it ran was `claude daemon run` — generic Claude
+Code background supervision, not dispatch-specific. It lives on as
+`modules/home/claude-daemon.nix` (unit `claude-daemon`), de-dispatched, and the
+four tests from the old `nix/home/claude-code.test.nix` came with it as
+`tests/claude-daemon.test.nix`.
 - **`nix/home/wezterm.lua`** — a standalone lua file referenced by nothing
   anywhere on `main`; the real config is generated from `extraConfig`.

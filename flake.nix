@@ -126,9 +126,16 @@
 
       # Module regression tests. `nix flake check` is the gate before a switch.
       checks = forAllSystems ({ pkgs, ... }:
-        let weztermTests = pkgs.callPackage ./tests/wezterm.test.nix { };
-        in { wezterm-test-suite = weztermTests.wezterm-test-suite; }
-           // weztermTests.wezterm-tests
+        let
+          weztermTests = pkgs.callPackage ./tests/wezterm.test.nix { };
+          claudeDaemonTests = pkgs.callPackage ./tests/claude-daemon.test.nix { };
+        in
+        {
+          wezterm-test-suite = weztermTests.wezterm-test-suite;
+          claude-daemon-test-suite = claudeDaemonTests.claude-daemon-test-suite;
+        }
+        // weztermTests.wezterm-tests
+        // claudeDaemonTests.claude-daemon-tests
       );
     };
 }
