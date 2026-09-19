@@ -55,19 +55,18 @@
 
   # Whether home-manager activation installs the Windows GUI (wezterm-windows.nix).
   #
-  # WORKAROUND, not a design choice. While false, `nixosConfigurations.nixos`
+  # WORKAROUND, not a design choice. While false, `nixosConfigurations.wsl`
   # carries no fixed-output derivation over the rolling `nightly` URL, so the
   # build no longer fails whenever upstream has published since the last pin
   # refresh — which, for a nightly, is most days. Nothing is uninstalled: the
   # activation script is dropped from the generation, so a Windows GUI already
   # in %LOCALAPPDATA% is left exactly as it is.
   #
-  # The real fix is parked in office-hours on
-  # intentions/tactic-nix-wezterm-pin-nightly-drift.md, awaiting an author
-  # decision between pinning the last immutable stable release, fetching at
-  # activation time, and mirroring the asset to an owned never-overwritten
-  # location (intentions/tactic-wezterm-owned-asset-mirror.md). This flag picks
-  # none of those.
+  # A real fix means choosing one of: pinning the last immutable stable release
+  # instead of a nightly, fetching the zip at activation time rather than as a
+  # fixed-output derivation, or mirroring the asset to a location we own that is
+  # never overwritten. This flag picks none of those — it just stops the rolling
+  # URL from breaking the build.
   #
   # It goes back to true either when one of those lands, or when
   # sync-wezterm.sh regenerates this file — a successful sync leaves the pin
