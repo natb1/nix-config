@@ -4,6 +4,10 @@ Written 2026-09-19, at the point where the repo exists and is verified to build
 but **nothing has been switched**. The WSL box is still running generation 49,
 built from `commons.systems` `main`.
 
+> **Update 2026-09-19:** the Mac (`darwinConfigurations.mba`) has now been built
+> and switched — see §4, which is done. The WSL box (§1) is still on generation
+> 49 and remains the outstanding switch.
+
 What is already done: the extraction, the `nixos` → `wsl` rename, the dispatch
 removal, and a closure diff proving the built `wsl` host differs from the running
 generation only by the intended changes. `nix flake check` passes (15 checks) and
@@ -170,20 +174,41 @@ Only after the QA above passes.
 darwin derivations cannot be built from Linux, so only its *evaluation* is
 verified. Everything below has to happen on the MacBook.
 
-- [ ] `git clone https://github.com/natb1/nix-config ~/natb1/nix-config`
-- [ ] `nix flake check` — this will run the `aarch64-darwin` checks that were
-      skipped on the WSL box
-- [ ] `darwin-rebuild build --flake .#mba`, then
-      `nix store diff-closures /run/current-system ./result`. **Read this diff
-      carefully** — unlike the WSL host, there is no verified baseline. Expect
-      the git identity and ssh-authorized-keys to move from the old flake's host
-      block into the shared module, and nothing else structural.
-- [ ] `sudo darwin-rebuild switch --flake .#mba`
-- [ ] QA: `programs.wezterm` stays disabled (macOS uses the GUI installed outside
-      Nix — `lib.mkForce false` in `flake.nix`); `git config user.email`;
-      `authorized_keys`; `claude --version`; `go version` resolves to the Nix
-      copy, and `brew uninstall go` if Homebrew's is still shadowing it
-- [ ] Tailscale still reaches the WSL box at its **new** name
+- [x] `git clone …` — repo was already present at `~/natb1/nix-config`.
+- [x] `nix flake check` — passed, including the `aarch64-darwin` checks.
+- [x] `darwin-rebuild build --flake .#mba` + `nix store diff-closures`. The diff
+      was much larger than "nothing structural" because the new flake tracks a
+      newer nixpkgs (26.05 → 26.11): most of it is version bumps. On top of that,
+      the predicted host→shared-module move (git identity, authorized_keys) and
+      deliberate package changes (adds `go`, `google-cloud-sdk`, `gh`, `ripgrep`;
+      drops `vim`, `nodejs`, `ruby`, `tmux`). Reviewed, nothing accidental.
+- [x] `sudo darwin-rebuild switch --flake .#mba` — applied.
+- [x] QA: `git config user.email` = nathan@natb1.com; `authorized_keys` present
+      (`n8@nixos`, `n8@Nathans-MacBook-Air.local`); `claude --version` 2.1.258;
+      `go version` go1.26.7 resolves to the Nix copy (no Homebrew shadow, so no
+      `brew uninstall go` needed).
+- [x] Tailscale reaches the WSL box (`nixos`, active direct connection).
+
+**WezTerm decision (reverses the original plan above).** The original intent
+here was `programs.wezterm.enable = lib.mkForce false` on macOS, on the premise
+the GUI is "installed outside Nix." That premise was false on this machine — the
+GUI came *from* Nix under commons.systems, and no external install existed, so
+disabling the module left the Mac with **no wezterm GUI and no config** (the
+`~/.config/wezterm/wezterm.lua` the GUI reads was gone). Since the Mac needs to
+be a `wezterm connect` client to the WSL mux server, and the mux protocol
+requires client and server to be the **same** wezterm version, the fix was to
+let `modules/home/wezterm.nix` install its default **pinned** build
+(`wezterm-package.nix`, currently `20260716-195552-76b606ec`) on macOS too. The
+darwin override block in `flake.nix` is now gone; the module's Linux-only mux
+service / Windows-copy activation stay inert on darwin via `stdenv.isLinux`.
+Verified post-switch: `wezterm --version` = `0-unstable-20260716-195552-76b606ec`
+and `~/Applications/Home Manager Apps/WezTerm.app` → the pinned store path.
+
+- [ ] **Version-lockstep with WSL.** The Mac client is now on `20260716` but the
+      WSL box still runs the old generation, so its mux server is an older
+      wezterm — `wezterm connect nixos` may fail the handshake
+      (`unexpected response … UnitResponse`) until §1 is applied. Switching WSL
+      onto this flake puts both sides on `20260716` and resolves it.
 
 Note the `lib.mkForce` on `home.username` / `home.homeDirectory` in `flake.nix`
 is load-bearing on darwin specifically — it is commented there. Do not "simplify"
