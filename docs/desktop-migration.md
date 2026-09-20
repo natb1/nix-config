@@ -558,9 +558,9 @@ before committing — that module has churned, and the flake tracks
 
 #### Three Hetzner specifics that are otherwise an evening
 
-1. **SSH is on port 23, not 22.** Port 23 is a restricted shell that whitelists
-   `rsync`, `restic`, `sftp` and `rclone`. Port 22 exists but is a different,
-   more limited thing.
+1. **SSH is on port 23, not 22.** Port 22 gives SFTP/SCP and no shell at all;
+   port 23 is a restricted shell whitelisting `rsync`, `restic`, `rclone` and a
+   few others. The backup tooling below needs 23.
 2. **Key format differs by port.** Port 22 wants RFC4716
    (`---- BEGIN SSH2 PUBLIC KEY ----`); port 23 wants an ordinary one-line
    OpenSSH key. Use port 23 and a normal `ssh-ed25519 AAAA…` line.
@@ -595,6 +595,11 @@ available here, and it is free.
 The cost: pruning needs a second, unrestricted key that does not live on `desk`.
 Keep it offline and run retention deliberately, a few times a year. That is the
 correct trade — automatic pruning is also automatic deletion.
+
+Which means **adopting append-only also means dropping `pruneOpts` from the unit
+above.** Leave it in and every run fails at the forget step. Retention becomes a
+manual job run from elsewhere with the unrestricted key; decide that consciously
+rather than discovering it from a red timer.
 
 #### Prove it works
 
