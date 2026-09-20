@@ -10,18 +10,29 @@ remaining steps and the QA checklist.
 
 ## Hosts
 
-Run these from a clone of this repo (`cd ~/natb1/nix-config && git pull`) **on
-the machine being updated** — a host can only build and activate itself.
-Activation needs root on both platforms.
+Run the update from a clone of this repo **on the machine being updated** — a
+host can only build and activate itself. Activation needs root on both
+platforms, and `flake.lock` is shared, so an update moves every host at once.
 
-| Host | Machine | Apply this config | Update inputs, then apply |
-| --- | --- | --- | --- |
-| `wsl` | NixOS-WSL on the Windows desktop | `sudo nixos-rebuild switch --flake .#wsl` | `nix flake update && sudo nixos-rebuild switch --flake .#wsl` |
-| `mba` | Apple Silicon MacBook Air | `sudo darwin-rebuild switch --flake .#mba` | `nix flake update && sudo darwin-rebuild switch --flake .#mba` |
+### `wsl` — NixOS-WSL on the Windows desktop
+
+```sh
+cd ~/natb1/nix-config && git pull
+nix flake update
+sudo nixos-rebuild switch --flake .#wsl
+```
+
+### `mba` — Apple Silicon MacBook Air
+
+```sh
+cd ~/natb1/nix-config && git pull
+nix flake update
+sudo darwin-rebuild switch --flake .#mba
+```
 
 Home-manager is integrated as a NixOS / nix-darwin module, so one rebuild does
 both system and user config. There is no standalone `home-manager switch`
-entry point.
+entry point. Drop `nix flake update` to apply the config as locked.
 
 ## Layout
 
@@ -67,10 +78,9 @@ Both tools default to `<configurations>.$(hostname)`. The WSL host *is* named
 `wsl`, so there the `#wsl` suffix is optional; the MacBook's hostname is not
 `mba`, so there it is required.
 
-`flake.lock` is shared by every host, so `nix flake update` moves all of them at
-once — review the closure diff on one machine before switching the rest, and
-commit the lockfile in its own commit so a regression is attributable. To bump a
-single input instead: `nix flake update nixpkgs`.
+Review the closure diff on one machine before switching the rest, and commit
+`flake.lock` in its own commit so a regression is attributable. To bump a single
+input instead: `nix flake update nixpkgs`.
 
 ### A future native NixOS host
 
