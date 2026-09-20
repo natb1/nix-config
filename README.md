@@ -29,6 +29,7 @@ modules/darwin/    shared by every macOS host
 modules/home/      shared by every host, every platform
 tests/             module regression tests, exposed as flake checks
 scripts/           maintenance scripts (wezterm pin refresh)
+docs/              migration plans and design notes
 ```
 
 **Host vs. platform.** A module lives in `modules/` only if it evaluates
@@ -97,6 +98,12 @@ Add `hosts/<name>/` (with the `nixos-generate-config`-produced
 `hardware-configuration.nix`) plus a `nixosConfigurations.<name>` block in
 `flake.nix` importing `./modules/nixos`, then use the WSL commands with the new
 attribute.
+
+The concrete case — replacing the WSL box with native NixOS running Windows as a
+GPU-passthrough guest — is planned in
+[docs/desktop-migration.md](docs/desktop-migration.md). That plan supersedes this
+paragraph once it starts; it also retires several WSL-only modules, so read it
+before extending anything under `hosts/wsl/`.
 
 ### Updating inputs
 

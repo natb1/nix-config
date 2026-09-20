@@ -9,6 +9,12 @@ removal, and a closure diff proving the built `wsl` host differs from the runnin
 generation only by the intended changes. `nix flake check` passes (15 checks) and
 `darwinConfigurations.mba` evaluates.
 
+Scope note: this file is only about getting off `commons.systems`. Replacing the
+WSL box with native NixOS plus a Windows VM is a separate, later migration —
+[docs/desktop-migration.md](docs/desktop-migration.md). **Finish §1–§3 here
+first.** Switching the WSL host onto this repo is cheap and reversible; wiping
+the machine is not.
+
 ---
 
 ## 1. Apply the WSL switch
