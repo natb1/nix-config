@@ -8,6 +8,10 @@ Migration in progress: this config was extracted from `commons.systems` and the
 machines have not all been switched onto it yet. See [TODO.md](TODO.md) for the
 remaining steps and the QA checklist.
 
+Also planned, not yet started: replacing WezTerm on the WSL box with Zellij,
+reachable from the MacBook's Terminal and from a browser. See
+[MIGRATION-zellij.md](MIGRATION-zellij.md).
+
 ## Hosts
 
 | Attribute | Machine | Rebuild |
