@@ -44,10 +44,11 @@ Three consequences worth stating up front:
 - Ryzen core/CCD layout, for pinning.
 - Model, capacity and SMART wear level of **each of the two SSDs**. *That* there
   are two — one chosen for speed, one for bulk — is settled; what they are is
-  not. This also closes the old "is there a second NVMe for the game library"
-  question in the negative: the bulk drive is spoken for as the media volume
-  ([Media storage](#media-storage)), so it is not a passthrough candidate and
-  the Steam library lives on the fast drive.
+  not, and the numbers decide where the Steam library lives (§1). Record
+  specifically: free space on the fast drive after root and `win-os.qcow2`, and
+  whether the bulk drive is genuinely slower (QLC, SATA, Gen3) or merely
+  larger. "Bulk" meaning *bigger* and "bulk" meaning *slower* lead to different
+  answers.
 
 ---
 
@@ -307,21 +308,29 @@ users.users.n8.extraGroups = [ "libvirtd" "kvm" "input" ];
       };
     };
 
-    # The bulk SSD. Not part of the OS install — it survives a reinstall of the
-    # host the same way the Steam library survives a rebuild of the guest.
+    # The bulk SSD: the guest's game library and the host's media volume,
+    # side by side on one disk with separate filesystems.
     bulk = {
       device = "/dev/disk/by-id/nvme-<FILL_ME_BULK>";
       type = "disk";
       content = {
         type = "gpt";
-        partitions.media = {
-          size = "100%";
-          content = {
-            type = "btrfs";
-            extraArgs = [ "-L" "media" ];
-            subvolumes."/media" = {
-              mountpoint = "/srv/media";
-              mountOptions = [ "noatime" ];
+        partitions = {
+          # Raw block device handed to the Windows guest. Deliberately no
+          # `content`: disko creates the partition and stops there, the guest
+          # formats it NTFS once, and the host never mounts it. Drop this
+          # partition entirely if Phase 0 puts the library on the fast drive.
+          games.size = "<FILL_ME>G";
+
+          media = {
+            size = "100%";
+            content = {
+              type = "btrfs";
+              extraArgs = [ "-L" "media" ];
+              subvolumes."/media" = {
+                mountpoint = "/srv/media";
+                mountOptions = [ "noatime" ];
+              };
             };
           };
         };
@@ -342,6 +351,14 @@ delete you want undone in seconds rather than restored from Hetzner.
 No compression — the payload is already-compressed video, so btrfs would decline
 the extents anyway and the CPU is better spent elsewhere.
 
+**Once this drive holds media, `disko --mode disko` is a destructive command.**
+It is only meant to run at install, but it is sitting right there in Phase 2's
+copy-pasteable block and it wipes every disk it manages. Post-install, the only
+disko mode that should ever touch this machine is `--mode mount`. The Hetzner
+backup is what makes that a bad afternoon rather than a permanent loss, which is
+the clearest argument for doing Step 2 early rather than "once there's something
+worth backing up".
+
 **Split the Windows storage in two.** This is the design decision that makes the
 "rebuildable image" choice survivable:
 
@@ -350,16 +367,35 @@ the extents anyway and the CPU is better spent elsewhere.
 - a separate large volume mounted as the Steam library. **Persistent.** Never
   touched by a rebuild.
 
-  A raw file or LVM volume **on the fast SSD** — not the bulk drive. Passing a
-  whole disk through to the guest was the obvious third option and is now
-  ruled out: the bulk SSD is the media volume, the host serves it over SMB
-  ([Media storage](#media-storage)), and a disk the host has mounted cannot be
-  handed to the VM. Games want the fast drive regardless.
-
 Steam re-adopts an existing library folder after a Windows reinstall — it
 validates and moves on. Without this split, "rebuild the image" means
 re-downloading the entire library and nobody does that twice, which is how
 declarative setups quietly become pets.
+
+#### Where the library volume lives
+
+Four ways to give the guest that volume. Only the last is actually ruled out:
+
+| Option | Mechanism | Trade |
+| --- | --- | --- |
+| Raw file on the **fast** SSD | `<disk type='file'>` on ext4 root | Lowest latency. Spends fast-drive capacity that root and `win-os.qcow2` also want |
+| **Its own partition on the bulk SSD** | `<disk type='block' dev='/dev/disk/by-id/…-part1'>` | Near-native block performance, no CoW overhead, capacity where the capacity is. Host never mounts it |
+| Raw file on the bulk SSD's btrfs | `<disk type='file'>` under `/srv` | Most flexible sizing, but needs `chattr +C` on the directory first or CoW fragmentation will hurt — and that disables checksums for the file |
+| **Whole bulk NVMe via VFIO** | `vfio-pci` binds the device | **Ruled out.** VFIO takes the device away from the host, so the media volume and `/srv/media` go with it |
+
+Only whole-device passthrough conflicts with serving media from that drive.
+Everything else coexists fine: the host owns the disk, and the guest gets a
+partition or a file on it.
+
+**Default to the second row** unless Phase 0 says the bulk drive is meaningfully
+slower rather than merely bigger. It gets near-native speed without spending
+fast-drive capacity, and it keeps the two workloads on separate filesystems — a
+guest that trashes its own NTFS cannot reach `/srv/media`, which matters because
+one of those two is backed up and the other is deliberately disposable.
+
+What you do give up by sharing the spindle: endurance and bandwidth. A Steam
+download saturating the bulk SSD will slow an SMB read from it. Tolerable on a
+single-user desktop; worth knowing before you diagnose it as a network problem.
 
 ---
 
@@ -456,8 +492,12 @@ what the rest of this section rests on:
 
 | Drive | Chosen for | Holds |
 | --- | --- | --- |
-| **fast** | latency | `/`, `win-os.qcow2`, the Steam library |
-| **bulk** | capacity | `/srv/media` — the library, shared and backed up |
+| **fast** | latency | `/` and `win-os.qcow2` |
+| **bulk** | capacity | `/srv/media` (host-mounted, shared, backed up) and, by default, the guest's raw Steam library partition — [§1](#disk-layout) picks between them |
+
+The two live on one disk but never share a filesystem: the host mounts the media
+partition and never touches the games one, the guest gets the games partition as
+a raw block device and cannot see the media one.
 
 Two steps, in this order. The share is useful on day one; the backup is what
 makes the share safe to depend on.
@@ -572,7 +612,9 @@ media → Hetzner, because the failure modes it adds coverage for (theft,
 ransomware, an `rm -rf` nobody notices for a year) are each more likely than the
 SSD death that prompted this.
 
-**Start with Hetzner**, sized to the bulk drive's actual capacity from Phase 0.
+**Start with Hetzner**, sized to the **media partition** rather than the whole
+bulk drive — the games partition is disposable by design and the host does not
+even mount it, so nothing on it can be swept into a backup.
 Adding a local HDD later as a fast-restore tier is additive — same restic
 invocation, second repository — not a migration.
 
@@ -1153,11 +1195,15 @@ Only after Phase 8 passes.
    [Media storage](#media-storage) are the minimum; the restore drill is what
    actually proves it. Rank this above the VM risks — a broken passthrough is
    an inconvenience, a backup that was never working is data loss.
-6. **Samba serving an empty share.** If the bulk SSD does not mount, an
+6. **A stray `disko --mode disko` wipes the media volume.** The bulk drive is
+   under disko's management, and disko's destroy mode does not ask. Treat the
+   Phase 2 command block as install-only; everything afterwards is
+   `nixos-rebuild`. This risk is the reason the backup is not optional.
+7. **Samba serving an empty share.** If the bulk SSD does not mount, an
    unguarded smbd exports `/srv/media` on the root filesystem and clients write
    into it. The `requires=srv-media.mount` binding prevents it; verify by
    booting once with the drive pulled.
-7. **`nix flake check` coverage drops.** Deleting the wezterm Windows tests
+8. **`nix flake check` coverage drops.** Deleting the wezterm Windows tests
    removes 15 checks' worth of real assertions. Whatever replaces them — image
    build smoke test, domain XML eval test — should land in the same PR as the
    deletion, or it never lands.
