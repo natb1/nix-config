@@ -117,9 +117,63 @@ Also in Phase 0, before anything is wiped:
       tier; its wear level is the first honest input to "when does this die"
 - [ ] Inventory the game library: which titles, and what ProtonDB says about each
 - [ ] Inventory what is on `C:\` that matters and is not in Drive or git
-- [ ] Note the Windows product key (`wmic path SoftwareLicensingService get OA3xOriginalProductKey`
-      from the current Windows install) — a digital-entitlement key tied to this
-      board may reactivate in the VM, but do not count on it
+- [ ] Settle the licensing question below — it decides whether the guest can be
+      activated at all, and one of its steps must happen *before* the wipe
+
+### Windows licensing — resolve this before wiping
+
+Whether the existing license can move into the VM depends entirely on its
+**channel**, and the answer is genuinely different for the two cases. Check from
+the current Windows install:
+
+```powershell
+# Channel: look for RETAIL vs OEM_DM / OEM_COA_* in the Description field
+Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL" |
+  Select-Object Name, Description, LicenseStatus
+
+# The OEM key embedded in this board's firmware, if there is one.
+# (`wmic` is removed by default on Windows 11 24H2+ — use the CIM call.)
+(Get-CimInstance -ClassName SoftwareLicensingService).OA3xOriginalProductKey
+```
+
+The same firmware key is readable from Linux, which is handy once NixOS is
+installed:
+
+```sh
+strings /sys/firmware/acpi/tables/MSDM | grep -Eo '[A-Z0-9]{5}(-[A-Z0-9]{5}){4}'
+```
+
+**If the channel is RETAIL** — the license terms cover this directly. The "Use
+with Virtualization Technologies" clause reads: *"Instead of using the software
+directly on the licensed device, you may install and use the software within
+only one virtual (or otherwise emulated) hardware system on the licensed
+device."* That is precisely this migration: same physical machine, Windows moves
+off the metal and into one VM, never both at once. Enter the key during the
+unattended install and it activates.
+
+**If the channel is OEM** (`OEM_DM` — preinstalled by the vendor, key in the
+MSDM table) — Microsoft's stated position is that OEM keys are for physical
+instances only and carry no virtualization rights. The VM presents a different
+hardware hash, so it will not auto-activate. It *can* be made to activate by
+passing the host's own MSDM ACPI table and SMBIOS strings through to the guest
+(`-acpitable file=/sys/firmware/acpi/tables/MSDM` plus libvirt `<sysinfo>`),
+a well-documented technique — but note what that does and does not do: it makes
+the guest activate, it does not change the license terms. Decide that knowingly.
+
+**Either way, an unactivated Windows 11 guest is a viable place to start.** It
+runs indefinitely: a desktop watermark, Personalization settings locked, an
+occasional nag. **No impact on games, performance, or driver support.** So the
+whole stack — passthrough, the image build, the perf hook — can be validated
+before spending anything on a license. Build first, license once it works.
+
+- [ ] **Before the wipe:** link the current license to your Microsoft account
+      (Settings → System → Activation, or Accounts → Your info). A retail license
+      linked to an account re-activates through the Activation Troubleshooter
+      after a hardware change; an unlinked one means a phone-activation call.
+      This step is unrecoverable once Windows is gone.
+- [ ] Record the channel and the key somewhere that survives the wipe
+- [ ] If buying a fresh retail Windows 11 Pro key, budget for it now — it is the
+      one line item in this migration that costs money
 
 ---
 
@@ -956,7 +1010,8 @@ in the file's header comment so the next reader does not "fix" it.
 
 ### Secrets
 
-The product key and any credentials in the answer file must not land in git.
+The product key (see [Phase 0's licensing section](#windows-licensing--resolve-this-before-wiping))
+and any credentials in the answer file must not land in git.
 Either keep them in a `requireFile`'d fragment alongside the ISO, or bring in
 `sops-nix`/`agenix` if you want them encrypted in the repo. This is the same
 category as `~/.config/nix/access-tokens.conf` in the README's "state this repo
