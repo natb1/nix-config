@@ -49,8 +49,10 @@ let
       mockPkgs = pkgs // {
         claude-code = claudeCodeStub;
         stdenv = pkgs.stdenv // {
-          isLinux = isLinux;
-          isDarwin = isDarwin;
+          hostPlatform = pkgs.stdenv.hostPlatform // {
+            isLinux = isLinux;
+            isDarwin = isDarwin;
+          };
         };
       };
       mockConfig = {

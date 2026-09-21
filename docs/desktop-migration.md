@@ -1,8 +1,8 @@
 # Plan — WSL → native NixOS, with one Windows that boots bare metal or virtualized
 
-Written 2026-09-20. This is the *second* migration this repo tracks: [TODO.md](../TODO.md)
-is about finishing the move off `commons.systems`. This one is about the desktop
-stopping being a Windows box that hosts NixOS, and becoming a machine that runs
+Written 2026-09-20. This is the *second* migration this repo has tracked; the
+first — moving the WSL host off `commons.systems` and onto this repo — finished
+on 2026-09-21. This one is about the desktop stopping being a Windows box that hosts NixOS, and becoming a machine that runs
 NixOS natively and can start the *existing* Windows install as a
 GPU-passthrough guest — the same install that still boots bare metal when a game
 demands it.
@@ -27,11 +27,11 @@ lands on the bulk drive**, activation needs the guest to
 and the fast NVMe controller must sit in a clean IOMMU group — a second gate
 alongside the GPU's.
 
-Sequencing: **finish TODO.md §1–§3 first.** Switching the WSL host onto this
-repo is the cheap, reversible change that proves the repo works. Repurposing the
-desktop's drives is neither. Do not stack them. (Windows-side preparation that
-destroys nothing — the ESP move, the firmware update — is exempt and can run in
-parallel.)
+Sequencing: **the WSL switch came first, and it is done.** Switching the WSL
+host onto this repo was the cheap, reversible change that proved the repo works;
+it passed QA and was cleaned up on 2026-09-21. Repurposing the desktop's drives
+is neither cheap nor reversible, which is why it waited. Nothing outside this
+plan gates it now — Phase 0 is the only go/no-go.
 
 ---
 
@@ -47,6 +47,12 @@ parallel.)
   hibernation** off (`powercfg /h off`, verified with `powercfg /a`).
 - **Old Linux partitions on the 1 TB drive** — disposable, no backup needed.
 - **Games** stay on the 2 TB Windows drive; the games-partition fallback is gone.
+- **The WSL switch** — the WSL host runs from this repo as `.#wsl` (hostname
+  `wsl`), and the `commons.systems` migration that gated this plan is closed.
+- **WezTerm's WSL-only split** — the Windows GUI defaults and the
+  copy-to-Windows activation moved out of the shared module into
+  `hosts/wsl/home/wezterm-windows-config.nix`, and the platform guards became
+  `stdenv.hostPlatform.*`. A second Linux host no longer inherits WSL behavior.
 - **Windows' own ESP** — a 300 MB ESP now exists on the 2 TB drive (disk 1,
   partition 4), `bcdboot` wrote the boot files to it, and WinRE was
   re-registered. **Not yet booted from**: Windows is still running from the old
@@ -63,14 +69,13 @@ parallel.)
 2. **Update the motherboard firmware** — see
    [Firmware update](#firmware-update). After step 1, so a boot failure has one
    cause, not two.
-3. **TODO.md §1–§3** — the WSL switch. Independent of steps 1–2; can run any
-   time, but gates Phase 1 and everything after it.
-4. **Phase 1** — land `hosts/desk` in the flake, from WSL.
-5. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
+3. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
+   steps 1–2; can run any time.
+4. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
    `nixos-generate-config`, interface names from `ip link`.
-6. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
-7. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
+5. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
+6. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
 
 ### Decided 2026-09-21
@@ -214,7 +219,7 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 | Secure Boot | `Confirm-SecureBootUEFI` → **False** | Already off. systemd-boot installs without lanzaboote |
 | SMBIOS | system/board manufacturer `Gigabyte Technology Co., Ltd.`, product `B650I AORUS ULTRA`, serials `Default string`, UUID `03560274-043C-0547-E806-FF0700080009` | The `<sysinfo>` block in the licensing section can be filled from this (confirm against `dmidecode` in Phase 0 — Windows byte-swaps the first three UUID fields on some firmware) |
 | Network | Windows runs on **Wi-Fi** (MediaTek RZ616 / MT7922, MAC `F0:A6:54:14:9B:0D`); the Intel I225-V wired port (`74:56:3C:47:E8:FF`) is **disconnected** | **Decided: Wi-Fi for everything, for now.** See [Networking on Wi-Fi](#networking-on-wi-fi) |
-| WSL | Still hostname `nixos`, generation `nixos-system-nixos-26.11.20260831`; `/etc/nixos` stubs still present | [TODO.md](../TODO.md) §1–§3 have **not** been applied yet |
+| WSL | Switched onto this repo 2026-09-21: hostname `wsl`, applies `.#wsl` as locked, `/etc/nixos` stubs removed, SSH key comment `n8@wsl` | Done — nothing on the WSL side gates this plan any more |
 
 ### Still unknown
 
@@ -236,14 +241,15 @@ repo's gnarliest modules exist *only* because NixOS is a guest under Windows:
 | Module | Lines of "why this is weird" | Fate |
 | --- | --- | --- |
 | `hosts/wsl/mounts.nix` | drvfs + autofs ELOOP trap, boot-order poll, stale-mount healer timer | **Deleted.** Replaced by rclone (§3) |
-| `modules/home/wezterm.nix` copy-to-Windows activation | three-tier Windows-username detection, five error codes, ~500 lines of shell test | **Deleted** |
-| `hosts/wsl/home/wezterm-windows.nix` | content-pinned nightly zip against a rolling URL, currently inert | **Deleted** — and this retires [TODO.md §6](../TODO.md)'s pin problem outright |
+| `hosts/wsl/home/wezterm-windows-config.nix` | copy-to-Windows activation: three-tier Windows-username detection, five error codes, ~900 lines of shell test | **Deleted** |
+| `hosts/wsl/home/wezterm-windows.nix` | installs the Windows GUI from a nightly zip that upstream overwrites in place, so `sync-wezterm.sh` mirrors each pin to an immutable release on this repo | **Deleted** — and the mirroring step with it |
 | `hosts/wsl/home/claude-in-chrome.nix` | `.bat` shim, HKCU registry write, extension-dir symlink across `/mnt/c` | **Deleted.** Native Chrome needs none of it |
 
-It also forces [TODO.md §5](../TODO.md) (the WSL-only split) to happen, because
-the `pkgs.stdenv.isLinux` guards in `modules/home/wezterm.nix` become *actively
-wrong* the moment a second Linux host exists — which is exactly what the
-module's own comment predicts.
+The groundwork is already on `main`: the WSL-only WezTerm behavior was split out
+of `modules/home/wezterm.nix` into `hosts/wsl/home/` (dfcebcd), because an
+`isLinux` guard would have handed it to any second Linux host. So deleting the
+WSL host deletes these modules outright — nothing shared has to be untangled
+first.
 
 ---
 
@@ -1021,26 +1027,29 @@ on it.
 
 ### WezTerm
 
-This is [TODO.md §5](../TODO.md), now mandatory. On `desk`, WezTerm is just a
-GUI app:
+The WSL-only split is already done on `main` (dfcebcd): `desk` imports
+`modules/home/wezterm.nix` and not `hosts/wsl/home/wezterm-windows-config.nix`,
+so it gets a plain GUI app with no further module work.
 
-- `default_prog = { 'wsl.exe', ... }` and
-  `default_gui_startup_args = { 'connect', 'wsl' }` — **delete**. There is no
-  `wsl.exe`.
-- `home.activation.copyWeztermToWindows` — **delete**. Nothing to copy to.
+- `default_prog = { 'wsl.exe', ... }`, `default_gui_startup_args` and
+  `home.activation.copyWeztermToWindows` — already scoped to the `wsl` host;
+  they never reach `desk`, and go when `hosts/wsl/` does
+  ([Phase 9](#phase-9--retire-the-wsl-host)).
 - `wezterm-mux-server` — **keep**. It is still how the Mac gets a persistent
-  remote session into this box. Its `lib.mkIf pkgs.stdenv.isLinux` guard becomes
-  correct-by-accident rather than correct-by-design; make it explicit.
+  remote session into this box, and its `stdenv.hostPlatform.isLinux` guard is
+  now correct by design.
 - The Tailscale `ssh_domains` auto-discovery — **keep**, unchanged. It picks up
   `desk` for free.
-- `//wsl$/NixOS/...` identity-file paths — **delete** with the Windows branch.
+- The Windows branches of the shared Lua (`wsl.exe` tailscale invocation,
+  `//wsl$/NixOS/...` identity-file paths) — **delete** in Phase 9, once no
+  Windows WezTerm reads this config.
 
-The blocker TODO.md names is real: `tests/wezterm.test.nix` asserts the *guard
-structure* (`_type == "if"`), and `tests/wezterm_test.sh` is ~500 lines
-exercising the Windows-username fallback chain. That shell suite tests code that
-is being deleted, so it goes with it — but read it first for anything it covers
-that is not WSL-specific. **Do the test deletion in its own commit**, separate
-from the module change, so `git log` shows the coverage loss was deliberate.
+`tests/wezterm.test.nix` already evaluates the shared module alone (the native
+NixOS case) and with the WSL overlay. `tests/wezterm_test.sh` exercises only the
+WSL copy-to-Windows activation, so it goes with `hosts/wsl/` — but read it first
+for anything it covers that is not WSL-specific. **Do the test deletion in its
+own commit**, separate from the module change, so `git log` shows the coverage
+loss was deliberate.
 
 ### Claude in Chrome
 
@@ -1051,11 +1060,12 @@ host the normal way. **Delete the module**; do not port it.
 
 ### WezTerm's Windows GUI pin
 
-`hosts/wsl/home/wezterm-windows.nix` and `windowsInstallEnabled` in
-`modules/home/wezterm-pin.nix` go away with the WSL host. That closes
-[TODO.md §6](../TODO.md)'s first bullet — the rolling-URL pin problem — without
-needing the fix it proposes. Worth noting *why* it dies rather than gets fixed,
-so the reasoning is recoverable.
+`hosts/wsl/home/wezterm-windows.nix` and the Windows half of
+`modules/home/wezterm-pin.nix` go away with the WSL host. So does the mirroring
+step `main` added for them (f89ef8a): upstream overwrites its Windows nightly
+zip in place, so `scripts/sync-wezterm.sh` uploads each pinned zip to an
+immutable `wezterm-<version>` release on this repo. With no Windows GUI to
+install, that step and those releases have no consumer.
 
 Keep the lesson, though. It still applies to the one Windows artifact this plan
 does pin: **`pkgs.virtio-win`**, hash-pinned in nixpkgs, for the NIC and balloon
@@ -2015,12 +2025,13 @@ Nix proves the closure; it cannot prove any of this.
 Only after Phase 8 passes.
 
 - [ ] Delete `hosts/wsl/` and the `nixosConfigurations.wsl` output
-- [ ] Delete `modules/home/wezterm-pin.nix`'s Windows half and
-      `scripts/sync-wezterm.sh` if nothing else uses them
+- [ ] Delete `modules/home/wezterm-pin.nix`'s Windows half, the Windows-zip
+      mirroring in `scripts/sync-wezterm.sh`, and the Windows branches of the
+      shared WezTerm Lua. The `wezterm-<version>` releases can stay as history
 - [ ] Remove the `wsl` node from the Tailscale admin panel
 - [ ] Mac: drop `wsl` from `~/.ssh/known_hosts` and any config pointing at it
-- [ ] Fix the `n8@nixos` comment on the SSH key in `modules/home/default.nix` —
-      [TODO.md §2](../TODO.md) already flags it and this is the natural moment
+- [ ] Replace the `n8@wsl` key in `modules/home/default.nix` with `desk`'s own
+      key (or, if the key moves to `desk`, rename its comment `n8@desk`)
 - [ ] README: replace the "A future native NixOS host" section with the real one
 - [ ] Update the "State this repo does not manage" list: the Windows-side WezTerm
       install and the `G:` volume are gone; new entries are the Microsoft

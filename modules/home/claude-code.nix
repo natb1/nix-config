@@ -62,7 +62,7 @@ in
   # Symlink seccomp filter files into a global npm install path where Claude's
   # auto-detection will find them. Claude scans paths like ~/.npm-global/lib/
   # node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/<arch>/.
-  home.activation.configureClaudeSeccomp = lib.mkIf (pkgs.stdenv.isLinux && archDir != null) (
+  home.activation.configureClaudeSeccomp = lib.mkIf (pkgs.stdenv.hostPlatform.isLinux && archDir != null) (
     lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       set -eu
 

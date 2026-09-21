@@ -2,22 +2,16 @@
 #
 # Installs the WezTerm Windows binary to the Windows user's %LOCALAPPDATA%\WezTerm\
 # at each home-manager activation, pinned to the same nightly build as the WSL
-# wezterm-mux-server (nix/home/wezterm-pin.nix).
+# wezterm-mux-server (modules/home/wezterm-pin.nix).
 #
 # Why the pin: the Windows GUI auto-connects to the WSL mux server; if the two
 # builds drift, the mux PDU handshake fails and the GUI window closes immediately.
-# Upstream distributes exactly ONE Windows nightly zip (overwritten in place), so
-# a naive "always curl the latest nightly" install drifts from the nixpkgs-pinned
-# mux server whenever their dates differ. Instead we fetch the zip content-pinned
-# by `windowsZipHash` and unpack it at build time; activation only mirrors the
-# resulting store tree to Windows. Bump both sides together with
-# nix/home/sync-wezterm.sh.
-#
-# Currently INERT: `windowsInstallEnabled` in the pin is false, so none of the
-# below is in the generation. That is a workaround for the byte pin expiring
-# against a rolling URL, not a decision about how the GUI should be delivered —
-# see nix/home/wezterm-pin.nix and
-# intentions/tactic-nix-wezterm-pin-nightly-drift.md.
+# Upstream distributes exactly ONE Windows nightly zip, overwritten in place, so
+# a pinned build disappears from upstream as soon as a newer nightly ships. The
+# zip is therefore fetched from this repo's own `wezterm-<version>` release — an
+# unmodified mirror that scripts/sync-wezterm.sh uploads when it bumps the pin —
+# content-pinned by `windowsZipHash` and unpacked at build time; activation only
+# mirrors the resulting store tree to Windows.
 
 {
   config,
@@ -29,12 +23,11 @@
 let
   pin = import ../../../modules/home/wezterm-pin.nix;
 
-  # Content-pinned nightly zip. The URL is upstream's rolling `nightly` asset;
-  # `windowsZipHash` locks it to the exact build recorded in the pin, so a later
-  # upstream republish cannot silently swap the binary — a hash mismatch fails
-  # loudly until the pin is refreshed via sync-wezterm.sh.
+  # Content-pinned mirror of the nightly zip. The release tag and asset name
+  # carry the version, so the URL is immutable; `windowsZipHash` additionally
+  # locks the bytes to exactly what sync-wezterm.sh hashed from upstream.
   weztermWindowsZip = pkgs.fetchurl {
-    url = "https://github.com/wez/wezterm/releases/download/nightly/WezTerm-windows-nightly.zip";
+    url = "https://github.com/natb1/nix-config/releases/download/wezterm-${pin.version}/WezTerm-windows-${pin.version}.zip";
     sha256 = pin.windowsZipHash;
   };
 
@@ -58,13 +51,7 @@ in
   # WSL: mirror the pinned Windows WezTerm into the user's %LOCALAPPDATA%.
   # DAG ordering: runs after "linkGeneration" so symlinks are stable before we
   # reach across the WSL boundary.
-  #
-  # Gated on pin.windowsInstallEnabled. That flag is a
-  # workaround for the rolling-URL pin going stale (see wezterm-pin.nix); while
-  # it is false, mkIf drops this activation entry before its content is forced,
-  # so weztermWindowsZip/weztermWindowsDir above are never evaluated and the
-  # nightly zip leaves the build closure entirely.
-  home.activation.installWeztermWindows = lib.mkIf pin.windowsInstallEnabled (
+  home.activation.installWeztermWindows =
     lib.hm.dag.entryAfter [ "linkGeneration" ] ''
       readonly WW_ERR_PERMISSION_DENIED=21
       readonly WW_ERR_USERNAME_DETECTION=22
@@ -80,7 +67,8 @@ in
           exit $WW_ERR_PERMISSION_DENIED
         fi
 
-        # Auto-detect Windows username (same logic as wezterm.nix). Use a
+        # Auto-detect Windows username (the tier-3 heuristic of
+        # wezterm-windows-config.nix). Use a
         # module-prefixed temp-file name so the EXIT trap registered by
         # copyWeztermToWindows isn't clobbered.
         WW_LS_STDERR=$(mktemp)
@@ -132,8 +120,15 @@ in
           # locked-file case (WezTerm still open on Windows) into an opaque
           # abort instead of the actionable message. `|| rsync_exit=$?` keeps
           # the failure local.
+          #
+          # Store files are read-only, and on /mnt/c a missing write bit becomes
+          # the Windows read-only attribute, which blocks the next upgrade from
+          # replacing or deleting them. --chmod=u+w keeps new files writable; the
+          # chmod first repairs an install an older generation left read-only
+          # (rsync without -p never touches the mode of an unchanged file).
+          ${pkgs.coreutils}/bin/chmod -R u+w "$TARGET_DIR"
           rsync_exit=0
-          rsync_error=$(${pkgs.rsync}/bin/rsync -rlt --delete \
+          rsync_error=$(${pkgs.rsync}/bin/rsync -rlt --chmod=u+w --delete \
             "${weztermWindowsDir}/" "$TARGET_DIR/" 2>&1) || rsync_exit=$?
           if [ $rsync_exit -ne 0 ]; then
             if echo "$rsync_error" | grep -qi "permission denied"; then
@@ -158,23 +153,29 @@ in
         # activation would clobber a user-pinned taskbar entry's metadata.
         SHORTCUT_PATH="/mnt/c/Users/$WINDOWS_USER/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/WezTerm.lnk"
         if [ ! -f "$SHORTCUT_PATH" ]; then
-          if command -v powershell.exe >/dev/null 2>&1; then
+          # Activation runs under systemd (home-manager-<user>.service), whose
+          # PATH lacks the Windows directories WSL appends to login shells, so
+          # fall back to PowerShell's fixed install location.
+          POWERSHELL=$(command -v powershell.exe 2>/dev/null || true)
+          if [ -z "$POWERSHELL" ] && [ -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]; then
+            POWERSHELL=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+          fi
+          if [ -n "$POWERSHELL" ]; then
             WIN_TARGET='C:\Users\'"$WINDOWS_USER"'\AppData\Local\WezTerm\wezterm-gui.exe'
             WIN_WORKDIR='C:\Users\'"$WINDOWS_USER"'\AppData\Local\WezTerm'
             WIN_SHORTCUT='C:\Users\'"$WINDOWS_USER"'\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\WezTerm.lnk'
 
             if [ -z "$DRY_RUN_CMD" ]; then
-              if powershell.exe -NoProfile -Command "\$WshShell = New-Object -ComObject WScript.Shell; \$Shortcut = \$WshShell.CreateShortcut('$WIN_SHORTCUT'); \$Shortcut.TargetPath = '$WIN_TARGET'; \$Shortcut.WorkingDirectory = '$WIN_WORKDIR'; \$Shortcut.Save()" >/dev/null 2>&1; then
+              if "$POWERSHELL" -NoProfile -Command "\$WshShell = New-Object -ComObject WScript.Shell; \$Shortcut = \$WshShell.CreateShortcut('$WIN_SHORTCUT'); \$Shortcut.TargetPath = '$WIN_TARGET'; \$Shortcut.WorkingDirectory = '$WIN_WORKDIR'; \$Shortcut.Save()" >/dev/null 2>&1; then
                 echo "Created Start Menu shortcut: $SHORTCUT_PATH"
               else
                 echo "WARNING: Failed to create Start Menu shortcut at $SHORTCUT_PATH" >&2
               fi
             fi
           else
-            echo "WARNING: powershell.exe not found on PATH, skipping Start Menu shortcut" >&2
+            echo "WARNING: powershell.exe not found, skipping Start Menu shortcut" >&2
           fi
         fi
       fi
-    ''
-  );
+    '';
 }

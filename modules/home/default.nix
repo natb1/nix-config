@@ -12,8 +12,8 @@
 # Host-specific home modules do NOT belong here. They live next to their host —
 # see hosts/wsl/home/ for the Windows-facing modules that only make sense under
 # WSL. Modules here must evaluate on every platform; where behavior genuinely
-# differs by platform (not by host), they guard on pkgs.stdenv.isLinux /
-# isDarwin.
+# differs by platform (not by host), they guard on
+# pkgs.stdenv.hostPlatform.isLinux / .isDarwin.
 
 {
   config,
@@ -43,7 +43,7 @@
   # reach the others. Authoritative: the list is written verbatim to
   # ~/.ssh/authorized_keys, and removing a key here revokes it on next rebuild.
   services.sshAuthorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBzEPhvoentKLmUnWPI0mfPHEFNP2bj0ekvC3N5LcI58 n8@nixos"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBzEPhvoentKLmUnWPI0mfPHEFNP2bj0ekvC3N5LcI58 n8@wsl"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM7rlIYWYTjLuwkOyKsO4PxewINlxA8HezSW+GTpE9os n8@Nathans-MacBook-Air.local"
   ];
 
@@ -52,7 +52,7 @@
     pkgs.google-cloud-sdk
     pkgs.pass
     pkgs.python3
-  ] ++ lib.optionals pkgs.stdenv.isDarwin [
+  ] ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
     # macOS: manage these with Nix instead of Homebrew. After switching, run
     # `brew uninstall go` so the Nix copy is the one on PATH.
     # (gh is already installed by programs.gh in gh.nix; jq above is Nix-only

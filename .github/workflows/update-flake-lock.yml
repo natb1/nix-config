@@ -1,0 +1,57 @@
+# Weekly flake.lock bump, committed straight to main — no PR to merge.
+#
+# The gate is evaluation plus the x86_64-linux checks: every host's system
+# derivation must evaluate against the new lock, or nothing is pushed. It does
+# not build or activate either host, so it cannot catch activation-time
+# failures; that is what reviewing the closure diff before a switch is for.
+name: update flake.lock
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: update-flake-lock
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Update inputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          nix flake update --commit-lock-file
+
+      - name: Did the lock change?
+        id: changed
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
+            echo "lock unchanged"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Evaluate every host
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          nix eval --raw .#nixosConfigurations.wsl.config.system.build.toplevel.drvPath
+          echo
+          nix eval --raw .#darwinConfigurations.mba.system.drvPath
+          echo
+
+      - name: Module tests
+        if: steps.changed.outputs.changed == 'true'
+        run: nix flake check
+
+      - name: Push
+        if: steps.changed.outputs.changed == 'true'
+        run: git push origin HEAD:main
