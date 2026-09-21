@@ -88,7 +88,6 @@ parallel.)
 
 | Item | Where it bites | Notes |
 | --- | --- | --- |
-| Latest rev 1.0 BIOS version | Step 2 | Newest found by search: F39 (2025-12-28). Confirm on Gigabyte's rev 1.0 page — there may be newer |
 | Board revision on the PCB itself | Step 2 | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
 | Wi-Fi interface name on NixOS | Phase 3 (Samba), firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
 | Total size of the media, across all four sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
@@ -104,26 +103,38 @@ parallel.)
 
 ### Firmware update
 
-**Currently F9d (2023-09). The board is rev 1.0**, whose BIOS line is numbered
-differently from rev 1.3's (rev 1.3's F11c is *not* for this board). The newest
-rev 1.0 release found is **F39 (2025-12-28)**; take whatever Gigabyte's rev 1.0
-support page lists as latest. **Never flash a file from another revision's
-page.** Three years of AGESA updates is worth taking before the
+**Currently F9d (2023-09). Target: F43c (2026-07-20, AGESA 1.3.0.1c).**
+
+The board is rev 1.0, and rev 1.0/1.1 BIOSes are listed on Gigabyte's
+*un-suffixed* B650I AORUS ULTRA page — the same F-series line this board is
+already on (F9 → F20 → F30 → … → F43c). Rev 1.3 and 1.4 have their own pages
+and their own files; **never flash a file from those.** Checked 2026-09-21:
+
+| | |
+| --- | --- |
+| Support page | <https://www.gigabyte.com/Motherboard/B650I-AORUS-ULTRA/support> |
+| File | [`mb_bios_b650i-aorus-ultra_8arpl109_f43c.zip`](https://download.gigabyte.com/FileList/BIOS/mb_bios_b650i-aorus-ultra_8arpl109_f43c.zip) (14.57 MB) |
+| Checksum (as published) | `9D0F` |
+| Previous | F43b (2026-06-29), F42 (2026-05-20) — fallbacks if F43c misbehaves |
+
+Three years of AGESA updates is worth taking before the
 Linux-side Phase 0 pass, for this plan specifically: IOMMU grouping and ACS
 behaviour come from the firmware, and on a mini-ITX board with one x16 slot a
 firmware update is the only lever available if the groups come back dirty.
-Security fixes (PSP firmware, the DDR5 Rowhammer CVE-2025-6202 fix in F8+) come
-along too.
+Security fixes come along too — among them LogoFAIL (F21), Sinkclose (F33a),
+the microcode-signature CVE-2024-36347 (F34/F37), TPM CVE-2025-2884 (F37), and
+the DDR5 Rowhammer mitigation option (F41).
 
-Mechanics: download the latest file from
-[the rev 1.0 support page](https://www.gigabyte.com/Motherboard/B650I-AORUS-ULTRA-rev-10/support), put it
-on a FAT32 USB stick, flash with **Q-Flash** (or Q-Flash Plus, no CPU/RAM needed)
+Mechanics: download the file above, unzip it onto a FAT32 USB stick, flash with **Q-Flash** (or Q-Flash Plus, no CPU/RAM needed)
 from the firmware setup. Not from inside Windows.
 
 A firmware update resets settings to defaults. Afterwards, re-check:
 
 - [ ] **SVM** enabled and **IOMMU** set to Enabled (not Auto)
-- [ ] **Secure Boot** still off; CSM off
+- [ ] **Secure Boot off — it will not be.** F38's release notes: *Secure Boot
+      enabled as system default*. So after flashing it is **on**, and must be
+      turned off again (Windows boots either way; systemd-boot without
+      lanzaboote does not). CSM off
 - [ ] Boot order — Windows Boot Manager on the **2 TB** drive first (until
       NixOS exists)
 - [ ] XMP/EXPO memory profile, if it was on before
@@ -183,7 +194,7 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 
 | Item | Measured | Consequence for this plan |
 | --- | --- | --- |
-| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. Board is **rev 1.0** (per the box). The BIOS is three years old (newest rev 1.0 found: F39, 2025-12) — [Firmware update](#firmware-update) |
+| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. Board is **rev 1.0** (per the box). The BIOS is three years old (latest for this revision: **F43c**, 2026-07-20) — [Firmware update](#firmware-update) |
 | CPU / RAM | Ryzen 5 **7600X**, 6C/12T, **one CCD**; **32 GB** RAM; SVM enabled in firmware | No cross-CCD concern. Phase 5's numbers were written for a 16-core/64 GB box and are now corrected — guest 4C/8T + 16 GiB, host 2C/4T |
 | dGPU | **Radeon RX 6600 XT** (Navi 23, RDNA2) `1002:73ff` + HDMI audio `1002:ab28`, Windows PCI bus 3 fn 0/1 | RDNA2: **no `vendor-reset`**. Both IDs are unique on this box, so `vfio-pci.ids` is safe *for the GPU* |
 | iGPU | Raphael `1002:164e` | Host graphics; different ID from the dGPU, so the `vfio-pci.ids` match cannot catch it |
