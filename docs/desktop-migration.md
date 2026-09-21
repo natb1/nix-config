@@ -16,7 +16,7 @@ That single decision is what makes the rest small:
 
 | Because there is one install… | …this goes away |
 | --- | --- |
-| Windows' disk is touched once, by 1 GB | The big shrink, the ESP sharing, the drive image, the restore-from-backup risk |
+| Windows' disk is touched once, by 300 MB | The big shrink, the ESP sharing, the drive image, the restore-from-backup risk |
 | Disko never meets a Windows partition | Hand-partitioning, hand-written `fileSystems`, `configurationLimit = 3` |
 | One install means one license | The unactivated second copy, and the rule against signing into it |
 | Metal and guest are the same C:\ | Two config profiles, the drift between them, the answer file, the image build |
@@ -29,7 +29,88 @@ alongside the GPU's.
 
 Sequencing: **finish TODO.md §1–§3 first.** Switching the WSL host onto this
 repo is the cheap, reversible change that proves the repo works. Repurposing the
-desktop's drives is neither. Do not stack them.
+desktop's drives is neither. Do not stack them. (Windows-side preparation that
+destroys nothing — the ESP move, the firmware update — is exempt and can run in
+parallel.)
+
+---
+
+## Status — 2026-09-21
+
+### Done
+
+- **Phase 0, Windows side** — inventory measured and recorded
+  ([below](#phase-0-windows-side--measured-2026-09-21)); the plan's code
+  corrected where it disagreed (ESP location, NVMe binding, RTC, CPU pinning).
+- **Licensing** — RETAIL, digital license linked to the Microsoft account.
+- **BitLocker** off (fully decrypted), **Secure Boot** off, **Fast Startup /
+  hibernation** off (`powercfg /h off`, verified with `powercfg /a`).
+- **Old Linux partitions on the 1 TB drive** — disposable, no backup needed.
+- **Games** stay on the 2 TB Windows drive; the games-partition fallback is gone.
+- **Windows' own ESP** — a 300 MB ESP now exists on the 2 TB drive (disk 1,
+  partition 4), `bcdboot` wrote the boot files to it, and WinRE was
+  re-registered. **Not yet booted from**: Windows is still running from the old
+  ESP on the 1 TB drive (disk 0, partition 1).
+
+### Next, in order
+
+1. **Prove the new ESP.** Reboot, pick the 2 TB drive's Windows Boot Manager
+   from the F12 menu, then (elevated):
+   `reagentc /disable; reagentc /enable; reagentc /info; Get-Partition | ? IsSystem | Select DiskNumber,PartitionNumber`
+   → must show **disk 1, partition 4**. The `reagentc` re-run is required: the
+   first one registered WinRE in the BCD Windows was running from, which was
+   the *old* ESP's. Then confirm Settings → System → Activation.
+2. **Update the motherboard firmware** — see
+   [Firmware update](#firmware-update). After step 1, so a boot failure has one
+   cause, not two.
+3. **TODO.md §1–§3** — the WSL switch. Independent of steps 1–2; can run any
+   time, but gates Phase 1 and everything after it.
+4. **Phase 1** — land `hosts/desk` in the flake, from WSL.
+5. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
+   `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
+   `nixos-generate-config`, interface names from `ip link`.
+6. **Phase 2** — install NixOS on the 1 TB drive.
+
+### Residuals — open, not blocking the next step
+
+| Item | Where it bites | Notes |
+| --- | --- | --- |
+| Board revision (rev 1.0/1.1 vs 1.3) | Step 2 | Read the sticker on the board; the BIOS files are revision-specific |
+| Ethernet: plug in or stay on Wi-Fi? | Phase 3 (Samba `<FILL_ME_LAN_IF>`), Phase 4 (guest network) | Wi-Fi cannot bridge, so the guest is NAT-only unless the I225-V is cabled. The guest's `<mac>` for activation is the Wi-Fi MAC either way |
+| Root partition size | Phase 1, `disko.nix` `<FILL_ME>G` | Every GB given to `/` comes out of `/srv/media` on a 1 TB drive. ~150–200 GB is ample for a Nix store with GC |
+| Stale NVRAM entry for the old ESP | Phase 2 | Once disko wipes the 1 TB drive, the old "Windows Boot Manager" entry points at nothing. `efibootmgr -b <n> -B` it, alongside the `efibootmgr -o` step |
+| `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
+| `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
+| `account.microsoft.com/devices` | Before Phase 8 | Note the name the PC is listed under — it is how the Activation Troubleshooter identifies it |
+| Game library vs ProtonDB | Before Phase 7 | Which titles need Windows at all, and which of those need bare metal (kernel anti-cheat) |
+| Backup target: Hetzner BX21 vs local HDD | Media storage, step 2 | Depends on whether the media is replaceable |
+| Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet |
+
+### Firmware update
+
+**Currently F9d (2023-09). Gigabyte's latest for rev 1.3 is F11c (2026-07-20,
+AGESA 1.3.0.1c).** Three years of AGESA updates is worth taking before the
+Linux-side Phase 0 pass, for this plan specifically: IOMMU grouping and ACS
+behaviour come from the firmware, and on a mini-ITX board with one x16 slot a
+firmware update is the only lever available if the groups come back dirty.
+Security fixes (PSP firmware, the DDR5 Rowhammer CVE-2025-6202 fix in F8+) come
+along too.
+
+Mechanics: download the file for **your** board revision from Gigabyte, put it
+on a FAT32 USB stick, flash with **Q-Flash** (or Q-Flash Plus, no CPU/RAM needed)
+from the firmware setup. Not from inside Windows.
+
+A firmware update resets settings to defaults. Afterwards, re-check:
+
+- [ ] **SVM** enabled and **IOMMU** set to Enabled (not Auto)
+- [ ] **Secure Boot** still off; CSM off
+- [ ] Boot order — Windows Boot Manager on the **2 TB** drive first (until
+      NixOS exists)
+- [ ] XMP/EXPO memory profile, if it was on before
+- [ ] Windows boots and is still activated. The fTPM may be cleared by an AGESA
+      jump; with BitLocker off that costs nothing but possibly a Windows Hello
+      PIN re-setup
+- [ ] Record the new version in the Phase 0 table
 
 ---
 
@@ -47,7 +128,7 @@ desktop's drives is neither. Do not stack them.
 
 Four consequences worth stating up front:
 
-1. **Windows' disk is modified exactly once, by 1 GB.** Phase 0 found Windows'
+1. **Windows' disk is modified exactly once, by 300 MB.** Phase 0 found Windows'
    ESP on the *other* drive, so it needs one of its own first — see
    [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). After that
    the fast NVMe stays exactly as it is. Every step that made the previous version of this plan dangerous —
@@ -81,7 +162,7 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 
 | Item | Measured | Consequence for this plan |
 | --- | --- | --- |
-| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. The BIOS is old; updating AGESA before Phase 0's Linux pass is cheap and can only improve the groups |
+| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. The BIOS is three years old (latest for rev 1.3: F11c, 2026-07) — [Firmware update](#firmware-update) |
 | CPU / RAM | Ryzen 5 **7600X**, 6C/12T, **one CCD**; **32 GB** RAM; SVM enabled in firmware | No cross-CCD concern. Phase 5's numbers were written for a 16-core/64 GB box and are now corrected — guest 4C/8T + 16 GiB, host 2C/4T |
 | dGPU | **Radeon RX 6600 XT** (Navi 23, RDNA2) `1002:73ff` + HDMI audio `1002:ab28`, Windows PCI bus 3 fn 0/1 | RDNA2: **no `vendor-reset`**. Both IDs are unique on this box, so `vfio-pci.ids` is safe *for the GPU* |
 | iGPU | Raphael `1002:164e` | Host graphics; different ID from the dGPU, so the `vfio-pci.ids` match cannot catch it |
@@ -200,7 +281,10 @@ Also in Phase 0:
       mode has to serve
 - [x] Record how much free space the fast drive has — *89 GB free on the 2 TB
       `C:`; Steam's only library is on `C:` and stays there*
+- [ ] **Update the motherboard firmware** (F9d → latest for the board
+      revision) before the Linux pass — [Firmware update](#firmware-update)
 - [ ] **Give Windows its own ESP on the 2 TB drive** and prove it boots —
+      *created 2026-09-21; the boot from it and the `reagentc` re-run remain* —
       [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). Hard
       precondition for Phase 2
 - [x] Identify what is on the 1 TB drive's five Linux partitions — *an old
@@ -488,7 +572,7 @@ The clean split that makes everything else work:
 
 | Drive | Owner | Contents | Touched by this plan? |
 | --- | --- | --- | --- |
-| **2 TB P41** ("fast" below) | Windows, entirely | MSR, `C:`, WinRE as they are today, **plus a new ESP** carved from `C:` — see below. All Windows games stay on `C:` | **Once**, before anything else: a ~1 GB shrink of `C:` and a new ESP. Then never again |
+| **2 TB P41** ("fast" below) | Windows, entirely | MSR, `C:`, WinRE as they are today, **plus a new ESP** carved from `C:` — see below. All Windows games stay on `C:` | **Once**, before anything else: a 300 MB shrink of `C:` for a new ESP — done 2026-09-21. Then never again |
 | **1 TB P41** ("bulk" below) | NixOS, entirely | ESP, `/`, `/srv/media` | Yes — disko formats the whole thing, **after** Windows stops booting from it |
 
 Phase 0 found the two drives are the same model, so "fast" and "bulk" are now
@@ -511,17 +595,24 @@ This is the classic result of installing Windows with another drive present:
 setup puts the ESP on whichever disk the firmware enumerates first. **The fix is
 to give Windows its own ESP on its own drive, from bare metal, before Phase 2**:
 
+What was run, 2026-09-21 (elevated, from the running Windows — NTFS shrinks
+online). 300 MB rather than the 1 GB first proposed: Windows' own default ESP is
+100–260 MB, and nothing else ever goes on this one.
+
 ```powershell
-# Elevated. Shrinks C: by 1 GB (89 GB free, so plenty) and makes an ESP from it.
 $c = Get-Partition -DriveLetter C
-Resize-Partition -DriveLetter C -Size ($c.Size - 1GB)
-$esp = New-Partition -DiskNumber $c.DiskNumber -Size 1020MB `
+Resize-Partition -DriveLetter C -Size ($c.Size - 300MB)
+$esp = New-Partition -DiskNumber $c.DiskNumber -Size 300MB `
          -GptType '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}'
 Format-Volume -Partition $esp -FileSystem FAT32 -NewFileSystemLabel SYSTEM
 $esp | Add-PartitionAccessPath -AccessPath S:
 bcdboot C:\Windows /s S: /f UEFI       # writes bootmgfw.efi + a fresh BCD, adds an NVRAM entry
 $esp | Remove-PartitionAccessPath -AccessPath S:
+reagentc /disable; reagentc /enable    # re-run after the first boot from the new ESP — see below
 ```
+
+Result: disk 1 is now MSR (16 MB), `C:`, **ESP (300 MB, partition 4)**, WinRE
+(909 MB). Partition numbers follow creation order, not disk position.
 
 Then reboot into the **new** entry from the firmware boot menu (the drive-2
 "Windows Boot Manager"), confirm Windows starts and is still activated, and only
@@ -530,13 +621,15 @@ unmovable file sits at the end of `C:` — WinRE sits *after* `C:`, so this
 usually succeeds; if it does not, `reagentc /disable` + retry, then re-enable.
 
 This is the one place the plan touches Windows' drive after all, and it is
-worth being exact about why it is acceptable: it is a 1 GB shrink with a
+worth being exact about why it is acceptable: it is a 300 MB shrink with a
 backstop — the old ESP stays bootable until the new one is proven, so there is
 never a moment when nothing boots.
 
-The WinRE partition sitting after `C:` means Windows' own recovery stays wired
-to the old BCD; `reagentc /info` after the move should point at the new one
-(`reagentc /disable` then `/enable` re-registers it).
+**WinRE registration has to be redone after the first boot from the new ESP.**
+`reagentc` writes to the BCD of the ESP Windows *booted from*, and the run above
+happened while that was still the old one. Once `Get-Partition | ? IsSystem`
+reports disk 1 partition 4, `reagentc /disable; reagentc /enable` registers
+WinRE in the new BCD.
 
 **Disko gets a whole drive again, and the awkwardness of the previous draft
 disappears with it.** No hand-partitioning, no hand-written `fileSystems`, no
@@ -1519,18 +1612,6 @@ through anyway.
 ## Phase 8 — Cutover QA
 
 Nix proves the closure; it cannot prove any of this.
-
-**Host**
-
-- [ ] `hostname` → `desk`; `tailscale status` shows `desk`; `avahi-resolve -n desk.local`
-- [ ] `systemctl --failed` empty
-- [ ] `lspci -nnk -d <dGPU>` → `Kernel driver in use: vfio-pci`
-- [ ] iGPU drives the desktop: `glxinfo -B` names the AMD iGPU, not llvmpipe
-- [ ] From the Mac: `ssh n8@desk.<tailnet>.ts.net`, and WezTerm's `ssh_domains` lists `desk`
-- [ ] `wezterm-mux-server` active; a remote pane from the Mac actually opens
-- [ ] rclone Drive mount present and writable
-- [ ] `claude --version`, `gh auth status`, `docker run --rm hello-world`, `nvim --version`
-- [ ] `git config user.email` → `nathan@natb1.com`; `authorized_keys` has both keys, mode 600
 
 **Both boot modes**
 
