@@ -16,7 +16,7 @@ That single decision is what makes the rest small:
 
 | Because there is one install… | …this goes away |
 | --- | --- |
-| Windows' disk is never touched | The shrink, the ESP sharing, the drive image, the restore-from-backup risk |
+| Windows' disk is touched once, by 1 GB | The big shrink, the ESP sharing, the drive image, the restore-from-backup risk |
 | Disko never meets a Windows partition | Hand-partitioning, hand-written `fileSystems`, `configurationLimit = 3` |
 | One install means one license | The unactivated second copy, and the rule against signing into it |
 | Metal and guest are the same C:\ | Two config profiles, the drift between them, the answer file, the image build |
@@ -47,11 +47,13 @@ desktop's drives is neither. Do not stack them.
 
 Four consequences worth stating up front:
 
-1. **Windows' disk is never modified by this plan.** The fast NVMe stays exactly
-   as it is. Every step that made the previous version of this plan dangerous —
+1. **Windows' disk is modified exactly once, by 1 GB.** Phase 0 found Windows'
+   ESP on the *other* drive, so it needs one of its own first — see
+   [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). After that
+   the fast NVMe stays exactly as it is. Every step that made the previous version of this plan dangerous —
    shrinking `C:`, sharing an ESP, hand-editing a partition table with the
    license behind it — is simply gone. The riskiest remaining operation is
-   installing NixOS onto a drive that currently holds nothing.
+   installing NixOS onto a drive that, once Windows boots from its own ESP, holds nothing that matters.
 2. **Bare metal and guest are the same installation.** Not "kept in sync" — the
    same `C:\`. A package installed in the guest is installed on bare metal,
    because there is no distinction to maintain. This is the strongest possible
@@ -71,32 +73,42 @@ Note that consequence 4 is now cheap in a way it was not before: "boot bare
 metal for it" means rebooting into the install you already have, with the games
 already installed, because it is the same install.
 
-### Still unknown — resolved in Phase 0
+### Phase 0, Windows side — measured 2026-09-21
 
-- The exact discrete GPU (vendor + PCI IDs). If it is a **Radeon**, check
-  whether it needs `vendor-reset` for the AMD reset bug (Polaris/Vega do;
-  RDNA2+ generally do not). If it is **NVIDIA**, Code 43 has not been a real
-  problem since the 465 driver.
-- Whether the IOMMU groups isolate the dGPU cleanly.
-- **Whether the fast NVMe controller sits in its own IOMMU group.** New, and a
-  hard gate: this plan hands that controller to the guest, and a group shared
-  with anything the host needs kills the approach rather than inconveniencing
-  it. [Phase 0](#phase-0--inventory-and-the-gono-go-gate) says what to do if it
-  is dirty.
-- Ryzen core/CCD layout, for pinning.
-- Model, capacity and SMART wear level of **each of the two SSDs**. Two things
-  now ride on the bulk drive's numbers, not one:
-  - **NixOS root lives there.** If it is QLC or SATA, compiles — which this box
-    does most — get slower permanently. That is the cost of this layout and it
-    should be measured, not assumed. `fio` or a plain `nixos-rebuild build`
-    timing on the live USB is enough to know.
-  - Its capacity still sizes the backup tier.
-- **Free space on the fast drive**, which decides whether the Steam library
-  stays on it (simplest — Windows owns that whole disk) or moves to a partition
-  on the bulk drive. See [Disk layout](#disk-layout--one-drive-each).
-- **Whether BitLocker is enabled.** It has to be off, or on a password
-  protector, before the guest will boot — see
-  [Phase 0](#phase-0--inventory-and-the-gono-go-gate).
+Collected from the bare-metal Windows install (non-elevated). Everything below
+that Windows can see is settled; what needs Linux or an elevated prompt is in
+[Still unknown](#still-unknown).
+
+| Item | Measured | Consequence for this plan |
+| --- | --- | --- |
+| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. The BIOS is old; updating AGESA before Phase 0's Linux pass is cheap and can only improve the groups |
+| CPU / RAM | Ryzen 5 **7600X**, 6C/12T, **one CCD**; **32 GB** RAM; SVM enabled in firmware | No cross-CCD concern. Phase 5's numbers were written for a 16-core/64 GB box and are now corrected — guest 4C/8T + 16 GiB, host 2C/4T |
+| dGPU | **Radeon RX 6600 XT** (Navi 23, RDNA2) `1002:73ff` + HDMI audio `1002:ab28`, Windows PCI bus 3 fn 0/1 | RDNA2: **no `vendor-reset`**. Both IDs are unique on this box, so `vfio-pci.ids` is safe *for the GPU* |
+| iGPU | Raphael `1002:164e` | Host graphics; different ID from the dGPU, so the `vfio-pci.ids` match cannot catch it |
+| SSDs | **Both SK hynix Platinum P41** (`SHPP41-1000GM`, `SHPP41-2000GM`), both NVMe, controller ID **`1c5c:1959` on both** | (1) There is no fast/bulk split — same drive family, same performance, so the `fio` worry and [Risk 7](#risks-ranked) evaporate. (2) **[Risk 3](#risks-ranked) is confirmed**: `vfio-pci.ids` would take both controllers. Bind by PCI address — [Phase 4](#phase-4--vfio-and-the-libvirt-host) |
+| Windows' drive | `C:` is the **2 TB** P41 (Windows disk 1, CPU-attached controller), 1862 GB NTFS, **89 GB free**. Its partitions: MSR, `C:`, WinRE — **no ESP** | Steam is on `C:` (`C:\Program Files (x86)\Steam`, the only library) and stays. 89 GB free is thin but not a blocker |
+| The other drive | The **1 TB** P41 (Windows disk 0, chipset controller) is **not empty**: a 1 GB ESP marked System, plus five Linux-filesystem partitions (31 + 244 + 585 + 39 + 31 GB) | **Two plan-breaking facts** — see [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). Also: those five partitions hold *something*; identify it before disko formats this drive |
+| Windows' RTC | `RealTimeIsUniversal = 1` — Windows already keeps the RTC in **UTC** | `time.hardwareClockInLocalTime = true` would *create* the clock fight it was meant to prevent. Removed from `disko.nix`; NixOS's UTC default is correct |
+| Fast Startup | **On** (`HiberbootEnabled = 1`; `powercfg /a` lists Hibernate + Fast Startup) | `powercfg /h off` is still to do, and it is required |
+| SMBIOS | system/board manufacturer `Gigabyte Technology Co., Ltd.`, product `B650I AORUS ULTRA`, serials `Default string`, UUID `03560274-043C-0547-E806-FF0700080009` | The `<sysinfo>` block in the licensing section can be filled from this (confirm against `dmidecode` in Phase 0 — Windows byte-swaps the first three UUID fields on some firmware) |
+| Network | Windows runs on **Wi-Fi** (MediaTek RZ616 / MT7922, MAC `F0:A6:54:14:9B:0D`); the Intel I225-V wired port (`74:56:3C:47:E8:FF`) is **disconnected** | Guest `<mac>` for activation = the Wi-Fi MAC. And a Wi-Fi-only host cannot bridge the guest onto the LAN — NAT it, or plug in the cable. Samba's `<FILL_ME_LAN_IF>` is whichever of these NixOS uses |
+| WSL | Still hostname `nixos`, generation `nixos-system-nixos-26.11.20260831`; `/etc/nixos` stubs still present | [TODO.md](../TODO.md) §1–§3 have **not** been applied yet |
+
+### Still unknown
+
+- **What is on the 1 TB drive's five Linux partitions.** ~930 GB of ext4-typed
+  (GPT `0fc63daf…`) partitions nobody has accounted for. Mount them read-only
+  from the Phase 0 live USB and decide what to keep before anything formats
+  that drive.
+- **IOMMU groups** for the dGPU (bus 3) and the **2 TB** NVMe controller. Still
+  the hard gate, and still only answerable from Linux. The CPU-attached slot is
+  the likelier of the two to be cleanly grouped, which is the good news.
+- **SMART wear** on both P41s (`smartctl -a`, or elevated
+  `Get-PhysicalDisk | Get-StorageReliabilityCounter`).
+- **BitLocker** (`manage-bde -status`) and **Secure Boot**
+  (`Confirm-SecureBootUEFI`) — both need an elevated prompt.
+- Linux CPU numbering for pinning — Phase 5 assumes the usual Ryzen layout
+  (SMT sibling of CPU *n* is *n*+6); `lscpu -e` confirms it.
 
 ---
 
@@ -190,8 +202,13 @@ Also in Phase 0:
 - [ ] Inventory the game library: which titles, and what ProtonDB says about
       each. Every title that runs native under Proton is a title neither boot
       mode has to serve
-- [ ] Record how much free space the fast drive has, which decides where the
-      Steam library lives — see [Disk layout](#disk-layout--one-drive-each)
+- [x] Record how much free space the fast drive has — *89 GB free on the 2 TB
+      `C:`; Steam's only library is on `C:` and stays there*
+- [ ] **Give Windows its own ESP on the 2 TB drive** and prove it boots —
+      [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). Hard
+      precondition for Phase 2
+- [ ] Identify what is on the 1 TB drive's five Linux partitions (mount
+      read-only from the live USB); copy off anything wanted
 - [ ] **`powercfg /h off`** from an elevated prompt. Disables hibernation and
       with it Fast Startup. Non-negotiable here: Fast Startup means "shutdown"
       leaves the NTFS dirty and the volume mid-flight, and the whole premise of
@@ -475,8 +492,55 @@ The clean split that makes everything else work:
 
 | Drive | Owner | Contents | Touched by this plan? |
 | --- | --- | --- | --- |
-| **fast NVMe** | Windows, entirely | ESP, MSR, `C:`, WinRE — exactly as they are today. Steam library too, if it fits | **No.** Not repartitioned, not reformatted, not mounted by NixOS |
-| **bulk SSD** | NixOS, entirely | ESP, `/`, `/srv/media`, and the Steam library if the fast drive is full | Yes — disko formats the whole thing |
+| **2 TB P41** ("fast" below) | Windows, entirely | MSR, `C:`, WinRE as they are today, **plus a new ESP** carved from `C:` — see below. Steam library stays on `C:` | **Once**, before anything else: a ~1 GB shrink of `C:` and a new ESP. Then never again |
+| **1 TB P41** ("bulk" below) | NixOS, entirely | ESP, `/`, `/srv/media` | Yes — disko formats the whole thing, **after** Windows stops booting from it |
+
+Phase 0 found the two drives are the same model, so "fast" and "bulk" are now
+just names for "Windows' drive" and "NixOS' drive"; they are kept below so the
+rest of this document still reads.
+
+#### The ESP is on the wrong drive
+
+Phase 0's biggest finding. **Windows' bootloader does not live on Windows'
+drive.** The 2 TB drive holds MSR, `C:` and WinRE and no ESP; the only ESP is
+on the 1 TB drive — the one this plan hands to disko. Two consequences, each
+fatal on its own:
+
+1. Disko formatting the 1 TB drive deletes `bootmgfw.efi` and the BCD. Bare-metal
+   Windows stops booting.
+2. The guest only gets the 2 TB drive's controller. OVMF finds no ESP on it and
+   has nothing to boot.
+
+This is the classic result of installing Windows with another drive present:
+setup puts the ESP on whichever disk the firmware enumerates first. **The fix is
+to give Windows its own ESP on its own drive, from bare metal, before Phase 2**:
+
+```powershell
+# Elevated. Shrinks C: by 1 GB (89 GB free, so plenty) and makes an ESP from it.
+$c = Get-Partition -DriveLetter C
+Resize-Partition -DriveLetter C -Size ($c.Size - 1GB)
+$esp = New-Partition -DiskNumber $c.DiskNumber -Size 1020MB `
+         -GptType '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}'
+Format-Volume -Partition $esp -FileSystem FAT32 -NewFileSystemLabel SYSTEM
+$esp | Add-PartitionAccessPath -AccessPath S:
+bcdboot C:\Windows /s S: /f UEFI       # writes bootmgfw.efi + a fresh BCD, adds an NVRAM entry
+$esp | Remove-PartitionAccessPath -AccessPath S:
+```
+
+Then reboot into the **new** entry from the firmware boot menu (the drive-2
+"Windows Boot Manager"), confirm Windows starts and is still activated, and only
+then treat the 1 TB drive's ESP as disposable. The shrink can fail if an
+unmovable file sits at the end of `C:` — WinRE sits *after* `C:`, so this
+usually succeeds; if it does not, `reagentc /disable` + retry, then re-enable.
+
+This is the one place the plan touches Windows' drive after all, and it is
+worth being exact about why it is acceptable: it is a 1 GB shrink with a
+backstop — the old ESP stays bootable until the new one is proven, so there is
+never a moment when nothing boots.
+
+The WinRE partition sitting after `C:` means Windows' own recovery stays wired
+to the old BCD; `reagentc /info` after the move should point at the new one
+(`reagentc /disable` then `/enable` re-registers it).
 
 **Disko gets a whole drive again, and the awkwardness of the previous draft
 disappears with it.** No hand-partitioning, no hand-written `fileSystems`, no
@@ -538,10 +602,9 @@ brings it near a formatting tool.
     };
   };
 
-  # Windows writes local time to the RTC. Without this the two boot modes fight
-  # over the clock — and since they are the same install, the fight is with
-  # itself.
-  time.hardwareClockInLocalTime = true;
+  # NOT time.hardwareClockInLocalTime. Phase 0 found this Windows already has
+  # RealTimeIsUniversal = 1, i.e. keeps the RTC in UTC — NixOS's default.
+  # Setting localtime here would create the clock fight, not prevent it.
 }
 ```
 
@@ -617,8 +680,10 @@ reach it.
 mentioned, not mounted, and not passed to any command in this section. Read
 [Disk layout](#disk-layout--one-drive-each) first.
 
-Preconditions from Phase 0: both IOMMU gates pass, Fast Startup is off,
-BitLocker is off or on a password protector, and Secure Boot is off.
+Preconditions from Phase 0: both IOMMU gates pass, **Windows boots from its own
+ESP on the 2 TB drive**, the 1 TB drive's old Linux partitions have been checked
+for anything worth keeping, Fast Startup is off, BitLocker is off or on a
+password protector, and Secure Boot is off.
 
 ```sh
 # The bulk drive is disko's, and it is empty, so the destructive mode is
@@ -643,8 +708,8 @@ USB is still plugged in:
 - [ ] Windows still boots bare metal from the firmware boot menu, and is still
       activated (Settings → System → Activation). Nothing should have changed —
       confirming that is the point
-- [ ] Clocks agree after crossing between them — `time.hardwareClockInLocalTime`
-      doing its job
+- [ ] Clocks agree after crossing between them — both sides keeping the RTC in
+      UTC (`RealTimeIsUniversal = 1` on Windows, the default on NixOS)
 - [ ] `efibootmgr -o` puts systemd-boot first, so NixOS is the default and
       Windows is the deliberate choice
 
@@ -998,9 +1063,11 @@ usual.
   boot.kernelParams = [
     "amd_iommu=on"
     "iommu=pt"                       # passthrough mode: no DMA translation for host devices
-    # dGPU + its audio function, AND the fast NVMe controller — from Phase 0.
-    # The NVMe entry is what hands Windows' disk to the guest whole.
-    "vfio-pci.ids=<VEND:DEV>,<VEND:DEV_AUDIO>,<VEND:DEV_NVME>"
+    # RX 6600 XT + its HDMI audio function, from Phase 0. The NVMe controller
+    # is deliberately NOT here: both drives are SK hynix P41s sharing
+    # 1c5c:1959, so an ID match would take the host's root drive too. It is
+    # bound by PCI address below.
+    "vfio-pci.ids=1002:73ff,1002:ab28"
   ];
 
   # vfio must claim the card before amdgpu/nvidia can. initrd, not kernelModules.
@@ -1013,9 +1080,8 @@ usual.
   hardware.graphics.enable = true;
   hardware.graphics.enable32Bit = true;   # Steam/Proton need the 32-bit stack
 
-  # ONLY if Phase 0 shows a Radeon dGPU with the reset bug:
-  # boot.extraModulePackages = [ config.boot.kernelPackages.vendor-reset ];
-  # boot.kernelModules = [ "vendor-reset" ];
+  # No vendor-reset: Phase 0 found an RX 6600 XT (Navi 23, RDNA2), which resets
+  # cleanly. Polaris/Vega would have needed it.
 }
 ```
 
@@ -1038,11 +1104,14 @@ usual.
 }
 ```
 
-**A caution about `vfio-pci.ids`.** It matches by vendor:device, not by slot.
-If both NVMe drives are the same model, that ID matches **both** and the host
-loses its own root device — an unbootable system. Phase 0's
-`ls -l /sys/block/nvme*n1/device/device` output is how you find out. If the
-models match, bind by PCI address instead:
+**`vfio-pci.ids` cannot be used for the NVMe controller on this machine.** It
+matches by vendor:device, not by slot, and Phase 0 found both drives are SK
+hynix P41s behind the same `1c5c:1959` controller — an ID match takes **both**
+and the host loses its own root device. Bind the 2 TB drive's controller by PCI
+address. Windows reports it on bus 17 and the 1 TB on bus 6, but Linux numbers
+buses independently: take the address from Phase 0's
+`ls -l /sys/block/nvme*n1/device/device` on the live USB, picking the drive
+whose `lsblk` shows the NTFS `C:`.
 
 ```nix
 # Bind one specific slot, not every device with that ID.
@@ -1104,11 +1173,12 @@ VM start and reversed on VM stop. Nothing is degraded while the VM is down.
 # hosts/desk/perf-hook.nix
 { pkgs, ... }:
 let
-  # Fill from Phase 0's `lstopo`. On Ryzen, keep the guest inside ONE CCD —
-  # cross-CCD memory access goes over Infinity Fabric and costs real latency.
-  hostCpus = "0-3,16-19";     # cores NixOS keeps
-  allCpus  = "0-31";
-  hugepages2M = 12288;        # 24 GiB guest / 2 MiB
+  # Ryzen 5 7600X: 6C/12T on a single CCD, so there is no CCD boundary to
+  # respect. Assumes the usual Linux numbering (SMT sibling of n is n+6) —
+  # confirm with `lscpu -e`. Host keeps cores 0-1, guest gets 2-5.
+  hostCpus = "0-1,6-7";       # cores NixOS keeps
+  allCpus  = "0-11";
+  hugepages2M = 8192;         # 16 GiB guest / 2 MiB, of 32 GB total
 in
 {
   virtualisation.libvirtd.hooks.qemu."10-win-perf" =
@@ -1161,13 +1231,13 @@ In the guest XML — pinning and topology are libvirt's job, not the hook's:
 
 ```xml
 <cpu mode='host-passthrough' check='none' migratable='off'>
-  <topology sockets='1' dies='1' cores='6' threads='2'/>
+  <topology sockets='1' dies='1' cores='4' threads='2'/>   <!-- 7600X: host keeps 2 of 6 -->
   <feature policy='require' name='topoext'/>   <!-- AMD: guest sees correct SMT -->
   <cache mode='passthrough'/>
 </cpu>
 <cputune>
-  <vcpupin vcpu='0' cpuset='4'/>  <!-- pair each vcpu to its SMT sibling -->
-  <vcpupin vcpu='1' cpuset='20'/>
+  <vcpupin vcpu='0' cpuset='2'/>  <!-- pair each vcpu to its SMT sibling -->
+  <vcpupin vcpu='1' cpuset='8'/>
   <!-- ... -->
   <emulatorpin cpuset='0-1'/>     <!-- emulator threads on HOST cores, not guest ones -->
   <iothreadpin iothread='1' cpuset='2-3'/>
@@ -1596,9 +1666,10 @@ Only after Phase 8 passes.
    NixOS root *and* the media volume. Install-only; everything afterwards is
    `nixos-rebuild`. The consolation, and it is a real one: Windows is on the
    other drive and this command cannot reach it.
-3. **`vfio-pci.ids` matches both NVMe drives.** If the two SSDs are the same
-   model, the ID-based binding takes the host's root device too and the machine
-   does not boot. Phase 0 catches it; Phase 4 has the bind-by-address form.
+3. **`vfio-pci.ids` matches both NVMe drives.** Confirmed in Phase 0: both are
+   SK hynix P41s on `1c5c:1959`, so an ID-based binding takes the host's root
+   device too and the machine does not boot. Phase 4 binds by address; the
+   risk now is someone "simplifying" that back to an ID.
 4. **The NVMe controller's IOMMU group is dirty.** Kills the approach rather
    than inconveniencing it. Found in Phase 0, before anything is installed,
    which is the entire reason Phase 0 is a gate.
