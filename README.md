@@ -11,28 +11,61 @@ remaining steps and the QA checklist.
 ## Hosts
 
 Run the update from a clone of this repo **on the machine being updated** — a
-host can only build and activate itself. Activation needs root on both
-platforms, and `flake.lock` is shared, so an update moves every host at once.
+host can only build and activate itself, and activation needs root on both
+platforms. A host applies `main` **as locked**: it pulls and switches, and never
+runs `nix flake update` itself (see [Updating inputs](#updating-inputs)).
 
 ### `wsl` — NixOS-WSL on the Windows desktop
 
 ```sh
 cd ~/natb1/nix-config && git pull
-nix flake update
 sudo nixos-rebuild switch --flake .#wsl
 ```
+
+If a switch restarts systemd (any nixpkgs bump that moves it), WSL loses its
+`WSLInterop` binfmt entry and every `.exe` fails with `Exec format error` — which
+fails the Windows-side home-manager steps. Run `wsl --shutdown` from Windows and
+reopen the distro; boot re-registers interop and re-runs home-manager.
 
 ### `mba` — Apple Silicon MacBook Air
 
 ```sh
 cd ~/natb1/nix-config && git pull
-nix flake update
 sudo darwin-rebuild switch --flake .#mba
 ```
 
 Home-manager is integrated as a NixOS / nix-darwin module, so one rebuild does
 both system and user config. There is no standalone `home-manager switch`
-entry point. Drop `nix flake update` to apply the config as locked.
+entry point.
+
+## Updating inputs
+
+`flake.lock` is shared by every host, and its routine writer is
+[`.github/workflows/update-flake-lock.yml`](.github/workflows/update-flake-lock.yml).
+Every Monday it runs `nix flake update --commit-lock-file`, evaluates both hosts
+and runs the Linux module tests against the new lock, and pushes the lock commit
+straight to `main` if they pass. There is no PR to merge; if they fail, nothing
+is pushed and the run shows up red in Actions. Trigger it by hand from the
+Actions tab when you want a bump sooner.
+
+Picking a bump up is then just the host commands above, on each machine, when
+you choose. The gate proves the lock *evaluates*; it does not build or activate
+anything, so preview before switching (next section) — especially the first
+host after a nixpkgs bump.
+
+A local `git status` showing `flake.lock` modified means something updated it
+outside that workflow. Discard it (`git checkout flake.lock`) rather than
+committing it, or the two machines end up on locks nobody else has.
+
+Bumping by hand is still fine when you need one input now. Do it on one
+machine, switch and check it, and only then push — the other host should never
+pull a hand-made lock that has not been through a switch:
+
+```sh
+nix flake update nixpkgs --commit-lock-file    # or no input name, for all
+sudo nixos-rebuild switch --flake .#wsl         # after previewing, as below
+git push
+```
 
 ## Layout
 
@@ -43,6 +76,7 @@ modules/nixos/     shared by every Linux host
 modules/darwin/    shared by every macOS host
 modules/home/      shared by every host, every platform
 tests/             module regression tests, exposed as flake checks
+.github/workflows/ the weekly flake.lock bump
 scripts/           maintenance scripts (wezterm pin refresh)
 ```
 
@@ -78,9 +112,8 @@ Both tools default to `<configurations>.$(hostname)`. The WSL host *is* named
 `wsl`, so there the `#wsl` suffix is optional; the MacBook's hostname is not
 `mba`, so there it is required.
 
-Review the closure diff on one machine before switching the rest, and commit
-`flake.lock` in its own commit so a regression is attributable. To bump a single
-input instead: `nix flake update nixpkgs`.
+After a lock bump, review the closure diff on one machine before switching the
+rest.
 
 ### A future native NixOS host
 
