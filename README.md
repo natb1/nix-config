@@ -99,15 +99,17 @@ Add `hosts/<name>/` (with the `nixos-generate-config`-produced
 `flake.nix` importing `./modules/nixos`, then use the WSL commands with the new
 attribute.
 
-The concrete case — the desktop gaining a native NixOS install alongside its
-existing Windows, plus Windows again as a GPU-passthrough guest — is planned in
+The concrete case — the desktop gaining a native NixOS install on its second
+SSD, with its existing Windows kept intact on the first and startable as a
+GPU-passthrough guest — is planned in
 [docs/desktop-migration.md](docs/desktop-migration.md). That plan supersedes this
 paragraph once it starts; it also retires several WSL-only modules, so read it
 before extending anything under `hosts/wsl/`.
 
 Note that it brings **Windows configuration into this repo** under
-`hosts/desk/windows/`: Nix-rendered WinGet DSC profiles applied to both the
-bare-metal and virtualized installs. The name `nix-config` is about the tool
+`hosts/desk/windows/`: a Nix-rendered WinGet DSC profile that Windows pulls and
+applies to itself. There is one Windows install, booted either bare metal or
+virtualized, so one profile covers both. The name `nix-config` is about the tool
 that generates the configuration, not a restriction on what it configures.
 
 ### Updating inputs

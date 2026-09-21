@@ -9,12 +9,12 @@ removal, and a closure diff proving the built `wsl` host differs from the runnin
 generation only by the intended changes. `nix flake check` passes (15 checks) and
 `darwinConfigurations.mba` evaluates.
 
-Scope note: this file is only about getting off `commons.systems`. Adding a
-native NixOS install alongside the desktop's existing Windows, plus a Windows
-VM, is a separate, later migration —
-[docs/desktop-migration.md](docs/desktop-migration.md). **Finish §1–§3 here
-first.** Switching the WSL host onto this repo is cheap and reversible;
-repartitioning the desktop's boot drive is not.
+Scope note: this file is only about getting off `commons.systems`. Installing
+native NixOS on the desktop's second SSD, keeping its Windows intact on the
+first and running that same install as a GPU-passthrough guest, is a separate,
+later migration — [docs/desktop-migration.md](docs/desktop-migration.md).
+**Finish §1–§3 here first.** Switching the WSL host onto this repo is cheap and
+reversible; repurposing the desktop's drives is not.
 
 ---
 
