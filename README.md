@@ -4,10 +4,6 @@ Nix flake configuration for my machines. One repo, one lockfile, one commit per
 change — every host here shares `modules/`, so a change to a shared module and
 all the hosts that consume it lands atomically.
 
-Migration in progress: this config was extracted from `commons.systems` and the
-machines have not all been switched onto it yet. See [TODO.md](TODO.md) for the
-remaining steps and the QA checklist.
-
 ## Hosts
 
 Run the update from a clone of this repo **on the machine being updated** — a
