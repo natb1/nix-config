@@ -91,9 +91,10 @@ parallel.)
 | Latest rev 1.0 BIOS version | Step 2 | Newest found by search: F39 (2025-12-28). Confirm on Gigabyte's rev 1.0 page — there may be newer |
 | Board revision on the PCB itself | Step 2 | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
 | Wi-Fi interface name on NixOS | Phase 3 (Samba), firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
-| Total size of the media, across all three sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + the MacBook + a GCS bucket must fit in ~730 GB after de-duplication. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
+| Total size of the media, across all four sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
 | GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
-| Fate of the Drive/GCS/MacBook copies | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
+| Flickr export request | [Step 3](#step-3--bring-the-media-in) | Asynchronous — Flickr prepares the archive over hours to days. Request it early so it is ready by ingest; download links expire |
+| Fate of the Drive/GCS/MacBook/Flickr copies | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
 | Stale NVRAM entry for the old ESP | Phase 2 | Once disko wipes the 1 TB drive, the old "Windows Boot Manager" entry points at nothing. `efibootmgr -b <n> -B` it, alongside the `efibootmgr -o` step |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
@@ -944,9 +945,9 @@ Three steps, in this order. The share is useful on day one; the backup is what
 makes the share safe to depend on; and only then does the media come in —
 because it is irreplaceable, it arrives on a volume whose backup already works.
 
-**Where the media is today** (2026-09-21): spread across three places —
-**Google Drive**, **the MacBook's internal storage**, and a **GCS bucket** it has
-to be exported from. None of them is this machine, which is good news: every
+**Where the media is today** (2026-09-21): spread across four places —
+**Google Drive**, **the MacBook's internal storage**, a **GCS bucket** it has
+to be exported from, and **Flickr**. None of them is this machine, which is good news: every
 source is itself a copy that survives the migration untouched.
 
 ### Step 1 — `/srv/media` as a network share
@@ -1179,15 +1180,17 @@ A backup is a claim until it is restored. All four, before trusting it:
 
 ### Step 3 — bring the media in
 
-**`rclone` for all three sources**, because it speaks all three and it is
-already in the plan for the Drive mount (Phase 3). One tool, one verification
-command, one log format.
+**`rclone` for Drive and GCS**, because it speaks both and it is already in the
+plan for the Drive mount (Phase 3). The MacBook is `rsync`. **Flickr is the
+exception** — rclone has no Flickr backend — so it comes in through Flickr's own
+account export.
 
 | Source | How | Notes |
 | --- | --- | --- |
 | Google Drive | `rclone copy gdrive:<path> /srv/media/<dest> --progress` | Use the Drive remote configured for Phase 3's mount, not the mount itself — `copy` against the API is faster and resumable. Google-native Docs/Sheets are not media; exclude them |
 | GCS bucket | `rclone copy gcs:<bucket>/<path> /srv/media/<dest>` | Needs a `gcs` remote (service-account JSON or `gcloud` user creds — hand-provisioned, not in git). Internet egress is billed per GB, plus retrieval fees if the bucket is Coldline/Archive — check the class first. A one-off pull of a few hundred GB is tens of dollars, not a reason to hesitate |
 | MacBook | From the Mac: `rsync -avh --progress ~/<path>/ n8@desk:/srv/media/<dest>/` over Tailscale | Or drag into the SMB share from Finder. `rsync` is resumable and prints what it skipped |
+| Flickr | Account settings → *Your Flickr data* → request the export; download the zip parts when Flickr emails; unzip into `/srv/media/flickr/` | Contains the **originals** plus separate JSON for titles, descriptions, albums and tags — keep the JSON alongside, it is the only copy of that metadata outside Flickr. Fallback if the export is unusable: `gallery-dl` against the account with an API key |
 
 Then, per source, **verify rather than assume**:
 
@@ -1195,6 +1198,9 @@ Then, per source, **verify rather than assume**:
 rclone check gdrive:<path>        /srv/media/<dest> --one-way   # size + hash
 rclone check gcs:<bucket>/<path>  /srv/media/<dest> --one-way
 # Mac side: rerun the same rsync with --dry-run --checksum; it should list nothing.
+# Flickr: no hashes to compare against. Count instead — photo + video files
+# extracted must equal the item count on the Flickr profile, and every zip part
+# must unzip without error (`unzip -t`).
 ```
 
 Expect overlap between the three. Land each source in its own directory
@@ -1203,8 +1209,8 @@ directories) — merging during the copy makes the verification meaningless.
 
 **Retiring a source is a separate decision, and it comes last.** Only after the
 first restic backup of the ingested media has passed the restore proofs above
-is `/srv/media` + Hetzner a trustworthy pair. Until then Drive, GCS and the
-MacBook are the backup.
+is `/srv/media` + Hetzner a trustworthy pair. Until then Drive, GCS, the MacBook
+and Flickr are the backup.
 
 #### Checklist
 
@@ -1219,10 +1225,12 @@ MacBook are the backup.
       that is not this machine
 - [ ] The four restore proofs above — run once on a small test set before
       ingest, and again after
-- [ ] Measure the total size of the three sources **before Phase 2**; it must
+- [ ] Measure the total size of the four sources **before Phase 2**; it must
       fit in ~730 GB after de-duplication
-- [ ] Ingest from Drive, GCS and the MacBook into separate directories;
-      `rclone check` / `rsync --dry-run --checksum` each; then de-duplicate
+- [ ] Request the Flickr data export early — it is prepared asynchronously
+- [ ] Ingest from Drive, GCS, the MacBook and Flickr into separate directories;
+      `rclone check` / `rsync --dry-run --checksum` / Flickr item count each;
+      then de-duplicate
 - [ ] First full backup, restore proof, *then* decide the fate of the sources
 
 ---
