@@ -488,7 +488,7 @@ The clean split that makes everything else work:
 
 | Drive | Owner | Contents | Touched by this plan? |
 | --- | --- | --- | --- |
-| **2 TB P41** ("fast" below) | Windows, entirely | MSR, `C:`, WinRE as they are today, **plus a new ESP** carved from `C:` — see below. Steam library stays on `C:` | **Once**, before anything else: a ~1 GB shrink of `C:` and a new ESP. Then never again |
+| **2 TB P41** ("fast" below) | Windows, entirely | MSR, `C:`, WinRE as they are today, **plus a new ESP** carved from `C:` — see below. All Windows games stay on `C:` | **Once**, before anything else: a ~1 GB shrink of `C:` and a new ESP. Then never again |
 | **1 TB P41** ("bulk" below) | NixOS, entirely | ESP, `/`, `/srv/media` | Yes — disko formats the whole thing, **after** Windows stops booting from it |
 
 Phase 0 found the two drives are the same model, so "fast" and "bulk" are now
@@ -577,12 +577,6 @@ brings it near a formatting tool.
           content = { type = "filesystem"; format = "ext4"; mountpoint = "/"; };
         };
 
-        # OPTIONAL — only if Phase 0 finds the fast drive too full for the
-        # Steam library. Deliberately no `content`: disko creates the partition
-        # and stops. Windows formats it NTFS once and uses it in both boot
-        # modes; the host never mounts it. See "Where the Steam library lives".
-        # games.size = "<FILL_ME>G";
-
         media = {
           size = "100%";
           content = {
@@ -606,17 +600,16 @@ brings it near a formatting tool.
 
 #### Where the Steam library lives
 
-**Default: leave it on the fast drive, wherever it is today.** Windows owns
-that whole disk and the guest gets the whole controller, so the library comes
-along in both boot modes with no configuration whatsoever. This is the option
-with zero moving parts, and it is available exactly because the drive is not
-being carved up.
+**Decided: on the 2 TB drive, with Windows, where it is today**
+(`C:\Program Files (x86)\Steam`). Windows owns that whole disk and the guest gets
+the whole controller, so the library comes along in both boot modes with no
+configuration whatsoever. The 2 TB drive is Windows' and nothing else's; the
+1 TB drive carries no Windows data at all.
 
-**Fallback, if Phase 0 finds the fast drive too full:** a dedicated partition on
-the bulk drive, formatted NTFS by Windows, handed to the guest as a raw block
-device and mounted by drive letter on bare metal. That works, but it reintroduces
-a seam — the guest now has one disk by VFIO and one by block passthrough, and
-the host must never mount the NTFS. Take it only if capacity forces it.
+The one number to watch is `C:`'s free space — 89 GB at Phase 0. When it runs
+short, the answer is uninstalling games or a bigger/second Windows drive, not a
+games partition on the 1 TB drive: that would put a second disk in the guest
+by block passthrough next to the VFIO one, and take space from `/srv/media`.
 
 Note what is *not* an option: putting the library on `/srv/media` and reaching
 it over SMB. Loading times over a network share are not worth discussing.
@@ -798,7 +791,7 @@ what the rest of this section rests on:
 | Drive | Chosen for | Holds |
 | --- | --- | --- |
 | **fast** | latency | Windows, entirely — `C:` and, by default, the Steam library. NixOS never mounts it |
-| **bulk** | capacity | NixOS `/`, `/srv/media`, and the Steam library only if the fast drive is too full — [Disk layout](#disk-layout--one-drive-each) decides |
+| **bulk** | capacity | NixOS `/` and `/srv/media`. No Windows data |
 
 This section is about the bulk drive's media volume. Note that `/` is now its
 neighbour, which raises the stakes on the `disko --mode disko` warning below:
@@ -921,9 +914,7 @@ ransomware, an `rm -rf` nobody notices for a year) are each more likely than the
 SSD death that prompted this.
 
 **Start with Hetzner**, sized to the **media subvolume** rather than the whole
-bulk drive. `/` is not in scope — it is declarative and rebuilt from this repo —
-and if the games partition ends up on this drive at all, the host never mounts
-it, so nothing on it can be swept into a backup either.
+bulk drive. `/` is not in scope — it is declarative and rebuilt from this repo.
 Adding a local HDD later as a fast-restore tier is additive — same restic
 invocation, second repository — not a migration.
 
