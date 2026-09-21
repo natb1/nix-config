@@ -4,6 +4,9 @@ Written 2026-09-19, at the point where the repo exists and is verified to build
 but **nothing has been switched**. The WSL box is still running generation 49,
 built from `commons.systems` `main`.
 
+> **Update 2026-09-21:** the WSL box has been switched to `.#wsl` and §1's QA
+> passes, including `wezterm connect` from the Mac and from Windows. §2 and §3 are next.
+
 > **Update 2026-09-19:** the Mac (`darwinConfigurations.mba`) has now been built
 > and switched — see §4, which is done. The WSL box (§1) is still on generation
 > 49 and remains the outstanding switch.
@@ -65,56 +68,60 @@ Nix proves the closure is right; it cannot prove any of this. Work down the list
 
 **Identity and the rename**
 
-- [ ] `hostname` → `wsl`
-- [ ] `tailscale status` → `Self` is `wsl`, and the tailnet name is
+- [x] `hostname` → `wsl`
+- [x] `tailscale status` → `Self` is `wsl`, and the tailnet name is
       `wsl.tail98e96e.ts.net`
-- [ ] From the MacBook: `ssh n8@wsl.tail98e96e.ts.net` succeeds
-- [ ] `avahi-resolve -n wsl.local` resolves (and `nixos.local` no longer does)
-- [ ] `systemctl --failed` is empty
+- [x] From the MacBook: `ssh n8@wsl.tail98e96e.ts.net` succeeds
+- [x] `avahi-resolve -n wsl.local` resolves (and `nixos.local` no longer does)
+- [x] `systemctl --failed` is empty. `systemctl --user --failed` initially was
+      not: ten hand-written `dispatch-*` unit files in `~/.config/systemd/user/`
+      (written by dispatch itself, never Nix-managed) had timers still firing at
+      the deleted `commons.systems/.claude/skills/dispatch-propagate/` scripts.
+      Disabled and removed 2026-09-21; the user failed list is now empty too
 
 **WezTerm — the piece most exposed by the rename**
 
-- [ ] `systemctl --user status wezterm-mux-server` is active
-- [ ] The Windows WezTerm GUI launches and auto-connects. It reads
+- [x] `systemctl --user status wezterm-mux-server` is active
+- [x] The Windows WezTerm GUI launches and auto-connects. It reads
       `C:\Users\<you>\.wezterm.lua`, which this switch overwrites with the
       `connect wsl` version — confirm the copy happened and the file says `wsl`
-- [ ] A remote pane actually opens (this is the mux handshake; a version
+- [x] A remote pane actually opens (this is the mux handshake; a version
       mismatch shows as the window closing immediately)
-- [ ] Tailscale-discovered `ssh_domains` still list both machines
+- [x] Tailscale-discovered `ssh_domains` still list both machines
 
 **Windows-side bridges (now `hosts/wsl/home/`)**
 
-- [ ] `/mnt/g` is mounted: `mountpoint /mnt/g && ls /mnt/g`
-- [ ] `systemctl status mount-gdrive mount-gdrive-heal` — boot unit
+- [x] `/mnt/g` is mounted: `mountpoint /mnt/g && ls /mnt/g`
+- [x] `systemctl status mount-gdrive mount-gdrive-heal` — boot unit
       `active (exited)`, healer timer armed
-- [ ] `claude --chrome` bridges to Windows Chrome; the native-messaging files
+- [x] `claude --chrome` bridges to Windows Chrome; the native-messaging files
       are in `/mnt/c/Users/<you>/.claude/chrome/`
-- [ ] WezTerm Windows GUI install is *not* reinstalled — `windowsInstallEnabled`
+- [x] WezTerm Windows GUI install is *not* reinstalled — `windowsInstallEnabled`
       is `false` in `modules/home/wezterm-pin.nix` (a deliberate holding action,
       see item 6), so an existing GUI in `%LOCALAPPDATA%` is left alone
 
 **Shared home config**
 
-- [ ] `git config user.email` → `nathan@natb1.com` (this moved into the shared
+- [x] `git config user.email` → `nathan@natb1.com` (this moved into the shared
       module; it used to be set in the flake's host block)
-- [ ] `cat ~/.ssh/authorized_keys` — both keys present, mode `600`
-- [ ] `claude --version` runs, and the seccomp filter is where auto-detection
+- [x] `cat ~/.ssh/authorized_keys` — both keys present, mode `600`
+- [x] `claude --version` runs, and the seccomp filter is where auto-detection
       looks: `ls ~/.npm-global/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/`
-- [ ] `nix config show experimental-features` → `nix-command flakes`, and the
+- [x] `nix config show experimental-features` → `nix-command flakes`, and the
       `!include` of `~/.config/nix/access-tokens.conf` is still in
       `~/.config/nix/nix.conf`
-- [ ] `docker run --rm hello-world`
-- [ ] `gh auth status`, `nvim --version`, `direnv version`, `gpg --version`
-- [ ] `echo $EDITOR` → `nvim`; `date` shows Eastern time
-- [ ] zsh is still the login shell
+- [x] `docker run --rm hello-world`
+- [x] `gh auth status`, `nvim --version`, `direnv version`, `gpg --version`
+- [x] `echo $EDITOR` → `nvim`; `date` shows Eastern time
+- [x] zsh is still the login shell
 
 **Confirm the intended removals actually happened**
 
-- [ ] `systemctl --user status dispatch-claude-daemon` → no such unit
-- [ ] `systemctl --user status claude-daemon` → **active**; it is the same unit
+- [x] `systemctl --user status dispatch-claude-daemon` → no such unit
+- [x] `systemctl --user status claude-daemon` → **active**; it is the same unit
       under a neutral name, so background Claude sessions still work
-- [ ] Start a background session and confirm it survives closing its terminal
-- [ ] `systemctl list-timers | grep office-hours` → empty
+- [x] Start a background session and confirm it survives closing its terminal
+- [x] `systemctl list-timers | grep office-hours` → empty
 
 ---
 
@@ -122,14 +129,16 @@ Nix proves the closure is right; it cannot prove any of this. Work down the list
 
 The hostname is the Tailscale node name, so this reaches other devices.
 
-- [ ] Tailscale admin panel: remove the stale `nixos` node if the box
-      re-registered as a new machine rather than renaming in place
-- [ ] MacBook: update anything pointing at `nixos.tail98e96e.ts.net` or
+- [x] Tailscale admin panel: remove the stale `nixos` node if the box
+      re-registered as a new machine rather than renaming in place. Not needed:
+      it renamed in place (same `100.78.113.36`), no `nixos` node remains
+- [x] MacBook: update anything pointing at `nixos.tail98e96e.ts.net` or
       `nixos.local` — ssh config, scripts, WezTerm domains
-- [ ] MacBook: drop the stale `nixos` entry from `~/.ssh/known_hosts`
-- [ ] The `n8@nixos` SSH key comment in `modules/home/default.nix` is now
+- [x] MacBook: drop the stale `nixos` entry from `~/.ssh/known_hosts`
+- [x] The `n8@nixos` SSH key comment in `modules/home/default.nix` is now
       misleading. Cosmetic — it is a comment field, not part of the key — but
-      worth correcting on the next edit of that file
+      worth correcting on the next edit of that file. Done 2026-09-21: now `n8@wsl`
+      in the repo and in `~/.ssh/id_ed25519{,.pub}` on the WSL box
 
 Not affected, and deliberately left alone: the Windows-registered WSL **distro**
 name is still `NixOS`. `wsl.exe -d NixOS` and the `//wsl$/NixOS/...` UNC paths in
@@ -204,7 +213,8 @@ service / Windows-copy activation stay inert on darwin via `stdenv.isLinux`.
 Verified post-switch: `wezterm --version` = `0-unstable-20260716-195552-76b606ec`
 and `~/Applications/Home Manager Apps/WezTerm.app` → the pinned store path.
 
-- [ ] **Version-lockstep with WSL.** The Mac client is now on `20260716` but the
+- [x] **Version-lockstep with WSL.** Resolved 2026-09-21 by §1: `wezterm connect wsl`
+      works from the Mac. The Mac client is now on `20260716` but the
       WSL box still runs the old generation, so its mux server is an older
       wezterm — `wezterm connect nixos` may fail the handshake
       (`unexpected response … UnitResponse`) until §1 is applied. Switching WSL
