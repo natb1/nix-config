@@ -87,26 +87,22 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 | iGPU | Raphael `1002:164e` | Host graphics; different ID from the dGPU, so the `vfio-pci.ids` match cannot catch it |
 | SSDs | **Both SK hynix Platinum P41** (`SHPP41-1000GM`, `SHPP41-2000GM`), both NVMe, controller ID **`1c5c:1959` on both** | (1) There is no fast/bulk split — same drive family, same performance, so the `fio` worry and [Risk 7](#risks-ranked) evaporate. (2) **[Risk 3](#risks-ranked) is confirmed**: `vfio-pci.ids` would take both controllers. Bind by PCI address — [Phase 4](#phase-4--vfio-and-the-libvirt-host) |
 | Windows' drive | `C:` is the **2 TB** P41 (Windows disk 1, CPU-attached controller), 1862 GB NTFS, **89 GB free**. Its partitions: MSR, `C:`, WinRE — **no ESP** | Steam is on `C:` (`C:\Program Files (x86)\Steam`, the only library) and stays. 89 GB free is thin but not a blocker |
-| The other drive | The **1 TB** P41 (Windows disk 0, chipset controller) is **not empty**: a 1 GB ESP marked System, plus five Linux-filesystem partitions (31 + 244 + 585 + 39 + 31 GB) | **Two plan-breaking facts** — see [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). Also: those five partitions hold *something*; identify it before disko formats this drive |
+| The other drive | The **1 TB** P41 (Windows disk 0, chipset controller) is **not empty**: a 1 GB ESP marked System, plus five Linux-filesystem partitions (31 + 244 + 585 + 39 + 31 GB) | **Two plan-breaking facts** — see [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). Those five partitions are an old Linux install — **disposable, no backup needed** (confirmed 2026-09-21) |
 | Windows' RTC | `RealTimeIsUniversal = 1` — Windows already keeps the RTC in **UTC** | `time.hardwareClockInLocalTime = true` would *create* the clock fight it was meant to prevent. Removed from `disko.nix`; NixOS's UTC default is correct |
-| Fast Startup | **On** (`HiberbootEnabled = 1`; `powercfg /a` lists Hibernate + Fast Startup) | `powercfg /h off` is still to do, and it is required |
+| Fast Startup | Was **on**; `powercfg /h off` run 2026-09-21, `powercfg /a` now reports hibernation not enabled and Fast Startup unavailable | Done. Re-check after feature updates — [Risk 6](#risks-ranked) |
+| BitLocker | `manage-bde -status`: C: **Fully Decrypted**, no key protectors | Nothing to do; the guest will boot without a recovery prompt. Watch for Device Encryption re-enabling itself — [Risk 8](#risks-ranked) |
+| Secure Boot | `Confirm-SecureBootUEFI` → **False** | Already off. systemd-boot installs without lanzaboote |
 | SMBIOS | system/board manufacturer `Gigabyte Technology Co., Ltd.`, product `B650I AORUS ULTRA`, serials `Default string`, UUID `03560274-043C-0547-E806-FF0700080009` | The `<sysinfo>` block in the licensing section can be filled from this (confirm against `dmidecode` in Phase 0 — Windows byte-swaps the first three UUID fields on some firmware) |
 | Network | Windows runs on **Wi-Fi** (MediaTek RZ616 / MT7922, MAC `F0:A6:54:14:9B:0D`); the Intel I225-V wired port (`74:56:3C:47:E8:FF`) is **disconnected** | Guest `<mac>` for activation = the Wi-Fi MAC. And a Wi-Fi-only host cannot bridge the guest onto the LAN — NAT it, or plug in the cable. Samba's `<FILL_ME_LAN_IF>` is whichever of these NixOS uses |
 | WSL | Still hostname `nixos`, generation `nixos-system-nixos-26.11.20260831`; `/etc/nixos` stubs still present | [TODO.md](../TODO.md) §1–§3 have **not** been applied yet |
 
 ### Still unknown
 
-- **What is on the 1 TB drive's five Linux partitions.** ~930 GB of ext4-typed
-  (GPT `0fc63daf…`) partitions nobody has accounted for. Mount them read-only
-  from the Phase 0 live USB and decide what to keep before anything formats
-  that drive.
 - **IOMMU groups** for the dGPU (bus 3) and the **2 TB** NVMe controller. Still
   the hard gate, and still only answerable from Linux. The CPU-attached slot is
   the likelier of the two to be cleanly grouped, which is the good news.
 - **SMART wear** on both P41s (`smartctl -a`, or elevated
   `Get-PhysicalDisk | Get-StorageReliabilityCounter`).
-- **BitLocker** (`manage-bde -status`) and **Secure Boot**
-  (`Confirm-SecureBootUEFI`) — both need an elevated prompt.
 - Linux CPU numbering for pinning — Phase 5 assumes the usual Ryzen layout
   (SMT sibling of CPU *n* is *n*+6); `lscpu -e` confirms it.
 
@@ -160,8 +156,8 @@ done | sort -h
 lscpu -e
 lstopo-no-graphics --of txt   # pkgs.hwloc — shows CCD/L3 boundaries
 
-# 6. Is the bulk drive fast enough to hold NixOS root? This decides whether the
-#    whole layout is worth it. Compare against the fast drive.
+# 6. OPTIONAL now: both drives are the same P41 model, so this only confirms
+#    the 1 TB is not degraded relative to the 2 TB.
 fio --name=r --rw=randread --bs=4k --iodepth=32 --numjobs=4 --size=2G \
     --runtime=30 --time_based --group_reporting --filename=/dev/<BULK>
 ```
@@ -207,23 +203,23 @@ Also in Phase 0:
 - [ ] **Give Windows its own ESP on the 2 TB drive** and prove it boots —
       [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). Hard
       precondition for Phase 2
-- [ ] Identify what is on the 1 TB drive's five Linux partitions (mount
-      read-only from the live USB); copy off anything wanted
-- [ ] **`powercfg /h off`** from an elevated prompt. Disables hibernation and
+- [x] Identify what is on the 1 TB drive's five Linux partitions — *an old
+      Linux install; disposable, no backup needed*
+- [x] **`powercfg /h off`** from an elevated prompt — *done 2026-09-21*. Disables hibernation and
       with it Fast Startup. Non-negotiable here: Fast Startup means "shutdown"
       leaves the NTFS dirty and the volume mid-flight, and the whole premise of
       this plan is that the *same* filesystem gets mounted by two different
       Windows boots
-- [ ] **BitLocker: `manage-bde -status`.** If it is on, it must be disabled or
+- [x] **BitLocker: `manage-bde -status`** — *off: Fully Decrypted, no protectors*. If it is on, it must be disabled or
       moved to a password protector before the guest will boot. A TPM-sealed
       key is sealed against the host's measurements; the guest presents a
       different (virtual) TPM and different firmware, so the key will not
       unseal and every guest boot lands in recovery. Save the recovery key off
       this machine before changing anything
-- [ ] **Secure Boot off** in firmware (or lanzaboote later). Do this *after*
+- [x] **Secure Boot off** in firmware — *already off* (or lanzaboote later). Do this *after*
       BitLocker is handled, not before
-- [ ] Record the SMBIOS values the guest will need to impersonate —
-      see [below](#keeping-activation-stable-across-the-crossing)
+- [x] Record the SMBIOS values the guest will need to impersonate — *from
+      Windows, in the table above; cross-check with `dmidecode`* — see [below](#keeping-activation-stable-across-the-crossing)
 - [x] Settle the licensing question below — **resolved: RETAIL, digital
       license, linked to the Microsoft account, and there is only one install,
       so it simply keeps it.** No wipe, no second copy, nothing to time
@@ -681,8 +677,7 @@ mentioned, not mounted, and not passed to any command in this section. Read
 [Disk layout](#disk-layout--one-drive-each) first.
 
 Preconditions from Phase 0: both IOMMU gates pass, **Windows boots from its own
-ESP on the 2 TB drive**, the 1 TB drive's old Linux partitions have been checked
-for anything worth keeping, Fast Startup is off, BitLocker is off or on a
+ESP on the 2 TB drive**, Fast Startup is off, BitLocker is off or on a
 password protector, and Secure Boot is off.
 
 ```sh
