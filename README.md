@@ -10,14 +10,29 @@ remaining steps and the QA checklist.
 
 ## Hosts
 
-| Attribute | Machine | Rebuild |
-| --- | --- | --- |
-| `nixosConfigurations.wsl` | NixOS-WSL on the Windows desktop | `sudo nixos-rebuild switch --flake ~/natb1/nix-config#wsl` |
-| `darwinConfigurations.mba` | Apple Silicon MacBook Air | `darwin-rebuild switch --flake ~/natb1/nix-config#mba` |
+Run the update from a clone of this repo **on the machine being updated** — a
+host can only build and activate itself. Activation needs root on both
+platforms, and `flake.lock` is shared, so an update moves every host at once.
+
+### `wsl` — NixOS-WSL on the Windows desktop
+
+```sh
+cd ~/natb1/nix-config && git pull
+nix flake update
+sudo nixos-rebuild switch --flake .#wsl
+```
+
+### `mba` — Apple Silicon MacBook Air
+
+```sh
+cd ~/natb1/nix-config && git pull
+nix flake update
+sudo darwin-rebuild switch --flake .#mba
+```
 
 Home-manager is integrated as a NixOS / nix-darwin module, so one rebuild does
 both system and user config. There is no standalone `home-manager switch`
-entry point.
+entry point. Drop `nix flake update` to apply the config as locked.
 
 ## Layout
 
@@ -39,64 +54,40 @@ A `pkgs.stdenv.isLinux` guard is for behavior that genuinely differs by
 *platform*; it is not a substitute for host scoping, because a future native
 NixOS box is also Linux and would wrongly pick up WSL-only modules.
 
-## Applying updates
-
-Same loop on every machine: **check, preview, apply.** Only the rebuild command
-differs. Run it from a clone of this repo on the machine being updated — a host
-can only build and activate itself.
+## Before and after a switch
 
 ```sh
-cd ~/natb1/nix-config
-git pull
 nix flake check          # module tests; do this before any switch
 ```
 
-### WSL (`wsl`)
+Preview a change before applying it — build without activating, then diff the
+closure against what is running:
 
 ```sh
-# preview: build without activating, then see exactly what would change
-nixos-rebuild build --flake .#wsl
+nixos-rebuild build --flake .#wsl     # or: darwin-rebuild build --flake .#mba
 nix store diff-closures /run/current-system ./result
-
-# apply
-sudo nixos-rebuild switch --flake .#wsl
-
-# undo the last switch
-sudo nixos-rebuild switch --rollback
-
-# what generations exist
-nixos-rebuild list-generations
 ```
 
-`nixos-rebuild` defaults to `nixosConfigurations.$(hostname)`, and this host *is*
-named `wsl`, so once switched the `#wsl` suffix is optional — `sudo
-nixos-rebuild switch --flake .` resolves to the same thing.
-
-### macOS (`mba`)
+Undo the last switch, or list what you can roll back to:
 
 ```sh
-# preview
-darwin-rebuild build --flake .#mba
-nix store diff-closures /run/current-system ./result
-
-# apply — activation must run as root on this nix-darwin version
-sudo darwin-rebuild switch --flake .#mba
-
-# undo the last switch
-sudo darwin-rebuild --rollback
-
-# what generations exist
-darwin-rebuild --list-generations
+sudo nixos-rebuild switch --rollback   # wsl;  generations: nixos-rebuild list-generations
+sudo darwin-rebuild --rollback         # mba;  generations: darwin-rebuild --list-generations
 ```
 
-The `#mba` suffix is **not** optional here: `darwin-rebuild` also defaults to the
-hostname, and the MacBook's hostname is not `mba`.
+Both tools default to `<configurations>.$(hostname)`. The WSL host *is* named
+`wsl`, so there the `#wsl` suffix is optional; the MacBook's hostname is not
+`mba`, so there it is required.
+
+Review the closure diff on one machine before switching the rest, and commit
+`flake.lock` in its own commit so a regression is attributable. To bump a single
+input instead: `nix flake update nixpkgs`.
 
 ### A future native NixOS host
 
 Add `hosts/<name>/` (with the `nixos-generate-config`-produced
 `hardware-configuration.nix`) plus a `nixosConfigurations.<name>` block in
-`flake.nix` importing `./modules/nixos`, then use the WSL commands with the new
+`flake.nix` importing `./modules/nixos`, then use the `wsl` commands with the new
 attribute.
 
 The concrete case — the desktop gaining a native NixOS install on its second
@@ -111,17 +102,6 @@ Note that it brings **Windows configuration into this repo** under
 applies to itself. There is one Windows install, booted either bare metal or
 virtualized, so one profile covers both. The name `nix-config` is about the tool
 that generates the configuration, not a restriction on what it configures.
-
-### Updating inputs
-
-```sh
-nix flake update                    # all inputs
-nix flake update nixpkgs            # just one
-```
-
-`flake.lock` is shared by every host, so a bump moves all of them at once.
-Review the closure diff on one machine before switching the rest, and commit the
-lockfile in its own commit so a regression is attributable.
 
 ## State this repo does not manage
 

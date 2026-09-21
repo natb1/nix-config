@@ -106,14 +106,14 @@
             hostPlatform = "aarch64-darwin";
             homeDirectory = "/Users/n8";
           })
-          {
-            # modules/home/wezterm.nix sets programs.wezterm.enable = true for
-            # the Linux mux server; macOS runs the WezTerm GUI installed outside
-            # Nix, so disable the home-manager copy here.
-            home-manager.users.n8 = { lib, ... }: {
-              programs.wezterm.enable = lib.mkForce false;
-            };
-          }
+          # macOS uses modules/home/wezterm.nix as-is: it installs the pinned
+          # nightly (modules/home/wezterm-package.nix) as a real WezTerm.app and
+          # generates ~/.config/wezterm/wezterm.lua. Installing the pinned build
+          # here — rather than an out-of-Nix GUI — keeps this Mac's `wezterm
+          # connect` client in version lockstep with the WSL mux server, which is
+          # built from the same pin. The Linux-only mux service and Windows-copy
+          # activation in that module are guarded by pkgs.stdenv.isLinux, so they
+          # stay inert on darwin.
         ];
       };
 
