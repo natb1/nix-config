@@ -71,32 +71,49 @@ parallel.)
    `nixos-generate-config`, interface names from `ip link`.
 6. **Phase 2** — install NixOS on the 1 TB drive.
 
+### Decided 2026-09-21
+
+- **Network: Wi-Fi everywhere, for now.** NixOS, bare-metal Windows and the
+  guest all use the MediaTek RZ616 (MT7922). Consequences:
+  [Networking on Wi-Fi](#networking-on-wi-fi).
+- **NixOS root: 200 GB.** `/srv/media` gets the rest of the 1 TB drive,
+  ~730 GB.
+- **The media is irreplaceable** — cannot be re-downloaded or re-ripped. So the
+  offsite backup is Hetzner, append-only is mandatory rather than optional, and
+  the backup lands before the media does. See [Media storage](#media-storage).
+- **Board revision: 1.0** (per the box). Firmware must come from the rev 1.0
+  download page — see [Firmware update](#firmware-update).
+
 ### Residuals — open, not blocking the next step
 
 | Item | Where it bites | Notes |
 | --- | --- | --- |
-| Board revision (rev 1.0/1.1 vs 1.3) | Step 2 | Read the sticker on the board; the BIOS files are revision-specific |
-| Ethernet: plug in or stay on Wi-Fi? | Phase 3 (Samba `<FILL_ME_LAN_IF>`), Phase 4 (guest network) | Wi-Fi cannot bridge, so the guest is NAT-only unless the I225-V is cabled. The guest's `<mac>` for activation is the Wi-Fi MAC either way |
-| Root partition size | Phase 1, `disko.nix` `<FILL_ME>G` | Every GB given to `/` comes out of `/srv/media` on a 1 TB drive. ~150–200 GB is ample for a Nix store with GC |
+| Latest rev 1.0 BIOS version | Step 2 | Newest found by search: F39 (2025-12-28). Confirm on Gigabyte's rev 1.0 page — there may be newer |
+| Board revision on the PCB itself | Step 2 | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
+| Wi-Fi interface name on NixOS | Phase 3 (Samba), firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
+| Where the media lives today | Media storage | It has to be copied onto `/srv/media` after Phase 2. Since it is irreplaceable, the original stays put until the Hetzner backup of `/srv/media` has passed a restore test |
 | Stale NVRAM entry for the old ESP | Phase 2 | Once disko wipes the 1 TB drive, the old "Windows Boot Manager" entry points at nothing. `efibootmgr -b <n> -B` it, alongside the `efibootmgr -o` step |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
 | `account.microsoft.com/devices` | Before Phase 8 | Note the name the PC is listed under — it is how the Activation Troubleshooter identifies it |
 | Game library vs ProtonDB | Before Phase 7 | Which titles need Windows at all, and which of those need bare metal (kernel anti-cheat) |
-| Backup target: Hetzner BX21 vs local HDD | Media storage, step 2 | Depends on whether the media is replaceable |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet |
 
 ### Firmware update
 
-**Currently F9d (2023-09). Gigabyte's latest for rev 1.3 is F11c (2026-07-20,
-AGESA 1.3.0.1c).** Three years of AGESA updates is worth taking before the
+**Currently F9d (2023-09). The board is rev 1.0**, whose BIOS line is numbered
+differently from rev 1.3's (rev 1.3's F11c is *not* for this board). The newest
+rev 1.0 release found is **F39 (2025-12-28)**; take whatever Gigabyte's rev 1.0
+support page lists as latest. **Never flash a file from another revision's
+page.** Three years of AGESA updates is worth taking before the
 Linux-side Phase 0 pass, for this plan specifically: IOMMU grouping and ACS
 behaviour come from the firmware, and on a mini-ITX board with one x16 slot a
 firmware update is the only lever available if the groups come back dirty.
 Security fixes (PSP firmware, the DDR5 Rowhammer CVE-2025-6202 fix in F8+) come
 along too.
 
-Mechanics: download the file for **your** board revision from Gigabyte, put it
+Mechanics: download the latest file from
+[the rev 1.0 support page](https://www.gigabyte.com/Motherboard/B650I-AORUS-ULTRA-rev-10/support), put it
 on a FAT32 USB stick, flash with **Q-Flash** (or Q-Flash Plus, no CPU/RAM needed)
 from the firmware setup. Not from inside Windows.
 
@@ -110,6 +127,7 @@ A firmware update resets settings to defaults. Afterwards, re-check:
 - [ ] Windows boots and is still activated. The fTPM may be cleared by an AGESA
       jump; with BitLocker off that costs nothing but possibly a Windows Hello
       PIN re-setup
+- [ ] Wi-Fi still works in Windows (the only network this machine has)
 - [ ] Record the new version in the Phase 0 table
 
 ---
@@ -162,7 +180,7 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 
 | Item | Measured | Consequence for this plan |
 | --- | --- | --- |
-| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. The BIOS is three years old (latest for rev 1.3: F11c, 2026-07) — [Firmware update](#firmware-update) |
+| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. Board is **rev 1.0** (per the box). The BIOS is three years old (newest rev 1.0 found: F39, 2025-12) — [Firmware update](#firmware-update) |
 | CPU / RAM | Ryzen 5 **7600X**, 6C/12T, **one CCD**; **32 GB** RAM; SVM enabled in firmware | No cross-CCD concern. Phase 5's numbers were written for a 16-core/64 GB box and are now corrected — guest 4C/8T + 16 GiB, host 2C/4T |
 | dGPU | **Radeon RX 6600 XT** (Navi 23, RDNA2) `1002:73ff` + HDMI audio `1002:ab28`, Windows PCI bus 3 fn 0/1 | RDNA2: **no `vendor-reset`**. Both IDs are unique on this box, so `vfio-pci.ids` is safe *for the GPU* |
 | iGPU | Raphael `1002:164e` | Host graphics; different ID from the dGPU, so the `vfio-pci.ids` match cannot catch it |
@@ -174,7 +192,7 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 | BitLocker | `manage-bde -status`: C: **Fully Decrypted**, no key protectors | Nothing to do; the guest will boot without a recovery prompt. Watch for Device Encryption re-enabling itself — [Risk 8](#risks-ranked) |
 | Secure Boot | `Confirm-SecureBootUEFI` → **False** | Already off. systemd-boot installs without lanzaboote |
 | SMBIOS | system/board manufacturer `Gigabyte Technology Co., Ltd.`, product `B650I AORUS ULTRA`, serials `Default string`, UUID `03560274-043C-0547-E806-FF0700080009` | The `<sysinfo>` block in the licensing section can be filled from this (confirm against `dmidecode` in Phase 0 — Windows byte-swaps the first three UUID fields on some firmware) |
-| Network | Windows runs on **Wi-Fi** (MediaTek RZ616 / MT7922, MAC `F0:A6:54:14:9B:0D`); the Intel I225-V wired port (`74:56:3C:47:E8:FF`) is **disconnected** | Guest `<mac>` for activation = the Wi-Fi MAC. And a Wi-Fi-only host cannot bridge the guest onto the LAN — NAT it, or plug in the cable. Samba's `<FILL_ME_LAN_IF>` is whichever of these NixOS uses |
+| Network | Windows runs on **Wi-Fi** (MediaTek RZ616 / MT7922, MAC `F0:A6:54:14:9B:0D`); the Intel I225-V wired port (`74:56:3C:47:E8:FF`) is **disconnected** | **Decided: Wi-Fi for everything, for now.** See [Networking on Wi-Fi](#networking-on-wi-fi) |
 | WSL | Still hostname `nixos`, generation `nixos-system-nixos-26.11.20260831`; `/etc/nixos` stubs still present | [TODO.md](../TODO.md) §1–§3 have **not** been applied yet |
 
 ### Still unknown
@@ -563,8 +581,37 @@ nonexistent group fails activation:
 
 ```nix
 # hosts/desk/default.nix
-users.users.n8.extraGroups = [ "libvirtd" "kvm" "input" ];
+users.users.n8.extraGroups = [ "libvirtd" "kvm" "input" "networkmanager" ];
 ```
+
+### Networking on Wi-Fi
+
+Decided 2026-09-21: **all three — NixOS, bare-metal Windows, the guest — use
+Wi-Fi** (MediaTek RZ616, an MT7922, driver `mt7921e`). The I225-V wired port
+stays unplugged for now. What that pins down:
+
+```nix
+# hosts/desk/default.nix
+hardware.enableRedistributableFirmware = true;   # MT7922 firmware blobs
+networking.networkmanager.enable = true;         # nmcli/nmtui
+```
+
+- **The guest is NATed, not bridged.** A Wi-Fi client cannot put a second MAC
+  on the air (802.11 does not allow bridging a station), so the guest sits on
+  libvirt's `default` network (`virbr0`, 192.168.122.0/24) behind the host.
+  Outbound works; nothing on the LAN can reach the guest directly. Fine for
+  gaming; revisit by plugging in the cable if that ever matters.
+- **The guest reaches Samba over `virbr0`**, not the LAN — so `virbr0` needs a
+  firewall opening alongside the Wi-Fi interface. Covered in
+  [Media storage](#step-1--srvmedia-as-a-network-share).
+- **The guest's `<mac>` is the Wi-Fi MAC `f0:a6:54:14:9b:0d`**, for the
+  activation hash. On the NATed `virbr0` segment it cannot collide with the
+  host's own use of that MAC on the Wi-Fi network.
+- **The Wi-Fi PSK is hand-provisioned state** (NetworkManager keeps it under
+  `/etc/NetworkManager/system-connections/`). Add it to the README's unmanaged
+  list in Phase 9.
+- **Install over Wi-Fi.** The graphical NixOS live ISO has NetworkManager;
+  connect with `nmtui` before running disko.
 
 ### Disk layout — one drive each
 
@@ -666,7 +713,7 @@ brings it near a formatting tool.
         };
 
         root = {
-          size = "<FILL_ME>G";
+          size = "200G";                  # decided 2026-09-21; the rest is media
           content = { type = "filesystem"; format = "ext4"; mountpoint = "/"; };
         };
 
@@ -914,9 +961,10 @@ protocol both speak well beats two they each speak badly.
         "server string" = "desk";
         "workgroup" = "WORKGROUP";
         # LAN + tailnet only. Never bind this to a default-route interface.
-        "interfaces" = "lo <FILL_ME_LAN_IF> tailscale0";
+        # Wi-Fi LAN, libvirt's NAT bridge (the guest), and the tailnet.
+        "interfaces" = "lo <FILL_ME_WLAN_IF> virbr0 tailscale0";
         "bind interfaces only" = "yes";
-        "hosts allow" = "127.0.0.1 192.168.0.0/16 100.64.0.0/10";  # /10 = tailnet CGNAT
+        "hosts allow" = "127.0.0.1 192.168.0.0/16 100.64.0.0/10";  # LAN + virbr0 + tailnet CGNAT
         "hosts deny" = "0.0.0.0/0";
         "server min protocol" = "SMB3";
         # macOS: resource forks and xattrs without littering ._ files everywhere.
@@ -945,7 +993,12 @@ protocol both speak well beats two they each speak badly.
   };
 
   networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 445 5357 ];
-  networking.firewall.interfaces."<FILL_ME_LAN_IF>" = {
+  networking.firewall.interfaces."<FILL_ME_WLAN_IF>" = {
+    allowedTCPPorts = [ 445 5357 ];
+    allowedUDPPorts = [ 3702 ];
+  };
+  # The Windows guest, NATed behind virbr0.
+  networking.firewall.interfaces.virbr0 = {
     allowedTCPPorts = [ 445 5357 ];
     allowedUDPPorts = [ 3702 ];
   };
@@ -996,7 +1049,8 @@ already compressed, so chunks do not repeat. What it does buy on this data:
 
 | Target | Cost | Covers | Still exposed to |
 | --- | --- | --- | --- |
-| **Hetzner BX21** (5 TB) | **€10.90/mo** ≈ $142/yr | drive death, `rm -rf`, fire, theft, ransomware | Hetzner itself — RAID on one array in one building, [not mirrored to other servers](https://docs.hetzner.com/storage/storage-box/) |
+| **Hetzner BX11** (1 TB) | **€3.20/mo** ≈ $42/yr | same as below | same as below |
+| Hetzner BX21 (5 TB) | €10.90/mo ≈ $142/yr | drive death, `rm -rf`, fire, theft, ransomware | Hetzner itself — RAID on one array in one building, [not mirrored to other servers](https://docs.hetzner.com/storage/storage-box/) |
 | Hetzner BX31 (10 TB) | €20.80/mo | same | same |
 | A local HDD (~6 TB) | ~$130 once | drive death **only** | anything that takes the whole machine, or the room it sits in |
 
@@ -1006,8 +1060,17 @@ media → Hetzner, because the failure modes it adds coverage for (theft,
 ransomware, an `rm -rf` nobody notices for a year) are each more likely than the
 SSD death that prompted this.
 
-**Start with Hetzner**, sized to the **media subvolume** rather than the whole
-bulk drive. `/` is not in scope — it is declarative and rebuilt from this repo.
+**Decided 2026-09-21: the media is irreplaceable, so Hetzner — a BX11 (1 TB,
+€3.20/mo).** The media subvolume is ~730 GB (1 TB minus the 200 GB root), so
+1 TB holds a full copy plus snapshot history with headroom; Storage Boxes
+upgrade in place to BX21 when it stops fitting. Watch `restic stats` — with
+append-only and no automatic pruning, the repository only grows.
+
+Irreplaceable also changes the order of operations: **the backup exists and has
+passed a restore test before the original copy of the media is retired.** Until
+then the SSD is not the only copy, and must not become it.
+
+Sized to the **media subvolume** rather than the whole bulk drive. `/` is not in scope — it is declarative and rebuilt from this repo.
 Adding a local HDD later as a fast-restore tier is additive — same restic
 invocation, second repository — not a migration.
 
@@ -1057,7 +1120,9 @@ before committing — that module has churned, and the flake tracks
    checksum errors mid-upload, which reads like corruption and is not. Pass
    `--checkers 4` (anything under 8) if it bites.
 
-#### Worth doing: make the repository append-only
+#### Required: make the repository append-only
+
+Optional for replaceable media; **required here**, because the media is not.
 
 Hetzner's port-23 shell can run `rclone serve restic --stdio`, which means the
 forced command in the Storage Box's `authorized_keys` can pin the desktop's key
@@ -1109,7 +1174,7 @@ A backup is a claim until it is restored. All four, before trusting it:
 - [ ] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled
 - [ ] `hosts/desk/media.nix`, imported from `hosts/desk/default.nix`
 - [ ] `smbpasswd -a n8`; mount from the Mac over both LAN and tailnet
-- [ ] Order the Storage Box sized to the bulk drive; generate a dedicated
+- [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
       ed25519 key for it
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
       added to the README's unmanaged-state list
@@ -1712,7 +1777,7 @@ Only after Phase 8 passes.
       install and the `G:` volume are gone; new entries are the Microsoft
       account the digital license hangs off (no product key — see
       [Secrets](#secrets)), everything on Windows' own drive, rclone
-      credentials, the Samba password database (`smbpasswd`), and
+      credentials, the Wi-Fi PSK, the Samba password database (`smbpasswd`), and
       `/etc/restic/{media.password,id_ed25519}`
 - [ ] Note in the README that `hosts/desk/windows/` configures a Windows install
       this repo does not otherwise own — the drive is Windows', the profile is
