@@ -2,22 +2,16 @@
 #
 # Installs the WezTerm Windows binary to the Windows user's %LOCALAPPDATA%\WezTerm\
 # at each home-manager activation, pinned to the same nightly build as the WSL
-# wezterm-mux-server (nix/home/wezterm-pin.nix).
+# wezterm-mux-server (modules/home/wezterm-pin.nix).
 #
 # Why the pin: the Windows GUI auto-connects to the WSL mux server; if the two
 # builds drift, the mux PDU handshake fails and the GUI window closes immediately.
-# Upstream distributes exactly ONE Windows nightly zip (overwritten in place), so
-# a naive "always curl the latest nightly" install drifts from the nixpkgs-pinned
-# mux server whenever their dates differ. Instead we fetch the zip content-pinned
-# by `windowsZipHash` and unpack it at build time; activation only mirrors the
-# resulting store tree to Windows. Bump both sides together with
-# nix/home/sync-wezterm.sh.
-#
-# Currently INERT: `windowsInstallEnabled` in the pin is false, so none of the
-# below is in the generation. That is a workaround for the byte pin expiring
-# against a rolling URL, not a decision about how the GUI should be delivered —
-# see nix/home/wezterm-pin.nix and
-# intentions/tactic-nix-wezterm-pin-nightly-drift.md.
+# Upstream distributes exactly ONE Windows nightly zip, overwritten in place, so
+# a pinned build disappears from upstream as soon as a newer nightly ships. The
+# zip is therefore fetched from this repo's own `wezterm-<version>` release — an
+# unmodified mirror that scripts/sync-wezterm.sh uploads when it bumps the pin —
+# content-pinned by `windowsZipHash` and unpacked at build time; activation only
+# mirrors the resulting store tree to Windows.
 
 {
   config,
@@ -29,12 +23,11 @@
 let
   pin = import ../../../modules/home/wezterm-pin.nix;
 
-  # Content-pinned nightly zip. The URL is upstream's rolling `nightly` asset;
-  # `windowsZipHash` locks it to the exact build recorded in the pin, so a later
-  # upstream republish cannot silently swap the binary — a hash mismatch fails
-  # loudly until the pin is refreshed via sync-wezterm.sh.
+  # Content-pinned mirror of the nightly zip. The release tag and asset name
+  # carry the version, so the URL is immutable; `windowsZipHash` additionally
+  # locks the bytes to exactly what sync-wezterm.sh hashed from upstream.
   weztermWindowsZip = pkgs.fetchurl {
-    url = "https://github.com/wez/wezterm/releases/download/nightly/WezTerm-windows-nightly.zip";
+    url = "https://github.com/natb1/nix-config/releases/download/wezterm-${pin.version}/WezTerm-windows-${pin.version}.zip";
     sha256 = pin.windowsZipHash;
   };
 
@@ -58,13 +51,7 @@ in
   # WSL: mirror the pinned Windows WezTerm into the user's %LOCALAPPDATA%.
   # DAG ordering: runs after "linkGeneration" so symlinks are stable before we
   # reach across the WSL boundary.
-  #
-  # Gated on pin.windowsInstallEnabled. That flag is a
-  # workaround for the rolling-URL pin going stale (see wezterm-pin.nix); while
-  # it is false, mkIf drops this activation entry before its content is forced,
-  # so weztermWindowsZip/weztermWindowsDir above are never evaluated and the
-  # nightly zip leaves the build closure entirely.
-  home.activation.installWeztermWindows = lib.mkIf pin.windowsInstallEnabled (
+  home.activation.installWeztermWindows =
     lib.hm.dag.entryAfter [ "linkGeneration" ] ''
       readonly WW_ERR_PERMISSION_DENIED=21
       readonly WW_ERR_USERNAME_DETECTION=22
@@ -80,7 +67,8 @@ in
           exit $WW_ERR_PERMISSION_DENIED
         fi
 
-        # Auto-detect Windows username (same logic as wezterm.nix). Use a
+        # Auto-detect Windows username (the tier-3 heuristic of
+        # wezterm-windows-config.nix). Use a
         # module-prefixed temp-file name so the EXIT trap registered by
         # copyWeztermToWindows isn't clobbered.
         WW_LS_STDERR=$(mktemp)
@@ -175,6 +163,5 @@ in
           fi
         fi
       fi
-    ''
-  );
+    '';
 }

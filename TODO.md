@@ -278,14 +278,13 @@ blank lines (the empty darwin block used to leave four); nothing else changed.
 
 ## 6. Other known-parked items inherited from the old repo
 
-- [ ] `windowsInstallEnabled = false` in `modules/home/wezterm-pin.nix`. The
-      Windows GUI is pinned by hash against a URL upstream overwrites in place,
-      so the pin goes stale on upstream's schedule and breaks the build. The flag
-      is a holding action. A real fix is one of: pin the last immutable stable
-      release instead of a nightly; fetch at activation time rather than as a
-      fixed-output derivation; or mirror the asset somewhere we own. Until then,
-      `scripts/sync-wezterm.sh` re-syncs the pin and re-enables the install until
-      upstream's next nightly.
+- [x] `windowsInstallEnabled = false` in `modules/home/wezterm-pin.nix`. Resolved
+      2026-09-21 by mirroring: `scripts/sync-wezterm.sh` now uploads the exact
+      upstream zip to an immutable `wezterm-<version>` release on
+      natb1/nix-config, and `hosts/wsl/home/wezterm-windows.nix` fetches it from
+      there. The flag is gone; the install is always on. The script's stale
+      `nix/home/` paths are fixed. First mirror: `20260917-114457-b09b56c2`, which
+      also moves the WSL mux server and the Mac GUI off `20260716`.
 - [x] `stdenv.isLinux` / `stdenv.isDarwin` are deprecated in nixpkgs 26.11 (they
       warn on every eval). Mechanical sweep to `stdenv.hostPlatform.isLinux` /
       `.isDarwin` across `modules/` and `hosts/`. Done 2026-09-21, tests' mocks
