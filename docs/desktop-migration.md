@@ -1,13 +1,21 @@
-# Plan — WSL → native NixOS with a GPU-passthrough Windows VM
+# Plan — WSL → native NixOS, dual-booting Windows, with a Windows VM too
 
 Written 2026-09-20. This is the *second* migration this repo tracks: [TODO.md](../TODO.md)
-is about finishing the move off `commons.systems`. This one is about the
-desktop stopping being a Windows box that hosts NixOS, and becoming a NixOS box
-that hosts Windows.
+is about finishing the move off `commons.systems`. This one is about the desktop
+stopping being a Windows box that hosts NixOS, and becoming a machine that boots
+NixOS *or* Windows, and that can run a second, separate Windows as a
+GPU-passthrough guest from the NixOS side.
+
+Three Windows-shaped facts drive most of what follows: the bare-metal install is
+**kept** (it holds the activated license and is the only place kernel anti-cheat
+runs), the guest is a **separate** install that stays **unactivated on purpose**,
+and both are configured by **one profile set living in this repo** —
+[Phase 6](#phase-6--managing-both-windows-installs).
 
 Sequencing: **finish TODO.md §1–§3 first.** Switching the WSL host onto this
-repo is the cheap, reversible change that proves the repo works. Wiping the
-machine is neither. Do not stack them.
+repo is the cheap, reversible change that proves the repo works. Repartitioning
+the machine's boot drive around an install you intend to keep is neither. Do not
+stack them.
 
 ---
 
@@ -16,21 +24,31 @@ machine is neither. Do not stack them.
 | Question | Answer | What it rules out |
 | --- | --- | --- |
 | GPU topology | Discrete card → VM, AMD iGPU → NixOS | Single-GPU hook gymnastics; the host never goes headless |
-| Anti-cheat | No kernel anti-cheat titles | Dual-boot as a permanent escape hatch; hypervisor-hiding hacks |
-| Windows config rigor | Rebuildable image — Nix generates the answer file and provisioner, the disk is a build artifact | Treating `C:\` as a pet |
+| Bare-metal Windows | **Kept.** Repartitioned, not wiped — it holds the activated license and is the anti-cheat escape hatch | `disko` owning the fast drive; a clean-slate install |
+| Virtualized Windows | **Also kept**, as a *second, separate* install, deliberately unactivated | Booting the bare-metal partition as the guest |
+| Windows config rigor | One profile set in this repo, rendered by Nix, applied to **both** targets by WinGet DSC | Per-target hand-clicking; treating either install as undocumented |
+| Drift repair | Guest: rebuild the image. Metal: converge, repair-install as last resort | Treating the metal as disposable |
 
-Three consequences worth stating up front:
+Four consequences worth stating up front:
 
-1. **The disk can be wiped.** No anti-cheat means no bare-metal Windows
-   partition to preserve, so `disko` can own the whole drive and the install is
-   a clean declarative one. (Disko explicitly does not support dual-boot; that
-   would have meant hand-partitioning.)
-2. **Do not hide the hypervisor.** The `<kvm><hidden state='on'/></kvm>` +
+1. **Disko does not own the fast drive.** Keeping bare-metal Windows means a
+   partition table disko must not touch — it
+   [explicitly does not support dual-boot](#disk-layout--dual-boot). The fast
+   drive is partitioned by hand, once, and its NixOS filesystems are declared
+   with plain `fileSystems` entries. Disko manages the bulk drive only.
+2. **The two Windows installs are never up at the same time.** Bare metal boots
+   *instead of* NixOS, and the guest only runs under NixOS. That mutual
+   exclusion is structural, and it is what makes a single NTFS game library
+   safely shareable between them (§1) — and what removes any way for NixOS to
+   push config to the metal, which shapes [Phase 6](#phase-6--managing-both-windows-installs).
+3. **Do not hide the hypervisor.** The `<kvm><hidden state='on'/></kvm>` +
    spoofed `vendor_id` trick exists to dodge anti-cheat, and it *costs*
    performance because it disables the Hyper-V enlightenments Windows uses to
-   run fast under KVM. Skip it entirely and take the enlightenments.
-3. **Check ProtonDB before building any of this.** Every title that runs native
-   under Proton is a title the VM does not have to serve. If the list comes back
+   run fast under KVM. Anti-cheat titles go on the metal, where they are
+   supported and where the license is. Skip the trick entirely and take the
+   enlightenments.
+4. **Check ProtonDB before building any of this.** Every title that runs native
+   under Proton is a title neither Windows has to serve. If the list comes back
    mostly green, the VM shrinks from "daily driver" to "occasional escape
    hatch", and several phases below get much less important.
 
@@ -49,6 +67,10 @@ Three consequences worth stating up front:
   whether the bulk drive is genuinely slower (QLC, SATA, Gen3) or merely
   larger. "Bulk" meaning *bigger* and "bulk" meaning *slower* lead to different
   answers.
+- **The fast drive's current partition table**, now that it is being preserved:
+  how much free space `C:` yields when shrunk, the size of the existing ESP, and
+  whether BitLocker is on. These decide the
+  [dual-boot layout](#disk-layout--dual-boot) and they cannot be guessed.
 
 ---
 
@@ -75,7 +97,9 @@ module's own comment predicts.
 
 **Nothing is destroyed in this phase.** WSL2 does not expose the PCI bus, so
 this has to be done from a NixOS live USB. Boot it, run the following, save the
-output somewhere that survives the wipe (the Mac, or the Drive folder).
+output somewhere off this machine (the Mac, or the Drive folder) — Phase 2
+edits this drive's partition table, and notes stored on it are notes you may be
+unable to read when you most need them.
 
 ```sh
 # 1. Confirm AMD-Vi is actually on. Empty output = IOMMU disabled in BIOS.
@@ -105,9 +129,11 @@ controller or a USB controller you need means passthrough takes the whole group.
   patched kernel and **defeats the isolation IOMMU exists to provide**. Treat it
   as a last resort you accept knowingly, not a default.
 - No IOMMU at all → enable SVM + IOMMU in BIOS and re-run. If the board truly
-  has neither, this plan is dead and dual-boot is the answer.
+  has neither, the VM half of this plan is dead — but bare-metal Windows is
+  being kept regardless, so the fallback is simply "dual-boot without the
+  guest", and everything except Phases 4–6's guest half still applies.
 
-Also in Phase 0, before anything is wiped:
+Also in Phase 0, before the partition table is touched:
 
 - [ ] `nixos-generate-config --no-filesystems --show-hardware-config` from the
       live USB → this is `hosts/desk/hardware-configuration.nix`
@@ -118,15 +144,38 @@ Also in Phase 0, before anything is wiped:
       tier; its wear level is the first honest input to "when does this die"
 - [ ] Inventory the game library: which titles, and what ProtonDB says about each
 - [ ] Inventory what is on `C:\` that matters and is not in Drive or git
+- [ ] **Image the whole fast drive before touching its partition table.** `C:`
+      is being shrunk in place, not reinstalled, and a shrink that goes wrong
+      takes the activated license with it. `ddrescue` to the bulk drive or an
+      external disk from the live USB, or a Windows-side full backup — either,
+      but not neither
+- [ ] **BitLocker status:** `manage-bde -status` from an elevated prompt. If it
+      is on, save the recovery key somewhere off this machine *and* suspend
+      protection before the repartition and before Secure Boot changes. Order:
+      suspend → repartition → change firmware settings → boot both → resume.
+      Skipping this is how you meet the recovery prompt with no key
+- [ ] **`powercfg /h off`** — disables hibernation and with it Fast Startup.
+      Required before any NTFS volume is shared with the guest or read by
+      NixOS: Fast Startup leaves the filesystem dirty on every "shutdown", and
+      a dirty NTFS mounted read-write from the other side corrupts it
+- [ ] Record the current partition table (`Get-Disk`/`Get-Partition`, or
+      `lsblk -o NAME,SIZE,FSTYPE,PARTTYPENAME` and `parted -l` from the USB),
+      including the ESP's size — [Phase 1](#disk-layout--dual-boot) needs it
+- [ ] Shrink `C:` from **inside Windows** (Disk Management, or
+      `Resize-Partition`), not from Linux. Windows' own shrinker understands
+      its filesystem and will refuse rather than guess; run a defrag first if
+      immovable files cap the shrink short of what you need
 - [x] Settle the licensing question below — **resolved: RETAIL, digital
-      license, already linked to the Microsoft account.** Its one unrecoverable
-      step, the account link, is done; what remains is a note-taking step
+      license, already linked to the Microsoft account, and the bare-metal
+      install keeps it.** The guest is deliberately unactivated, so the old
+      pre-wipe urgency is gone: nothing is being wiped
 
 ### Windows licensing — resolved
 
 **Answer for this machine: RETAIL, digital license, already linked to the
-Microsoft account. The VM is covered by the license terms, there is no key to
-protect, and nothing here blocks the wipe.**
+Microsoft account — and the bare-metal install keeps it.** The guest is a
+*second, separate* Windows install that runs unactivated by design. Nothing here
+blocks the repartition, and there is no key to protect.
 
 Measured on the pre-migration install:
 
@@ -136,7 +185,7 @@ Measured on the pre-migration install:
 | `LicenseFamily` | `Professional` | Pro edition, so the answer file installs Pro |
 | `PartialProductKey` | `3V66T` | The tail of `VK7JG-NPHTM-C97JM-9MPGT-3V66T`, Microsoft's published generic Pro key — *not* a per-machine key |
 | `OA3xOriginalProductKey` | empty | No MSDM table, so not an OEM preinstall |
-| Activation panel | *"activated with a digital license linked to your Microsoft account"* | The one unrecoverable pre-wipe step is already done |
+| Activation panel | *"activated with a digital license linked to your Microsoft account"* | Already linked; this install keeps the entitlement |
 
 The two facts that matter downstream: **there is no key string to recover, carry
 across the wipe, or keep out of git** — the entitlement lives on the Microsoft
@@ -145,26 +194,46 @@ travels through that account, not through anything typed into the answer file.**
 
 #### Can one license cover bare metal *and* the VM?
 
-**No — not both at once, and this plan does not need it to.**
+**No. Not both, and now that both exist, this is the section to re-read before
+touching activation.**
 
 The clause is *"**instead of** using the software directly on the licensed
 device, you may install and use the software within **only one** virtual (or
 otherwise emulated) hardware system on the licensed device."* "Instead of" is
-substitution, not addition: the VM becomes the licensed use in place of the
-bare-metal install. One instance on the device, whichever you pick.
+substitution, not addition. It permits moving the licensed use into a VM; it
+does not permit one license covering a bare-metal install and a VM at the same
+time. Keeping bare metal means the license stays there, and the guest is simply
+not covered by it.
 
-Activation mechanics land in the same place even on a loose reading of the
-terms. A digital license binds to a hardware hash plus the account, and the
-guest's hash differs from the host's. Re-applying the license to the VM through
-the Activation Troubleshooter moves the entitlement onto the VM's hash — the
-bare-metal install does not keep a copy of its own, and alternating between them
-means a manual Troubleshooter run in each direction, which Microsoft
-rate-limits.
+Activation mechanics enforce the same shape. A digital license binds to a
+hardware hash plus the account; the guest's hash differs from the metal's.
+Signing into the Microsoft account inside the guest and running the Activation
+Troubleshooter would **move the entitlement onto the guest's hash and
+deactivate the bare-metal install.** Bouncing it back is a manual Troubleshooter
+run that Microsoft rate-limits.
 
-Moot here by construction: [Phase 2](#phase-2--install) wipes the disk and no
-bare-metal Windows survives it. The question only bites if you were considering
-dual-boot, which the [decisions table](#decisions-locked-in) already rules out —
-this is a second, independent reason not to.
+So, as a standing rule for the guest:
+
+> **Never sign into the Microsoft account inside the VM, and never run the
+> Activation Troubleshooter there.** The guest stays unactivated on purpose.
+> There is no "just checking" version of this — signing in is the thing that
+> moves the license.
+
+This is a deliberate trade, not an oversight: an unactivated Windows 11 install
+is not a licensed one. It runs indefinitely and Microsoft permits it to, but if
+the guest ever becomes something you rely on rather than a test bed, the honest
+fix is a second license, not a Troubleshooter run against the first.
+
+**Rejected outright: booting the bare-metal partition as the guest.** Handing
+the physical Windows partition to the VM via block passthrough is a known VFIO
+pattern and it looks like it avoids maintaining two installs. It does not work
+here. The guest presents different hardware, so that single install would
+re-hash and fight activation every time you crossed between metal and VM — the
+exact failure this section exists to prevent — on top of the usual driver-set
+thrash and the risk of both booting it. Two separate installs is the cheaper
+answer, and it is what makes [Phase 6](#phase-6--managing-both-windows-installs)
+worth building: two installs are only maintainable if one method configures
+both.
 
 #### How the above was determined
 
@@ -213,31 +282,27 @@ well-documented technique — but note what that does and does not do: it makes
 the guest activate, it does not change the license terms. The empty
 `OA3xOriginalProductKey` above retires this path.
 
-#### Getting the digital license into the guest
+#### What the guest install looks like instead
 
-A digital license reaches the guest only by signing in to the Microsoft account,
-which collides with the answer file's planned *"local account, skip MS account"*
-OOBE ([Phase 6](#layers-24--the-image-build)). Left as written, the guest
-installs and stays unactivated indefinitely. Three workable orders:
-
-1. **Build unactivated, sign in last** — matches "build first, license once it
-   works" below, and keeps OOBE fully unattended. The default.
-2. Sign in during OOBE instead of creating a local account.
-3. Local account per the plan, then add the account later and run
-   Settings → System → Activation → Troubleshoot → *"I changed hardware on this
-   device recently."*
+The answer file's *"local account, skip MS account"* OOBE is now exactly right,
+and for a new reason: it is the thing keeping the license on the metal. Keep it,
+and treat the resulting unactivated guest as the finished state rather than a
+stage to graduate from.
 
 The answer file's product-key slot takes the generic Pro key
-`VK7JG-NPHTM-C97JM-9MPGT-3V66T` in all three cases. It selects the edition and
-gets Setup past the key prompt; it activates nothing. Because it is a published
+`VK7JG-NPHTM-C97JM-9MPGT-3V66T`. It selects the edition and gets Setup past the
+key prompt; it activates nothing, which is the intent. Because it is a published
 placeholder rather than a secret, it belongs in plaintext in `image.nix` — see
 [Secrets](#secrets).
 
-**An unactivated Windows 11 guest is a viable place to start.** It runs
-indefinitely: a desktop watermark, Personalization settings locked, an
-occasional nag. **No impact on games, performance, or driver support.** So the
-whole stack — passthrough, the image build, the perf hook — can be validated
-before touching activation at all. Build first, license once it works.
+**What unactivated costs, concretely:** a desktop watermark, Personalization
+settings locked (wallpaper, accent colour, lock screen), and an occasional nag.
+**No impact on games, performance, driver support, updates, or WinGet.** The
+locked Personalization pane is the only one that touches
+[Phase 6](#phase-6--managing-both-windows-installs): a handful of appearance
+settings cannot be applied to the guest through DSC or any other channel, so the
+`metal` and `guest` profiles legitimately diverge there rather than the guest
+drifting.
 
 - [x] **Before the wipe:** link the license to the Microsoft account — *already
       done; the Activation panel confirms it.* A retail license linked to an
@@ -356,57 +421,130 @@ nonexistent group fails activation:
 users.users.n8.extraGroups = [ "libvirtd" "kvm" "input" ];
 ```
 
-### Disk layout
+### Disk layout — dual-boot
+
+**Disko explicitly does not support dual-boot, so it does not get the fast
+drive.** That is not a workaround; it is the documented boundary. The fast drive
+already holds a Windows install that must survive, and disko's model is "declare
+the table, create the table". Two rules follow, and the rest of this section is
+their consequence:
+
+> The fast drive is partitioned **by hand, once**, and its NixOS filesystems are
+> declared with plain `fileSystems` entries.
+> Disko manages **the bulk drive only**.
+
+#### The fast drive, after shrinking `C:`
+
+| # | Partition | Owner | Notes |
+| --- | --- | --- | --- |
+| 1 | ESP | **shared** | Already exists. Windows made it; NixOS mounts it at `/boot` |
+| 2 | MSR (16 MB) | Windows | Leave it alone |
+| 3 | `C:` (NTFS) | Windows | Shrunk from inside Windows in Phase 0 |
+| 4 | WinRE (NTFS) | Windows | Recovery. Leave it alone — moving it breaks reset |
+| 5 | NixOS root (ext4) | NixOS | Created by hand in the freed space |
+| 6 | swap | NixOS | Sized for hibernation only if you want it; otherwise skip |
+
+**On sharing the ESP.** One ESP that both OSes use is the arrangement
+systemd-boot handles best: it auto-discovers `\EFI\Microsoft\Boot\bootmgfw.efi`
+and offers Windows as an entry with no extra configuration. Two ESPs works in
+firmware but makes cross-ESP chainloading awkward enough that it is not worth
+choosing deliberately.
+
+The catch is size. OEM ESPs are typically 100 MB, and NixOS puts every
+generation's kernel and initrd there — 512 MB is the usual recommendation, and
+this repo's previous single-boot layout asked for 1 GiB. Phase 0 records the
+actual size; the decision follows from it:
+
+- **ESP ≥ 512 MB** → share it as-is. Nothing to do.
+- **ESP is 100 MB** (the likely case) → either
+  **(a)** live within it: `boot.loader.systemd-boot.configurationLimit = 3;`
+  keeps three generations, which fits, at the cost of a shorter rollback
+  history; or
+  **(b)** grow it during the repartition, which means moving partition 3's
+  start — real work, and the one operation in this plan most likely to end in
+  a restore from the Phase 0 image. Only worth it if (a) proves too tight in
+  practice.
+
+Default to **(a)**. It is reversible, and `configurationLimit` is one line.
 
 ```nix
-# hosts/desk/disko.nix — device names from Phase 0, by-id only
+# hosts/desk/filesystems.nix — hand-partitioned, so hand-declared.
+# PARTUUIDs from `blkid` after partitioning, NOT device paths.
 {
-  disko.devices.disk = {
-    main = {
-      device = "/dev/disk/by-id/nvme-<FILL_ME_FAST>";
-      type = "disk";
-      content = {
-        type = "gpt";
-        partitions = {
-          ESP = {
-            size = "1G";   # NixOS keeps every generation's kernel here; 512M fills up
-            type = "EF00";
-            content = {
-              type = "filesystem"; format = "vfat";
-              mountpoint = "/boot"; mountOptions = [ "umask=0077" ];
-            };
-          };
-          root = {
-            size = "100%";
-            content = { type = "filesystem"; format = "ext4"; mountpoint = "/"; };
-          };
-        };
-      };
-    };
+  fileSystems."/" = {
+    device = "/dev/disk/by-partuuid/<FILL_ME_ROOT>";
+    fsType = "ext4";
+  };
 
-    # The bulk SSD: the guest's game library and the host's media volume,
-    # side by side on one disk with separate filesystems.
-    bulk = {
-      device = "/dev/disk/by-id/nvme-<FILL_ME_BULK>";
-      type = "disk";
-      content = {
-        type = "gpt";
-        partitions = {
-          # Raw block device handed to the Windows guest. Deliberately no
-          # `content`: disko creates the partition and stops there, the guest
-          # formats it NTFS once, and the host never mounts it. Drop this
-          # partition entirely if Phase 0 puts the library on the fast drive.
-          games.size = "<FILL_ME>G";
+  # The ESP Windows created. `umask=0077` hides it from non-root; do not
+  # reformat it, and do not let any tool "fix" it.
+  fileSystems."/boot" = {
+    device = "/dev/disk/by-partuuid/<FILL_ME_ESP>";
+    fsType = "vfat";
+    options = [ "umask=0077" ];
+  };
 
-          media = {
-            size = "100%";
-            content = {
-              type = "btrfs";
-              extraArgs = [ "-L" "media" ];
-              subvolumes."/media" = {
-                mountpoint = "/srv/media";
-                mountOptions = [ "noatime" ];
-              };
+  boot.loader.systemd-boot = {
+    enable = true;
+    configurationLimit = 3;   # a 100 MB shared ESP holds about this many
+  };
+  boot.loader.efi.canTouchEfiVariables = true;
+
+  # Windows writes local time to the RTC. Without this the two OSes fight over
+  # the clock and you get an offset on every crossing.
+  time.hardwareClockInLocalTime = true;
+}
+```
+
+#### The bulk drive — disko's, and now shared
+
+The game library partition changes meaning. It was "a raw block device handed to
+the guest". It is now **the single NTFS Steam library both Windows installs
+use**: a drive letter on bare metal, a raw block device on the guest.
+
+That is safe *only* because of the mutual exclusion in the
+[decisions table](#decisions-locked-in) — bare metal boots instead of NixOS, and
+the guest only runs under NixOS, so the two can never mount it at once. NTFS is
+not a cluster filesystem; two concurrent writers corrupt it. The structural
+guarantee is what makes this work, not discipline.
+
+Two conditions, both non-negotiable:
+
+- **Fast Startup off** (`powercfg /h off`, Phase 0). Otherwise bare-metal
+  Windows leaves the volume dirty on every shutdown and the guest either
+  refuses it or damages it.
+- **The host never mounts it.** No `fileSystems` entry, no automount. NixOS's
+  only relationship with this partition is passing it to the guest.
+
+The payoff is real: one library, installed once, usable from whichever Windows
+is booted, and the OS/library split that made "rebuild the guest" cheap now also
+means a guest rebuild costs nothing in re-downloads.
+
+```nix
+# hosts/desk/disko.nix — the BULK DRIVE ONLY. The fast drive is not described
+# here and must never be added: disko would recreate its table and take Windows
+# with it.
+{
+  disko.devices.disk.bulk = {
+    device = "/dev/disk/by-id/nvme-<FILL_ME_BULK>";
+    type = "disk";
+    content = {
+      type = "gpt";
+      partitions = {
+        # Shared NTFS Steam library. Deliberately no `content`: disko creates
+        # the partition and stops. Bare-metal Windows formats it NTFS once and
+        # gives it a drive letter; the guest gets it as a raw block device.
+        # The host never mounts it.
+        games.size = "<FILL_ME>G";
+
+        media = {
+          size = "100%";
+          content = {
+            type = "btrfs";
+            extraArgs = [ "-L" "media" ];
+            subvolumes."/media" = {
+              mountpoint = "/srv/media";
+              mountOptions = [ "noatime" ];
             };
           };
         };
@@ -475,22 +613,61 @@ single-user desktop; worth knowing before you diagnose it as a network problem.
 
 ---
 
-## Phase 2 — Install
+## Phase 2 — Install, alongside Windows
+
+**This phase is no longer a clean install.** Windows is on the fast drive and
+stays there, so the destructive one-liner this section used to open with is
+gone. Read [Disk layout](#disk-layout--dual-boot) first.
+
+Preconditions, all from Phase 0: the drive is imaged, BitLocker is suspended,
+Fast Startup is off, `C:` is already shrunk, and Secure Boot is off in firmware.
 
 ```sh
-# from the live USB, after Phase 0's gate passes
+# 1. Fast drive: create the NixOS partitions BY HAND in the free space left by
+#    the shrink. Partitions 1-4 (ESP, MSR, C:, WinRE) are Windows' — do not
+#    touch them. `cgdisk` or `parted`, whichever you trust more under pressure.
+#
+#    NOT `disko --mode disko` against this drive. Not ever. It recreates the
+#    whole table and Windows goes with it.
+
+# 2. Bulk drive: this one IS disko's, and it is empty, so the destructive mode
+#    is correct here exactly once.
 nix --extra-experimental-features 'nix-command flakes' \
   run github:nix-community/disko -- --mode disko \
   --flake /path/to/nix-config#desk
 
+# 3. Mount the hand-made partitions the way the installer expects.
+mount /dev/disk/by-partuuid/<ROOT> /mnt
+mkdir -p /mnt/boot
+mount /dev/disk/by-partuuid/<ESP> /mnt/boot      # Windows' ESP. Do NOT mkfs it.
+
+# 4. Record the PARTUUIDs into hosts/desk/filesystems.nix before installing.
+blkid
+
 nixos-install --flake /path/to/nix-config#desk
 ```
 
-Then reboot, `sudo tailscale up`, `git clone` the repo to `~/natb1/nix-config`,
-and from there it is the same `nixos-rebuild switch --flake .#desk` loop as
-every other host.
+Then reboot and **verify both directions before doing anything else** — a
+dual-boot that only goes one way is a problem best found now, while the live USB
+is still plugged in:
+
+- [ ] systemd-boot's menu lists both NixOS and Windows
+- [ ] Windows boots, and is still activated (Settings → System → Activation)
+- [ ] NixOS boots
+- [ ] Clocks agree after crossing between them — that is
+      `time.hardwareClockInLocalTime` doing its job
+- [ ] Resume BitLocker protection if Phase 0 suspended it
+
+Then `sudo tailscale up`, `git clone` the repo to `~/natb1/nix-config`, and from
+there it is the same `nixos-rebuild switch --flake .#desk` loop as every other
+host.
 
 - [ ] Add a `desk` row to the README's host table with its rebuild command
+
+**Windows updates will sometimes reassert themselves as the default boot
+entry.** This is normal, not a failure: `efibootmgr -o` from NixOS, or the
+firmware's boot menu, puts systemd-boot back in front. Worth knowing before it
+happens at an inconvenient moment.
 
 ---
 
@@ -568,20 +745,24 @@ what the rest of this section rests on:
 
 | Drive | Chosen for | Holds |
 | --- | --- | --- |
-| **fast** | latency | `/` and `win-os.qcow2` |
-| **bulk** | capacity | `/srv/media` (host-mounted, shared, backed up) and, by default, the guest's raw Steam library partition — [§1](#disk-layout) picks between them |
+| **fast** | latency | Windows `C:` (kept), `/` and `win-os.qcow2` |
+| **bulk** | capacity | `/srv/media` (host-mounted, shared, backed up) and, by default, the shared NTFS Steam library used by both Windows installs — [§1](#disk-layout--dual-boot) picks between them |
 
 The two live on one disk but never share a filesystem: the host mounts the media
-partition and never touches the games one, the guest gets the games partition as
-a raw block device and cannot see the media one.
+partition and never touches the games one. The games partition is NTFS, and
+**both** Windows installs use it — a drive letter on bare metal, a raw block
+device in the guest — which is safe only because they can never be running at
+the same time. [Disk layout](#disk-layout--dual-boot) has the conditions that
+keep it so.
 
 Two steps, in this order. The share is useful on day one; the backup is what
 makes the share safe to depend on.
 
 ### Step 1 — `/srv/media` as a network share
 
-**SMB, not NFS.** The clients are the MacBook today and the Windows guest after
-Phase 6. NFS on macOS is a long-standing disappointment — Finder integration,
+**SMB, not NFS.** The clients are the MacBook today and both Windows installs
+after Phase 6 — bare metal reaches the share over the LAN like any other client,
+which is a second reason SMB is the right protocol. NFS on macOS is a long-standing disappointment — Finder integration,
 locking, and UID mapping all fight you — and Windows needs SMB regardless. One
 protocol both speak well beats two they each speak badly.
 
@@ -959,7 +1140,7 @@ on the same cores as the vCPUs and show up as frame-time spikes.
 
 ---
 
-## Phase 6 — Declarative Windows: the options
+## Phase 6 — Managing both Windows installs
 
 ### The honest framing
 
@@ -969,25 +1150,217 @@ system toward a state, but deleting a line from the config does *not* remove
 what it installed. There is no `nixos-rebuild switch` that garbage-collects a
 registry key.
 
-So "declarative Windows" decomposes into five separate problems, each with
-different tooling and a different achievable ceiling:
+There are now **two** Windows installs, and the thing that used to rescue the
+convergent layer no longer covers both:
 
-| # | Layer | Ceiling | Options |
-| --- | --- | --- | --- |
-| 1 | **VM definition** — domain XML, VFIO binding, pinning, hugepages | **Fully declarative.** It is all Nix. | NixVirt · Nix-generated XML + a `virsh define` unit · virt-manager by hand |
-| 2 | **OS install** — edition, partitioning, user, locale, skip OOBE/MS-account | **Fully declarative.** The answer file is generated data. | `Autounattend.xml` from Nix attrs · `GenerateAnswerFile` · hand-written XML in git |
-| 3 | **Driver injection** — virtio storage/net/balloon | **Fully declarative**, hash-pinned. | `pkgs.virtio-win` · `NixVirt.lib.guest-install.virtio-win.iso` |
-| 4 | **Apps & settings inside Windows** | **Convergent only.** | WinGet DSC (`winget configure`) · Chocolatey · Scoop · Ansible over SSH/WinRM |
-| 5 | **Drift repair** | This is where you choose | **Rebuild the image** · re-run the convergence on a timer · snapshot-and-restore |
+| | Bare metal | Guest |
+| --- | --- | --- |
+| Holds the activated license | **yes** | no, permanently |
+| Holds user data | yes | no |
+| Can be thrown away and rebuilt | **no** | yes, cheaply |
+| Anti-cheat titles | yes | no |
+| Reachable from NixOS while NixOS is running | **no** — dual-boot | yes |
 
-**Layer 5 is the actual decision, and you have made it: rebuild.** That choice
-is what rescues layer 4 from being a lie. Convergence tools cannot guarantee
-state, but if the disk is a build artifact you can throw away, you do not need
-them to — a wrong state is fixed by regenerating, exactly like `nix-collect-garbage`
-plus a switch.
+"Rebuild the image" was the answer to drift. It is still the answer *for the
+guest*. For the metal it is not an answer at all, which means the convergent
+layer has to actually be good rather than merely be a first pass before a
+rebuild. That is the real cost of keeping bare-metal Windows, and it is worth
+paying: the metal is where the license and the anti-cheat titles live.
 
-This is also why the OS/library disk split in Phase 1 is load-bearing. Rebuild
-is only a credible repair path if it is cheap.
+So the layers, with which target each one serves:
+
+| # | Layer | Ceiling | Metal | Guest |
+| --- | --- | --- | --- | --- |
+| 1 | **VM definition** — domain XML, VFIO, pinning, hugepages | Fully declarative. It is all Nix | — | ✓ |
+| 2 | **OS install** — edition, partitioning, user, locale, skip OOBE | Fully declarative. The answer file is generated data | — | ✓ |
+| 3 | **Driver injection** — virtio storage/net/balloon | Fully declarative, hash-pinned | — | ✓ |
+| 4 | **Apps & settings inside Windows** | **Convergent only** | ✓ | ✓ |
+| 5 | **Drift repair** | The actual decision | Converge; repair-install as last resort | Rebuild |
+
+**Layer 4 is the shared one, and it is the whole of this phase's new work.**
+Layers 1–3 are guest-only and unchanged from the single-Windows plan.
+
+### One profile set, two targets
+
+The requirement is a single method that covers both installs, uses idioms a
+Windows admin would recognise, and lives in version control here. That resolves
+to: **Nix is the source of truth, WinGet DSC is the applier, and the rendered
+artifacts are committed to this repo.**
+
+```
+hosts/desk/windows/
+  profiles/
+    common.nix        # everything both installs get
+    metal.nix         # bare-metal only: dGPU driver, anti-cheat titles, BitLocker
+    guest.nix         # guest only: virtio guest tools, no account sign-in
+  render.nix          # profile attrs -> DSC yaml + .reg + Apply.ps1 + Test.ps1
+  rendered/           # GENERATED AND COMMITTED. This is what Windows reads.
+    metal/
+    guest/
+  image.nix           # guest only: ISO, answer file, build script (layers 2-3)
+```
+
+`common.nix` carries the overlap — shells, browsers, fonts, Steam, the settings
+you would be annoyed to set twice. `metal.nix` and `guest.nix` carry only what
+genuinely differs. The divergence is small and *declared*, which is the point:
+today the two installs differ because nobody wrote down how they differ.
+
+A profile is ordinary Nix attrs:
+
+```nix
+# hosts/desk/windows/profiles/common.nix
+{
+  packages = [
+    "Valve.Steam"
+    "Microsoft.PowerShell"
+    "Git.Git"
+    "wez.wezterm"
+  ];
+  settings = {
+    showFileExtensions = true;
+    taskbarAlignment = "Left";
+    developerMode = true;
+  };
+}
+```
+
+and `render.nix` turns it into the files Windows actually consumes, via
+`pkgs.formats.yaml` exactly as the previous plan generated the answer file:
+
+```yaml
+# hosts/desk/windows/rendered/metal/configuration.dsc.yaml
+# GENERATED by `nix run .#render-windows`. Do not edit; edit profiles/ instead.
+properties:
+  configurationVersion: 0.2.0
+  resources:
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: Valve.Steam
+      directives: { description: Install Steam }
+      settings: { id: Valve.Steam, source: winget }
+    - resource: Microsoft.Windows.Developer/WindowsExplorer
+      id: explorer
+      directives: { description: Explorer settings }
+      settings: { FileExtensions: Show }
+```
+
+### Why the artifacts are committed, not just built
+
+This is the part that dual-boot forces, and it is worth being explicit about
+because it looks like a Nix anti-pattern.
+
+**There is no push channel to bare metal.** NixOS and bare-metal Windows are
+never running at the same time, so the host cannot `ssh` a config over the way
+it could to the guest. Anything the metal applies, it must already have on disk.
+
+So the flow inverts: **Nix renders, the render is committed, Windows pulls.**
+
+```powershell
+# On either Windows install, from an elevated PowerShell:
+git -C C:\src\nix-config pull        # git clone once, on first run
+cd C:\src\nix-config\hosts\desk\windows\rendered\metal    # or \guest
+.\Apply.ps1
+```
+
+That is the entire Windows-side toolchain: **git and winget, both of which ship
+with Windows or install from it.** No Nix on Windows, no SSH server required, no
+control node, no network path between the two OSes. A Windows admin reading this
+sees a repo, a YAML file and `winget configure` — idioms, not a foreign object.
+
+The obvious risk is the committed render drifting from the profiles that
+generated it. Close that with a flake check, so the repo cannot land a `.nix`
+change without the regenerated artifacts beside it:
+
+```nix
+# checks.desk-windows-rendered — fails if `rendered/` is stale
+pkgs.runCommand "check-windows-rendered" { } ''
+  diff -r ${self.packages.${system}.windowsRendered} \
+          ${./hosts/desk/windows/rendered} \
+    || { echo "rendered/ is stale — run: nix run .#render-windows"; exit 1; }
+  touch $out
+''
+```
+
+This also recovers most of the `nix flake check` coverage lost by deleting the
+wezterm Windows tests — see [Risks](#risks-ranked).
+
+### Applying and testing on each target
+
+WinGet DSC has a real test mode, which is what makes it usable as a *management*
+tool rather than a one-shot installer:
+
+| | Command | What it does |
+| --- | --- | --- |
+| Converge | `winget configure --file configuration.dsc.yaml --accept-configuration-agreements` | Brings the system to the described state |
+| **Check drift** | `winget configure test --file configuration.dsc.yaml` | Reports each resource in / not in the desired state, changing nothing |
+
+`Test.ps1` wraps the second one, and a Scheduled Task running it weekly on each
+install turns drift from something you discover into something that tells you.
+This is the closest Windows gets to `nixos-rebuild dry-activate`, and it is
+worth wiring up on the metal especially, where there is no rebuild to fall back
+on.
+
+- [ ] Both installs: `git clone` this repo, run `Apply.ps1` once, confirm
+      `winget configure test` comes back clean afterwards
+- [ ] Both installs: register the weekly `Test.ps1` Scheduled Task
+- [ ] Confirm the two profiles differ *only* where `metal.nix`/`guest.nix` say
+      they do — run `test` on each with the other's YAML and read the diff
+
+### What DSC cannot reach, and the escape hatch
+
+WinGet DSC's resource coverage is good for packages and thin for settings.
+Expect to hit things it cannot express. Two escape hatches, in order:
+
+1. **A committed `.reg` file**, rendered from the same profile attrs and
+   imported by `Apply.ps1`. Crude, diffable, and unambiguously a Windows idiom.
+2. **Group Policy via `LGPO.exe`** (Microsoft Security Compliance Toolkit) for
+   anything policy-shaped. A policy backup directory is version-controllable and
+   applies identically to both targets.
+
+Neither is elegant. Both keep the property that matters: the change is written
+down in this repo rather than clicked once and forgotten.
+
+**If WinGet DSC disappoints more broadly**, the upgrade path is
+[Microsoft DSC v3](https://github.com/PowerShell/DSC) (`dsc.exe`) — the general
+engine that `winget configure` is a front end to. Same YAML shape, far more
+resources, one more thing to install on each target. Worth reaching for only
+once winget's coverage is demonstrably the blocker.
+
+**What was considered and rejected:**
+
+- **Ansible over SSH/WinRM** — genuinely idempotent and far richer than DSC for
+  settings work. Rejected on the structural point above: it needs a control node
+  that can reach the target, and nothing can reach bare metal while NixOS is up.
+  It would mean one method for the guest and a different one for the metal,
+  which is precisely what this phase exists to avoid.
+- **Chocolatey** — broader package coverage than winget for older software, and
+  a Nix-generated package list is dead simple. Kept in reserve as a *supplement*
+  for packages winget lacks, not as the framework; it has no settings story.
+- **Scoop** — user-scope, no admin, good `scoop export`/`scoop import`.
+  Complementary for CLI tools, wrong shape for games and system settings.
+- **Per-target ad-hoc setup** — the status quo, and the thing that makes two
+  Windows installs twice the work instead of one profile plus a delta.
+
+### Drift repair, by target
+
+**Guest: rebuild.** Unchanged, and still cheap because the OS disk and the game
+library are separate ([Disk layout](#disk-layout--dual-boot)). A wrong state is
+fixed by regenerating, not by hoping convergence noticed.
+
+**Metal: converge, then escalate.** In order:
+
+1. `Apply.ps1` — re-converge. Handles most drift.
+2. `winget configure test` to find what convergence did not fix, then extend the
+   profile so that it does. Every escalation past this point should leave a
+   commit behind.
+3. **In-place repair install** — mount the same Win11 ISO the guest build uses
+   and run `setup.exe` from inside Windows, choosing "Keep personal files and
+   apps". Rebuilds the OS around the install, preserving the license and data.
+4. Reset this PC → Keep my files, then `Apply.ps1`. Last resort; loses apps,
+   keeps the license.
+
+Note what is *not* on that list: reinstalling from scratch. The metal holds the
+activated digital license, and while a clean install would re-activate from the
+account, it also means reproving something this plan deliberately never risks.
 
 ### Layer 1 — the VM definition
 
@@ -1010,9 +1383,14 @@ commit it, and add a oneshot unit that `virsh define`s it. Less elegant, zero ne
 inputs, and the XML in git is still the source of truth. Both are fine; NixVirt
 is better if you want the XML *generated* rather than *checked in*.
 
-### Layers 2–4 — the image build
+### Layers 2–3 — the guest image build
 
-Shape, with the Windows ISO kept out of git and out of the cache:
+**Guest only.** Bare metal is already installed and is never rebuilt from an
+answer file; it joins the story at layer 4, where it picks up the same profile
+render as everything else.
+
+Shape, with the Windows ISO kept out of git and out of the cache — the same ISO
+serves the guest build and the metal's [repair-install path](#drift-repair-by-target):
 
 ```nix
 # hosts/desk/windows/image.nix
@@ -1118,17 +1496,14 @@ in the file's header comment so the next reader does not "fix" it.
   its opinions. Reasonable as a "get it working this weekend, graduate later"
   step; not a destination.
 
-**Alternatives for layer 4, if WinGet DSC disappoints:**
+Layer 4's alternatives are covered above, in
+[What DSC cannot reach](#what-dsc-cannot-reach-and-the-escape-hatch) — they now
+have to serve both installs, which rules out more of them than it used to.
 
-- **Chocolatey** — broader package coverage than winget for older/niche
-  software, and `choco install` from a Nix-generated package list is dead simple.
-- **Ansible over SSH** — once `OpenSSH.Server` is enabled in the guest, the
-  NixOS host can run a playbook against it. Genuinely idempotent, far richer
-  than DSC for settings and registry work, and the playbook lives in this repo
-  next to everything else. This is the strongest option if you ever want to
-  converge a *running* Windows rather than only rebuild it. Cost: a whole second
-  config language in the repo.
-- **Scoop** — user-scope, no admin, good for CLI tools; wrong shape for games.
+One thing the answer file should still do, even though the guest is never
+pushed to: enable `OpenSSH.Server`. It is not the config channel — `Apply.ps1`
+pulling from the repo is — but it makes the guest reachable from the host for
+everything else, and the metal cannot have that regardless.
 
 ### Secrets
 
@@ -1215,9 +1590,27 @@ Nix proves the closure; it cannot prove any of this.
 - [ ] `claude --version`, `gh auth status`, `docker run --rm hello-world`, `nvim --version`
 - [ ] `git config user.email` → `nathan@natb1.com`; `authorized_keys` has both keys, mode 600
 
+**Dual-boot**
+
+- [ ] systemd-boot offers both entries, and both boot
+- [ ] Bare-metal Windows still reports **activated** after every step of this
+      plan — check it again here, not just in Phase 2
+- [ ] Clocks agree after crossing between the two
+- [ ] BitLocker protection is resumed, and a reboot does not prompt for the
+      recovery key
+- [ ] The shared games partition mounts read-write on bare metal, and Steam
+      adopts the library without re-downloading
+- [ ] `powercfg /a` on bare metal shows hibernation disabled — this is what
+      keeps the shared NTFS clean, and a Windows update can quietly re-enable it
+
 **Guest**
 
 - [ ] `virsh list` shows `win` running; Device Manager shows no unknown devices
+- [ ] The guest is **unactivated and not signed into a Microsoft account** —
+      this is the desired state, not a defect. If it ever reads "activated",
+      the license moved off the metal and needs moving back
+- [ ] The guest sees the same games partition as a raw device, and Steam adopts
+      it — with bare-metal Windows **not** running, which it cannot be
 - [ ] dGPU in the guest with the vendor driver loaded, no Code 43 / Code 31
 - [ ] `winget list` matches the package list in `image.nix`
 - [ ] A game runs at expected frame rate with acceptable frame *times* — check
@@ -1237,11 +1630,25 @@ Nix proves the closure; it cannot prove any of this.
       does not fire, the host stays crippled after every crash
 - [ ] Reboot with the VM set to autostart off, confirm nothing is degraded
 
+**Windows management — the part that now has to work twice**
+
+- [ ] `winget configure test` comes back clean on **both** installs after
+      `Apply.ps1`
+- [ ] Add a package to `common.nix`, re-render, commit, `git pull` + `Apply.ps1`
+      on each install, and confirm both converge. This is the whole method in
+      one test; if it is awkward here it will be awkward forever
+- [ ] `nix flake check` fails when `rendered/` is stale — verify by editing a
+      profile and *not* re-rendering
+- [ ] The weekly `Test.ps1` Scheduled Task exists on both and reports somewhere
+      you will actually see it
+
 **The rebuild path — test it before you need it**
 
 - [ ] Delete `win-os.qcow2`, re-run `build-windows-image`, confirm the guest
       comes back with the same packages and the game library intact. If this
       does not work, the "declarative" claim is decorative.
+- [ ] Confirm the rebuilt guest is still unactivated and still not signed in —
+      a rebuild that silently grabs the license is worse than no rebuild
 
 ---
 
@@ -1267,42 +1674,77 @@ Only after Phase 8 passes.
 
 ## Risks, ranked
 
-1. **IOMMU groups are dirty.** Found in Phase 0, before anything is destroyed.
+1. **The repartition eats the Windows install.** Now the top risk, and new.
+   Shrinking `C:` in place puts the activated license, the anti-cheat titles and
+   whatever is on `C:\` behind one partition-table edit. Mitigations, all in
+   Phase 0 and none optional: image the drive first, shrink from inside Windows
+   rather than from Linux, suspend BitLocker before touching anything, and never
+   let disko near the fast drive.
+2. **A stray `disko --mode disko` destroys Windows.** Distinct from the media
+   version below and worse. The fast drive is deliberately absent from
+   `disko.nix`; the danger is a future edit "completing" it for tidiness. The
+   comment in that file is load-bearing — leave it there.
+3. **The guest steals the license.** One Microsoft account sign-in inside the VM
+   deactivates bare metal. It is a two-click mistake with a rate-limited fix,
+   and nothing in the system prevents it, which is why it is written down in
+   [the licensing section](#can-one-license-cover-bare-metal-and-the-vm) and
+   checked in Phase 8.
+4. **The shared games partition gets mounted twice.** Structurally prevented —
+   the two Windows installs cannot run at once — but Fast Startup re-enabled by
+   a Windows update reintroduces the dirty-NTFS version of the same damage.
+   `powercfg /a` is on the Phase 8 list for this reason.
+5. **Windows updates take the boot entry.** Cosmetic, recoverable with
+   `efibootmgr -o`, and alarming the first time. Listed so it is not diagnosed
+   from scratch at 11pm.
+6. **The two Windows installs drift apart.** The failure mode Phase 6 exists to
+   prevent: profiles that describe the metal well and the guest approximately,
+   until "run `Apply.ps1`" stops being trustworthy on one of them. The weekly
+   `winget configure test` task and the stale-`rendered/` flake check are the
+   two things standing against it.
+7. **IOMMU groups are dirty.** Found in Phase 0, before anything is destroyed.
    This is why Phase 0 is a gate and not a formality.
-2. **The Windows image build is a long feedback loop.** 30+ minutes per attempt,
+8. **The Windows image build is a long feedback loop.** 30+ minutes per attempt,
    and an answer-file typo fails near the end. Iterate on the answer file against
    a *plain* VM with no passthrough first — separate the two variables.
-3. **The performance hook does not revert.** A crashed VM leaving the host
+9. **The performance hook does not revert.** A crashed VM leaving the host
    pinned to four cores is the kind of bug you diagnose three weeks later as
    "NixOS feels slow lately". The `virsh destroy` test in Phase 8 exists for
    exactly this.
-4. **Steam library on a disposable volume by accident.** Phase 1's split
+10. **Steam library on a disposable volume by accident.** Phase 1's split
    prevents it; verify with the Phase 8 rebuild test.
-5. **The media backup stops and nobody notices.** The failure mode of every
+11. **The media backup stops and nobody notices.** The failure mode of every
    backup that has ever failed. `runCheck` plus the `OnFailure` hook in
    [Media storage](#media-storage) are the minimum; the restore drill is what
-   actually proves it. Rank this above the VM risks — a broken passthrough is
-   an inconvenience, a backup that was never working is data loss.
-6. **A stray `disko --mode disko` wipes the media volume.** The bulk drive is
+   actually proves it. Ranked below the Windows risks only because those are
+   time-boxed to the migration itself — this one is permanent, and of everything
+   on this list it is the likeliest to be discovered too late.
+12. **A stray `disko --mode disko` wipes the media volume.** The bulk drive is
    under disko's management, and disko's destroy mode does not ask. Treat the
    Phase 2 command block as install-only; everything afterwards is
    `nixos-rebuild`. This risk is the reason the backup is not optional.
-7. **Samba serving an empty share.** If the bulk SSD does not mount, an
+13. **Samba serving an empty share.** If the bulk SSD does not mount, an
    unguarded smbd exports `/srv/media` on the root filesystem and clients write
    into it. The `requires=srv-media.mount` binding prevents it; verify by
    booting once with the drive pulled.
-8. **`nix flake check` coverage drops.** Deleting the wezterm Windows tests
+14. **`nix flake check` coverage drops.** Deleting the wezterm Windows tests
    removes 15 checks' worth of real assertions. Whatever replaces them — image
    build smoke test, domain XML eval test — should land in the same PR as the
    deletion, or it never lands.
 
 ## Deliberately not doing
 
-- **Dual-boot.** No anti-cheat titles means no reason to pay for it, and disko
-  does not support it. If a future game demands Vanguard or similar — which as
-  of the June 2026 on-demand release wants Secure Boot, TPM 2.0, IOMMU, VBS and
-  HVCI *on bare metal* — that is a re-partition, not a tweak. Leaving unallocated
-  space on the drive now makes that cheap later.
+- **~~Dual-boot.~~** Reversed — bare-metal Windows is kept. It carries the
+  activated license and it is the only place kernel anti-cheat can run: Vanguard
+  and similar want Secure Boot, TPM 2.0, IOMMU, VBS and HVCI *on bare metal*,
+  which no amount of guest configuration provides. The cost is everything in
+  [Risks](#risks-ranked) 1–6 and the convergent-only repair path for the metal
+  in [Phase 6](#phase-6--managing-both-windows-installs).
+- **Booting the bare-metal partition as the guest.** Rejected in
+  [the licensing section](#can-one-license-cover-bare-metal-and-the-vm): it
+  re-hashes activation on every crossing, which is the one thing this plan
+  protects.
+- **A second Windows license for the guest.** The guest runs unactivated
+  instead. Revisit only if the guest stops being a test bed.
 - **Hypervisor hiding.** Costs performance, buys nothing here.
 - **Mirroring the two SSDs.** They are different sizes with different jobs, so
   RAID1 would cost capacity to buy coverage of exactly one failure mode — while
