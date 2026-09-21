@@ -69,7 +69,9 @@ parallel.)
 5. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
    `nixos-generate-config`, interface names from `ip link`.
-6. **Phase 2** — install NixOS on the 1 TB drive.
+6. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
+7. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
+   plus Microsoft's.
 
 ### Decided 2026-09-21
 
@@ -98,7 +100,7 @@ parallel.)
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
 | `account.microsoft.com/devices` | Before Phase 8 | Note the name the PC is listed under — it is how the Activation Troubleshooter identifies it |
-| Game library vs ProtonDB | Before Phase 7 | Which titles need Windows at all, and which of those need bare metal (kernel anti-cheat) |
+| Game library vs ProtonDB, and each title's Secure Boot/TPM requirement | Before Phase 7; Phase 2b | Which titles need Windows at all, which of those need bare metal (kernel anti-cheat), and which of *those* refuse to start without Secure Boot (e.g. Battlefield 6, recent Call of Duty). The last list is why [Phase 2b](#phase-2b--restore-secure-boot) exists |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet |
 
 ### Firmware update
@@ -134,7 +136,10 @@ A firmware update resets settings to defaults. Afterwards, re-check:
 - [ ] **Secure Boot off — it will not be.** F38's release notes: *Secure Boot
       enabled as system default*. So after flashing it is **on**, and must be
       turned off again (Windows boots either way; systemd-boot without
-      lanzaboote does not). CSM off
+      lanzaboote does not). CSM off. *Once [Phase 2b](#phase-2b--restore-secure-boot)
+      is done this check inverts:* a flash may also reset the key databases to
+      factory defaults, dropping your enrolled key — NixOS then refuses to boot
+      until the keys are re-enrolled. See Phase 2b's recovery note
 - [ ] Boot order — Windows Boot Manager on the **2 TB** drive first (until
       NixOS exists)
 - [ ] XMP/EXPO memory profile, if it was on before
@@ -332,7 +337,8 @@ Also in Phase 0:
       different (virtual) TPM and different firmware, so the key will not
       unseal and every guest boot lands in recovery. Save the recovery key off
       this machine before changing anything
-- [x] **Secure Boot off** in firmware — *already off* (or lanzaboote later). Do this *after*
+- [x] **Secure Boot off** in firmware — *already off; turned back on in
+      [Phase 2b](#phase-2b--restore-secure-boot)*. Do this *after*
       BitLocker is handled, not before
 - [x] Record the SMBIOS values the guest will need to impersonate — *from
       Windows, in the table above; cross-check with `dmidecode`* — see [below](#keeping-activation-stable-across-the-crossing)
@@ -864,6 +870,123 @@ host.
 **Windows updates will sometimes reassert themselves as the default boot
 entry.** Normal, not a failure: `efibootmgr -o` puts systemd-boot back in front.
 Worth knowing before it happens at an inconvenient moment.
+
+---
+
+## Phase 2b — Restore Secure Boot
+
+Added 2026-09-21. Phases 0–2 run with Secure Boot **off**, because a fresh
+NixOS install boots unsigned systemd-boot. This phase turns it back **on**,
+permanently, for both operating systems. Do it once NixOS has booted reliably
+for a few days — and before the VFIO work, so the passthrough phases are
+debugged on the final boot chain rather than changing it underneath them.
+
+### Why bother
+
+- **Kernel anti-cheat.** The whole reason bare-metal Windows is kept is games
+  whose anti-cheat will not run in a VM — and a growing number of exactly those
+  titles also refuse to start without Secure Boot (Battlefield 6, recent Call
+  of Duty). With Secure Boot off, the boot mode that exists for anti-cheat
+  cannot run it. The game-list residual says whether any current title is
+  affected; the direction of travel says one will be.
+- **Bootkits.** Signature checking of everything the firmware loads — the
+  protection against BlackLotus-class malware it was designed for.
+
+**Cost: none at runtime.** Signatures are checked once, at boot, in
+milliseconds; nothing changes afterwards on the host, in Windows or in the
+guest. The Windows feature that *does* cost game performance, Memory Integrity
+(VBS/HVCI), merely *requires* Secure Boot — it is a separate switch in Windows
+Security, and this phase does not turn it on.
+
+What it does cost is operational: a signing key this repo does not manage
+(`/var/lib/sbctl`), one more community-maintained flake input, and a recovery
+step after firmware updates (below).
+
+**The guest is unaffected either way.** It gets Secure Boot from OVMF
+(`OVMFFull`, already in [Phase 4](#phase-4--vfio-and-the-libvirt-host)) and
+swtpm, independent of the host's firmware setting.
+
+### Configure lanzaboote
+
+lanzaboote replaces systemd-boot with a signed boot stub. Pin a release tag —
+**v1.1.0** (2026-06-22) is current as of writing.
+
+```nix
+# flake.nix inputs
+lanzaboote = {
+  url = "github:nix-community/lanzaboote/v1.1.0";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+```nix
+# hosts/desk/secure-boot.nix — imported from hosts/desk/default.nix,
+# with inputs.lanzaboote.nixosModules.lanzaboote added to the desk modules.
+{ pkgs, lib, ... }:
+{
+  environment.systemPackages = [ pkgs.sbctl ];
+
+  # lanzaboote replaces the systemd-boot module; it still installs
+  # systemd-boot's menu, now signed.
+  boot.loader.systemd-boot.enable = lib.mkForce false;
+  boot.lanzaboote = {
+    enable = true;
+    pkiBundle = "/var/lib/sbctl";
+  };
+}
+```
+
+Not in Phase 2's install: `pkiBundle` does not exist on the live USB, so the
+install stays plain systemd-boot and this lands as an ordinary rebuild after.
+
+### Procedure
+
+1. **Keys**: `sudo sbctl create-keys` → `/var/lib/sbctl`, root-only.
+2. **Rebuild** with `secure-boot.nix`; then `sudo sbctl verify` — everything in
+   `/boot/EFI` signed except the `kernel-*` files, which is expected.
+3. **Firmware into Setup Mode.** On this Gigabyte/AMI board: *Boot → Secure
+   Boot → Secure Boot Mode: Custom → Key Management → Reset To Setup Mode*
+   (menu names vary by BIOS version). Setup Mode means "no Platform Key", which
+   is what lets the OS enroll keys. **Do not** pick an option that deletes all
+   variables including **dbx** — the revocation list — if a gentler one is
+   offered.
+4. **Enroll, keeping Microsoft's keys:**
+
+   ```sh
+   sudo sbctl enroll-keys --microsoft
+   ```
+
+   `--microsoft` is **not optional on this machine**, for two reasons: bare-metal
+   Windows' `bootmgfw.efi` is signed by Microsoft, and so is the **RX 6600 XT's
+   option ROM** (its GOP driver). Enroll only your own key and Windows stops
+   booting *and* the dGPU's firmware is refused — a black screen at POST with
+   no obvious cause.
+5. **Secure Boot on**, save, reboot into NixOS.
+
+### Verify
+
+- [ ] `bootctl status` → `Secure Boot: enabled (user)`
+- [ ] `sbctl status` → installed, Secure Boot enabled, vendor keys: microsoft
+- [ ] dbx is not empty: `ls -l /sys/firmware/efi/efivars/dbx-*` shows a
+      non-trivial size
+- [ ] **Bare-metal Windows** boots from the F12 menu; `msinfo32` → *Secure
+      Boot State: On*; still activated
+- [ ] The dGPU shows the firmware splash at POST — the option-ROM check
+- [ ] A game that requires Secure Boot starts on bare metal, if the library
+      has one
+
+### Recovery, and the firmware-update trap
+
+A BIOS update or CMOS clear can reset the key databases to Gigabyte's factory
+defaults. Those contain Microsoft's keys but **not yours**: Windows still boots,
+NixOS is refused. Not a failure of anything — re-run steps 3–5 from a NixOS
+boot with Secure Boot temporarily off.
+
+That requires the key, which lives only on the 1 TB drive. **Back up
+`/var/lib/sbctl` off this machine** (it is small; somewhere encrypted), or a
+dead 1 TB drive also means generating and enrolling new keys — recoverable,
+but only because the old ones can simply be replaced. Add it to the README's
+unmanaged-state list in Phase 9.
 
 ---
 
@@ -1742,6 +1865,9 @@ Nix proves the closure; it cannot prove any of this.
 
 **Both boot modes**
 
+- [ ] `bootctl status` on the host → `Secure Boot: enabled (user)`, and
+      `msinfo32` on bare metal → *Secure Boot State: On* — Phase 2b survived
+      everything after it
 - [ ] Windows boots bare metal from the firmware menu, and reports
       **activated** — check again here, not just in Phase 2
 - [ ] Windows boots as a guest, and *still* reports activated. This is the
@@ -1839,8 +1965,9 @@ Only after Phase 8 passes.
       install and the `G:` volume are gone; new entries are the Microsoft
       account the digital license hangs off (no product key — see
       [Secrets](#secrets)), everything on Windows' own drive, rclone
-      credentials, the Wi-Fi PSK, the Samba password database (`smbpasswd`), and
-      `/etc/restic/{media.password,id_ed25519}`
+      credentials, the Wi-Fi PSK, the Samba password database (`smbpasswd`),
+      `/etc/restic/{media.password,id_ed25519}`, and the Secure Boot keys in
+      `/var/lib/sbctl` (backed up off-machine — [Phase 2b](#phase-2b--restore-secure-boot))
 - [ ] Note in the README that `hosts/desk/windows/` configures a Windows install
       this repo does not otherwise own — the drive is Windows', the profile is
       ours
@@ -1898,7 +2025,14 @@ Only after Phase 8 passes.
     unguarded smbd exports `/srv/media` on the root filesystem and clients write
     into it. The `requires=srv-media.mount` binding prevents it; verify by
     booting once with the drive pulled.
-13. **`nix flake check` coverage drops.** Deleting the wezterm Windows tests
+13. **Secure Boot keys lost to a firmware update.** A BIOS flash or CMOS clear
+    restores factory keys; NixOS stops booting, Windows does not, which makes
+    it look like NixOS broke. Re-enroll per
+    [Phase 2b](#phase-2b--restore-secure-boot) — possible only if
+    `/var/lib/sbctl` is still there or backed up. And enrolling *without*
+    `--microsoft` is the self-inflicted version: no Windows, no dGPU option
+    ROM.
+14. **`nix flake check` coverage drops.** Deleting the wezterm Windows tests
     removes 15 checks' worth of real assertions. The stale-`rendered/` check in
     [Phase 6](#phase-6--managing-the-one-windows-install) recovers some of it;
     whatever else replaces them should land in the same PR as the deletion, or
