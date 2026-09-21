@@ -120,8 +120,15 @@ in
           # locked-file case (WezTerm still open on Windows) into an opaque
           # abort instead of the actionable message. `|| rsync_exit=$?` keeps
           # the failure local.
+          #
+          # Store files are read-only, and on /mnt/c a missing write bit becomes
+          # the Windows read-only attribute, which blocks the next upgrade from
+          # replacing or deleting them. --chmod=u+w keeps new files writable; the
+          # chmod first repairs an install an older generation left read-only
+          # (rsync without -p never touches the mode of an unchanged file).
+          ${pkgs.coreutils}/bin/chmod -R u+w "$TARGET_DIR"
           rsync_exit=0
-          rsync_error=$(${pkgs.rsync}/bin/rsync -rlt --delete \
+          rsync_error=$(${pkgs.rsync}/bin/rsync -rlt --chmod=u+w --delete \
             "${weztermWindowsDir}/" "$TARGET_DIR/" 2>&1) || rsync_exit=$?
           if [ $rsync_exit -ne 0 ]; then
             if echo "$rsync_error" | grep -qi "permission denied"; then
@@ -146,20 +153,27 @@ in
         # activation would clobber a user-pinned taskbar entry's metadata.
         SHORTCUT_PATH="/mnt/c/Users/$WINDOWS_USER/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/WezTerm.lnk"
         if [ ! -f "$SHORTCUT_PATH" ]; then
-          if command -v powershell.exe >/dev/null 2>&1; then
+          # Activation runs under systemd (home-manager-<user>.service), whose
+          # PATH lacks the Windows directories WSL appends to login shells, so
+          # fall back to PowerShell's fixed install location.
+          POWERSHELL=$(command -v powershell.exe 2>/dev/null || true)
+          if [ -z "$POWERSHELL" ] && [ -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]; then
+            POWERSHELL=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+          fi
+          if [ -n "$POWERSHELL" ]; then
             WIN_TARGET='C:\Users\'"$WINDOWS_USER"'\AppData\Local\WezTerm\wezterm-gui.exe'
             WIN_WORKDIR='C:\Users\'"$WINDOWS_USER"'\AppData\Local\WezTerm'
             WIN_SHORTCUT='C:\Users\'"$WINDOWS_USER"'\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\WezTerm.lnk'
 
             if [ -z "$DRY_RUN_CMD" ]; then
-              if powershell.exe -NoProfile -Command "\$WshShell = New-Object -ComObject WScript.Shell; \$Shortcut = \$WshShell.CreateShortcut('$WIN_SHORTCUT'); \$Shortcut.TargetPath = '$WIN_TARGET'; \$Shortcut.WorkingDirectory = '$WIN_WORKDIR'; \$Shortcut.Save()" >/dev/null 2>&1; then
+              if "$POWERSHELL" -NoProfile -Command "\$WshShell = New-Object -ComObject WScript.Shell; \$Shortcut = \$WshShell.CreateShortcut('$WIN_SHORTCUT'); \$Shortcut.TargetPath = '$WIN_TARGET'; \$Shortcut.WorkingDirectory = '$WIN_WORKDIR'; \$Shortcut.Save()" >/dev/null 2>&1; then
                 echo "Created Start Menu shortcut: $SHORTCUT_PATH"
               else
                 echo "WARNING: Failed to create Start Menu shortcut at $SHORTCUT_PATH" >&2
               fi
             fi
           else
-            echo "WARNING: powershell.exe not found on PATH, skipping Start Menu shortcut" >&2
+            echo "WARNING: powershell.exe not found, skipping Start Menu shortcut" >&2
           fi
         fi
       fi

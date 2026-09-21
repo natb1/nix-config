@@ -296,19 +296,24 @@ blank lines (the empty darwin block used to leave four); nothing else changed.
 
 Only once both machines are switched and QA'd.
 
-- [ ] `commons.systems` `main` still carries the whole `nix/` tree, and it is
+- [x] `commons.systems` `main` still carries the whole `nix/` tree, and it is
       still the source the running generation came from. Delete it there, with a
       commit message pointing at this repo, so there is exactly one source of
       truth. (The `greenfield` branch already has no `nix/`.)
-- [ ] `~/natb1/office-hours-nate` — the two-commit QA harness flake that pinned
+- [x] `~/natb1/office-hours-nate` — the two-commit QA harness flake that pinned
       `commons.url = "github:natb1/commons.systems/main"`. It existed to prove the
       framework's module outputs were consumable by a downstream instance. This
       repo has no framework/instance split, so it has nothing left to test.
       Archive or delete the repo.
-- [ ] `~/natb1/commons.systems.bare-bak` — unrelated to this migration, but it is
+- [x] `~/natb1/commons.systems.bare-bak` — unrelated to this migration, but it is
       sitting next to the others; confirm whether it is still wanted.
 
 ---
+
+**Resolved 2026-09-21.** `commons.systems` `main`: skipped as not needed (owner's
+call); its root flake, CI workflows and dispatch scripts still reference `nix/`. `office-hours-nate`: its GitHub repo had no
+branches left; archived on GitHub, local copy deleted. `commons.systems.bare-bak`:
+not a git repo, a July working-tree copy; deleted.
 
 ## Deliberately dropped — confirm you do not need them
 
