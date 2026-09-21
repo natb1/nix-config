@@ -118,63 +118,139 @@ Also in Phase 0, before anything is wiped:
       tier; its wear level is the first honest input to "when does this die"
 - [ ] Inventory the game library: which titles, and what ProtonDB says about each
 - [ ] Inventory what is on `C:\` that matters and is not in Drive or git
-- [ ] Settle the licensing question below — it decides whether the guest can be
-      activated at all, and one of its steps must happen *before* the wipe
+- [x] Settle the licensing question below — **resolved: RETAIL, digital
+      license, already linked to the Microsoft account.** Its one unrecoverable
+      step, the account link, is done; what remains is a note-taking step
 
-### Windows licensing — resolve this before wiping
+### Windows licensing — resolved
 
-Whether the existing license can move into the VM depends entirely on its
-**channel**, and the answer is genuinely different for the two cases. Check from
-the current Windows install:
+**Answer for this machine: RETAIL, digital license, already linked to the
+Microsoft account. The VM is covered by the license terms, there is no key to
+protect, and nothing here blocks the wipe.**
+
+Measured on the pre-migration install:
+
+| Field | Value | Consequence |
+| --- | --- | --- |
+| `ProductKeyChannel` | `Retail` | The virtualization clause below applies |
+| `LicenseFamily` | `Professional` | Pro edition, so the answer file installs Pro |
+| `PartialProductKey` | `3V66T` | The tail of `VK7JG-NPHTM-C97JM-9MPGT-3V66T`, Microsoft's published generic Pro key — *not* a per-machine key |
+| `OA3xOriginalProductKey` | empty | No MSDM table, so not an OEM preinstall |
+| Activation panel | *"activated with a digital license linked to your Microsoft account"* | The one unrecoverable pre-wipe step is already done |
+
+The two facts that matter downstream: **there is no key string to recover, carry
+across the wipe, or keep out of git** — the entitlement lives on the Microsoft
+account, and the key installed today is a public placeholder — and **activation
+travels through that account, not through anything typed into the answer file.**
+
+#### Can one license cover bare metal *and* the VM?
+
+**No — not both at once, and this plan does not need it to.**
+
+The clause is *"**instead of** using the software directly on the licensed
+device, you may install and use the software within **only one** virtual (or
+otherwise emulated) hardware system on the licensed device."* "Instead of" is
+substitution, not addition: the VM becomes the licensed use in place of the
+bare-metal install. One instance on the device, whichever you pick.
+
+Activation mechanics land in the same place even on a loose reading of the
+terms. A digital license binds to a hardware hash plus the account, and the
+guest's hash differs from the host's. Re-applying the license to the VM through
+the Activation Troubleshooter moves the entitlement onto the VM's hash — the
+bare-metal install does not keep a copy of its own, and alternating between them
+means a manual Troubleshooter run in each direction, which Microsoft
+rate-limits.
+
+Moot here by construction: [Phase 2](#phase-2--install) wipes the disk and no
+bare-metal Windows survives it. The question only bites if you were considering
+dual-boot, which the [decisions table](#decisions-locked-in) already rules out —
+this is a second, independent reason not to.
+
+#### How the above was determined
+
+Kept because it is the procedure for any future machine, not just this one. From
+the Windows install, before it is destroyed:
 
 ```powershell
-# Channel: look for RETAIL vs OEM_DM / OEM_COA_* in the Description field
+# Channel and edition. Look for RETAIL vs OEM_DM / OEM_COA_* in Description.
 Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL" |
-  Select-Object Name, Description, LicenseStatus
+  Select-Object Name, Description, PartialProductKey,
+                ProductKeyChannel, LicenseFamily
 
-# The OEM key embedded in this board's firmware, if there is one.
+# The OEM key embedded in the board's firmware, if there is one. Empty means
+# there is no MSDM table, i.e. this was not an OEM preinstall.
 # (`wmic` is removed by default on Windows 11 24H2+ — use the CIM call.)
 (Get-CimInstance -ClassName SoftwareLicensingService).OA3xOriginalProductKey
 ```
 
-The same firmware key is readable from Linux, which is handy once NixOS is
-installed:
+Then **Settings → System → Activation**, and read the wording exactly: *"digital
+license linked to your Microsoft account"* is the good case; *"digital license"*
+without *"linked"* means the link is still to be made, and that is the step that
+cannot be done after the wipe.
+
+A firmware key, where one exists, is also readable from Linux once NixOS is
+installed — not useful on this machine, since there is no MSDM table:
 
 ```sh
 strings /sys/firmware/acpi/tables/MSDM | grep -Eo '[A-Z0-9]{5}(-[A-Z0-9]{5}){4}'
 ```
 
-**If the channel is RETAIL** — the license terms cover this directly. The "Use
-with Virtualization Technologies" clause reads: *"Instead of using the software
-directly on the licensed device, you may install and use the software within
-only one virtual (or otherwise emulated) hardware system on the licensed
-device."* That is precisely this migration: same physical machine, Windows moves
-off the metal and into one VM, never both at once. Enter the key during the
-unattended install and it activates.
+**Why RETAIL settles it.** The "Use with Virtualization Technologies" clause
+reads: *"Instead of using the software directly on the licensed device, you may
+install and use the software within only one virtual (or otherwise emulated)
+hardware system on the licensed device."* That is precisely this migration: same
+physical machine, Windows moves off the metal and into one VM, never both at
+once.
 
-**If the channel is OEM** (`OEM_DM` — preinstalled by the vendor, key in the
-MSDM table) — Microsoft's stated position is that OEM keys are for physical
-instances only and carry no virtualization rights. The VM presents a different
-hardware hash, so it will not auto-activate. It *can* be made to activate by
-passing the host's own MSDM ACPI table and SMBIOS strings through to the guest
-(`-acpitable file=/sys/firmware/acpi/tables/MSDM` plus libvirt `<sysinfo>`),
-a well-documented technique — but note what that does and does not do: it makes
-the guest activate, it does not change the license terms. Decide that knowingly.
+**The OEM branch, not taken, kept for the reasoning.** Had the channel been OEM
+(`OEM_DM` — preinstalled by the vendor, key in the MSDM table), Microsoft's
+stated position is that OEM keys cover physical instances only and carry no
+virtualization rights. The VM presents a different hardware hash, so it would
+not auto-activate. It *can* be made to activate by passing the host's own MSDM
+ACPI table and SMBIOS strings through to the guest
+(`-acpitable file=/sys/firmware/acpi/tables/MSDM` plus libvirt `<sysinfo>`), a
+well-documented technique — but note what that does and does not do: it makes
+the guest activate, it does not change the license terms. The empty
+`OA3xOriginalProductKey` above retires this path.
 
-**Either way, an unactivated Windows 11 guest is a viable place to start.** It
-runs indefinitely: a desktop watermark, Personalization settings locked, an
+#### Getting the digital license into the guest
+
+A digital license reaches the guest only by signing in to the Microsoft account,
+which collides with the answer file's planned *"local account, skip MS account"*
+OOBE ([Phase 6](#layers-24--the-image-build)). Left as written, the guest
+installs and stays unactivated indefinitely. Three workable orders:
+
+1. **Build unactivated, sign in last** — matches "build first, license once it
+   works" below, and keeps OOBE fully unattended. The default.
+2. Sign in during OOBE instead of creating a local account.
+3. Local account per the plan, then add the account later and run
+   Settings → System → Activation → Troubleshoot → *"I changed hardware on this
+   device recently."*
+
+The answer file's product-key slot takes the generic Pro key
+`VK7JG-NPHTM-C97JM-9MPGT-3V66T` in all three cases. It selects the edition and
+gets Setup past the key prompt; it activates nothing. Because it is a published
+placeholder rather than a secret, it belongs in plaintext in `image.nix` — see
+[Secrets](#secrets).
+
+**An unactivated Windows 11 guest is a viable place to start.** It runs
+indefinitely: a desktop watermark, Personalization settings locked, an
 occasional nag. **No impact on games, performance, or driver support.** So the
 whole stack — passthrough, the image build, the perf hook — can be validated
-before spending anything on a license. Build first, license once it works.
+before touching activation at all. Build first, license once it works.
 
-- [ ] **Before the wipe:** link the current license to your Microsoft account
-      (Settings → System → Activation, or Accounts → Your info). A retail license
-      linked to an account re-activates through the Activation Troubleshooter
-      after a hardware change; an unlinked one means a phone-activation call.
-      This step is unrecoverable once Windows is gone.
-- [ ] Record the channel and the key somewhere that survives the wipe
-- [ ] If buying a fresh retail Windows 11 Pro key, budget for it now — it is the
-      one line item in this migration that costs money
+- [x] **Before the wipe:** link the license to the Microsoft account — *already
+      done; the Activation panel confirms it.* A retail license linked to an
+      account re-activates through the Activation Troubleshooter after a
+      hardware change; an unlinked one means a phone-activation call. This step
+      is unrecoverable once Windows is gone.
+- [x] Record the channel and the key somewhere that survives the wipe — *the
+      table above is that record. There is no key beyond the generic one.*
+- [ ] Confirm this PC is listed at `account.microsoft.com/devices` and note the
+      name it appears under — that is how you identify it in the Activation
+      Troubleshooter's device list after the hardware change.
+- [x] ~~If buying a fresh retail Windows 11 Pro key, budget for it now~~ — not
+      needed. This migration has no license line item.
 
 ---
 
@@ -967,8 +1043,12 @@ let
   autounattend = pkgs.writeText "autounattend.xml" ''
     <?xml version="1.0" encoding="utf-8"?>
     <unattend xmlns="urn:schemas-microsoft-com:unattend">
-      <!-- windowsPE: disk layout, edition, product key -->
-      <!-- oobeSystem: local account ${cfg.username}, skip MS account, skip telemetry -->
+      <!-- windowsPE: disk layout, edition, generic Pro key (selects the
+           edition and clears the key prompt; activates nothing) -->
+      <!-- oobeSystem: local account ${cfg.username}, skip MS account, skip telemetry.
+           NOTE: skipping the account means the guest stays unactivated until
+           you sign in later — see Phase 0, "Getting the digital license into
+           the guest". That is the intended order, not an oversight. -->
       <!-- FirstLogonCommands: powershell -File D:\provision.ps1 -->
     </unattend>
   '';
@@ -1052,12 +1132,19 @@ in the file's header comment so the next reader does not "fix" it.
 
 ### Secrets
 
-The product key (see [Phase 0's licensing section](#windows-licensing--resolve-this-before-wiping))
-and any credentials in the answer file must not land in git.
-Either keep them in a `requireFile`'d fragment alongside the ISO, or bring in
-`sops-nix`/`agenix` if you want them encrypted in the repo. This is the same
-category as `~/.config/nix/access-tokens.conf` in the README's "state this repo
-does not manage" list — add the answer-file secrets to that list either way.
+**The product key is not a secret here.** [Phase 0](#windows-licensing--resolved)
+settled that this machine activates by digital license, so the only key the
+answer file carries is `VK7JG-NPHTM-C97JM-9MPGT-3V66T` — a placeholder Microsoft
+publishes. It goes in `image.nix` in plaintext. Nothing about it needs
+`requireFile` or an encrypted store, and on its own it is not a reason to adopt
+`sops-nix`/`agenix`.
+
+What *is* secret is the rest of the answer file: the local account password, and
+any credentials the provisioner needs. Those must not land in git — keep them in
+a `requireFile`'d fragment alongside the ISO, or encrypt them in the repo with
+`sops-nix`/`agenix`. This is the same category as
+`~/.config/nix/access-tokens.conf` in the README's "state this repo does not
+manage" list — add the answer-file secrets to that list either way.
 
 ---
 
@@ -1171,9 +1258,10 @@ Only after Phase 8 passes.
       [TODO.md §2](../TODO.md) already flags it and this is the natural moment
 - [ ] README: replace the "A future native NixOS host" section with the real one
 - [ ] Update the "State this repo does not manage" list: the Windows-side WezTerm
-      install and the `G:` volume are gone; the Windows ISO, product key,
-      rclone credentials, the Samba password database (`smbpasswd`), and
-      `/etc/restic/{media.password,id_ed25519}` are new
+      install and the `G:` volume are gone; the Windows ISO, the Microsoft
+      account the guest's digital license hangs off (no product key — see
+      [Secrets](#secrets)), rclone credentials, the Samba password database
+      (`smbpasswd`), and `/etc/restic/{media.password,id_ed25519}` are new
 
 ---
 
