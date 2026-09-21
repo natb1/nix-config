@@ -92,10 +92,12 @@ parallel.)
 | --- | --- | --- |
 | Board revision on the PCB itself | Step 2 | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
 | Wi-Fi interface name on NixOS | Phase 3 (Samba), firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
-| Total size of the media, across all four sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
+| Total size of the media, across all five sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
 | GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
 | Flickr export request | [Step 3](#step-3--bring-the-media-in) | Asynchronous — Flickr prepares the archive over hours to days. Request it early so it is ready by ingest; download links expire |
-| Fate of the Drive/GCS/MacBook/Flickr copies | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
+| Google Takeout export request | [Step 3](#step-3--bring-the-media-in) | Same shape as Flickr, worse deadline: Takeout is prepared over hours to days and the **download links expire after 7 days**. Request it with *delivery to Google Drive* so it lands somewhere rclone can pull from unattended, instead of a browser download that must finish inside the window |
+| Google Photos library size and item count | [Step 3](#step-3--bring-the-media-in) | Read both off [photos.google.com](https://photos.google.com) before requesting the export — the count is the only verification Takeout admits, and it has to be recorded *before* the library changes under it |
+| Fate of the Drive/Photos/GCS/MacBook/Flickr copies | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
 | Stale NVRAM entry for the old ESP | Phase 2 | Once disko wipes the 1 TB drive, the old "Windows Boot Manager" entry points at nothing. `efibootmgr -b <n> -B` it, alongside the `efibootmgr -o` step |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
@@ -1011,6 +1013,12 @@ Do **not** put Drive in the Windows VM. The VM is not always on, and making a
 file sync depend on a guest being booted rebuilds the exact coupling this
 migration removes.
 
+**Google Photos is not a mount and gets no unit here.** It is a separate store
+from Drive — the folder sync between them was severed in 2019 — and the only API
+into it degrades what it serves, so it is handled once, as an export, under
+[Media storage Step 3](#step-3--bring-the-media-in). Nothing in Phase 3 depends
+on it.
+
 ### WezTerm
 
 This is [TODO.md §5](../TODO.md), now mandatory. On `desk`, WezTerm is just a
@@ -1079,10 +1087,14 @@ Three steps, in this order. The share is useful on day one; the backup is what
 makes the share safe to depend on; and only then does the media come in —
 because it is irreplaceable, it arrives on a volume whose backup already works.
 
-**Where the media is today** (2026-09-21): spread across four places —
-**Google Drive**, **the MacBook's internal storage**, a **GCS bucket** it has
-to be exported from, and **Flickr**. None of them is this machine, which is good news: every
-source is itself a copy that survives the migration untouched.
+**Where the media is today** (2026-09-21): spread across five places —
+**Google Drive**, **Google Photos**, **the MacBook's internal storage**, a **GCS
+bucket** it has to be exported from, and **Flickr**. Drive and Photos are one
+account and one Google One quota but **two separate stores** — Google severed the
+Drive↔Photos folder sync in July 2019, so nothing in Photos is reachable through
+the Drive remote and it needs its own ingest path. None of them is this machine,
+which is good news: every source is itself a copy that survives the migration
+untouched.
 
 ### Step 1 — `/srv/media` as a network share
 
@@ -1315,13 +1327,15 @@ A backup is a claim until it is restored. All four, before trusting it:
 ### Step 3 — bring the media in
 
 **`rclone` for Drive and GCS**, because it speaks both and it is already in the
-plan for the Drive mount (Phase 3). The MacBook is `rsync`. **Flickr is the
-exception** — rclone has no Flickr backend — so it comes in through Flickr's own
-account export.
+plan for the Drive mount (Phase 3). The MacBook is `rsync`. **Two sources are
+exceptions, for opposite reasons.** Flickr has no rclone backend at all, so it
+comes in through Flickr's own account export. Google Photos *has* one — and it
+is the wrong tool anyway, because the API it drives is lossy: see below.
 
 | Source | How | Notes |
 | --- | --- | --- |
 | Google Drive | `rclone copy gdrive:<path> /srv/media/<dest> --progress` | Use the Drive remote configured for Phase 3's mount, not the mount itself — `copy` against the API is faster and resumable. Google-native Docs/Sheets are not media; exclude them |
+| Google Photos | **Google Takeout, not `rclone`** ([takeout.google.com](https://takeout.google.com)) → deselect everything, select *Google Photos*, delivery **to Google Drive**, `.tgz`, 50 GB parts. Then pull the parts with the Drive remote already configured above and unpack into `/srv/media/google-photos/` | Do **not** use `rclone`'s `google photos` backend for the archival copy. It can only see the library through the Photos Library API, which **strips GPS EXIF from every download** and re-encodes some originals — the loss is silent and it is not recoverable later. Takeout is the only route that yields the true originals. What it costs: each photo arrives with a **sidecar `.json`** holding the timestamp, GPS, description and album membership, and the metadata has to be merged back into the files (`exiftool`, or `google-photos-takeout-helper`) before the sidecars are worth less than the originals |
 | GCS bucket | `rclone copy gcs:<bucket>/<path> /srv/media/<dest>` | Needs a `gcs` remote (service-account JSON or `gcloud` user creds — hand-provisioned, not in git). Internet egress is billed per GB, plus retrieval fees if the bucket is Coldline/Archive — check the class first. A one-off pull of a few hundred GB is tens of dollars, not a reason to hesitate |
 | MacBook | From the Mac: `rsync -avh --progress ~/<path>/ n8@desk:/srv/media/<dest>/` over Tailscale | Or drag into the SMB share from Finder. `rsync` is resumable and prints what it skipped |
 | Flickr | Account settings → *Your Flickr data* → request the export; download the zip parts when Flickr emails; unzip into `/srv/media/flickr/` | Contains the **originals** plus separate JSON for titles, descriptions, albums and tags — keep the JSON alongside, it is the only copy of that metadata outside Flickr. Fallback if the export is unusable: `gallery-dl` against the account with an API key |
@@ -1332,19 +1346,59 @@ Then, per source, **verify rather than assume**:
 rclone check gdrive:<path>        /srv/media/<dest> --one-way   # size + hash
 rclone check gcs:<bucket>/<path>  /srv/media/<dest> --one-way
 # Mac side: rerun the same rsync with --dry-run --checksum; it should list nothing.
+# Google Photos: no hashes, and `rclone check` against the Photos remote is
+# worse than useless — it compares Takeout's originals to the API's degraded
+# copies and reports every file as differing. Count instead, against the item
+# count read off photos.google.com BEFORE the export was requested, and confirm
+# every archive part unpacks (`tar -tzf` each one; a silently missing part is a
+# silently missing slice of the library).
 # Flickr: no hashes to compare against. Count instead — photo + video files
 # extracted must equal the item count on the Flickr profile, and every zip part
 # must unzip without error (`unzip -t`).
 ```
 
-Expect overlap between the three. Land each source in its own directory
-first, verify, *then* de-duplicate (`rclone dedupe`, or `fdupes -r` across the
+Expect overlap between the sources — Drive and Photos especially, since
+phones have historically backed up to both. Land each source in its own
+directory first, verify, *then* de-duplicate (`rclone dedupe`, or `fdupes -r` across the
 directories) — merging during the copy makes the verification meaningless.
 
 **Retiring a source is a separate decision, and it comes last.** Only after the
 first restic backup of the ingested media has passed the restore proofs above
-is `/srv/media` + Hetzner a trustworthy pair. Until then Drive, GCS, the MacBook
-and Flickr are the backup.
+is `/srv/media` + Hetzner a trustworthy pair. Until then Drive, Photos, GCS,
+the MacBook and Flickr are the backup. Google Photos earns extra caution here:
+deleting from it is the one retirement that is **not** reversible on a whim,
+because the Takeout copy is the only remaining original once the library is
+emptied and the trash ages out at 60 days.
+
+#### Three Google Takeout traps
+
+Worth knowing before the export lands rather than during the ingest, because
+two of them corrupt the verification and one of them corrupts the archive.
+
+1. **The sidecars do not reliably match their media by name.** Takeout truncates
+   the JSON basename, and disambiguates duplicates by appending a counter that
+   lands in a different position on the media file than on its sidecar
+   (`IMG_1234(1).jpg` beside `IMG_1234.jpg(1).json`). A naive pair-by-stem
+   script drops the metadata for exactly those files and says nothing. Use a
+   tool that knows the rules — `google-photos-takeout-helper` — and check its
+   unmatched-file count, which is the number that matters.
+2. **The file count overshoots the item count.** An edited photo ships as both
+   the original and a `-edited` copy; a Live Photo ships as a still plus a
+   `.mov`. Count distinct originals — excluding `*-edited.*` and the `.json`
+   sidecars — or the verification above fails against a correct archive.
+3. **Albums are directories of duplicates.** Each album is written out as its
+   own folder containing *copies* of media that also live under
+   `Photos from <year>/`, so the archive is meaningfully larger on disk than the
+   library is. De-duplicate only after album membership has been merged out of
+   the JSON: until then the duplicate path is the only record that the album
+   existed, and `fdupes` will delete it.
+
+The order this forces: unpack → merge sidecars with
+`google-photos-takeout-helper` → verify the count → *then* de-duplicate, both
+within Photos and against Drive. Leave room for it: the archives and their
+unpacked contents coexist until the merge is verified, so the ingest needs
+roughly **twice the Photos library size free** at its peak, on a volume that is
+also holding the other four sources un-de-duplicated.
 
 #### Checklist
 
@@ -1359,12 +1413,19 @@ and Flickr are the backup.
       that is not this machine
 - [ ] The four restore proofs above — run once on a small test set before
       ingest, and again after
-- [ ] Measure the total size of the four sources **before Phase 2**; it must
-      fit in ~730 GB after de-duplication
+- [ ] Measure the total size of the five sources **before Phase 2**; it must
+      fit in ~730 GB after de-duplication. Budget Google Photos at more than
+      its library size — Takeout's album folders are duplicates of media that
+      also lives under `Photos from <year>/`
+- [ ] Record the Google Photos item count **before** requesting Takeout — it is
+      the only verification the export admits, and it is unreadable afterwards
+      if the library has moved on
 - [ ] Request the Flickr data export early — it is prepared asynchronously
-- [ ] Ingest from Drive, GCS, the MacBook and Flickr into separate directories;
-      `rclone check` / `rsync --dry-run --checksum` / Flickr item count each;
-      then de-duplicate
+- [ ] Request the Google Takeout export early, **delivered to Google Drive** —
+      also asynchronous, and its download links expire after 7 days
+- [ ] Ingest from Drive, Photos, GCS, the MacBook and Flickr into separate
+      directories; `rclone check` / `rsync --dry-run --checksum` / item counts
+      each; merge the Takeout sidecars back into the media; then de-duplicate
 - [ ] First full backup, restore proof, *then* decide the fate of the sources
 
 ---
