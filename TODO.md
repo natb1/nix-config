@@ -247,16 +247,16 @@ guard is actively wrong for a future native NixOS box.
 
 The blocker is `tests/wezterm.test.nix`, which asserts the guard *structure*:
 
-- [ ] `test-homemanager-integration` — asserts macOS disables the activation
+- [x] `test-homemanager-integration` — asserts macOS disables the activation
       script **via `mkIf`**, inspecting `_type == "if"` and the condition value.
       This test's whole purpose disappears if the module moves.
-- [ ] `test-activation-script-runtime`, `test-activation-dag-execution`,
+- [x] `test-activation-script-runtime`, `test-activation-dag-execution`,
       `test-activation-script-tokens` — all reach into
       `moduleResult.home.activation.copyWeztermToWindows`
-- [ ] `tests/wezterm_test.sh` — ~500 lines exercising the Windows-user-detection
+- [x] `tests/wezterm_test.sh` — ~500 lines exercising the Windows-user-detection
       fallback chain and the copy's error codes. Real coverage; it must keep
       running against wherever the script ends up.
-- [ ] `test-linux-config` / `test-macos-config` — only affected if the
+- [x] `test-linux-config` / `test-macos-config` — only affected if the
       `extraConfig` lua moves too (they assert on `default_prog` / `wsl.exe` /
       `'connect', 'wsl'` presence and absence)
 
@@ -265,6 +265,16 @@ and confirm the closure is unchanged afterward — the activation script's *byte
 should be identical, only its defining file moves.
 
 ---
+
+**Done 2026-09-21.** Both pieces now live in
+`hosts/wsl/home/wezterm-windows-config.nix`. `modules/home/wezterm.nix` builds
+`extraConfig` from ordered fragments (`mkBefore` opening, host fragment at
+`mkOrder 600`, shared body, `mkAfter` `return config`). The tests evaluate
+through `lib.evalModules` for the WSL host, a native Linux machine and macOS;
+`test-native-linux-config` pins the case the old `isLinux` guard got wrong.
+`wezterm_test.sh` is a reimplementation and only needed comment updates. Closure:
+the activation script data is byte-identical; `wezterm.lua` differs only in
+blank lines (the empty darwin block used to leave four); nothing else changed.
 
 ## 6. Other known-parked items inherited from the old repo
 

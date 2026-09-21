@@ -1,24 +1,74 @@
 # WezTerm Module Tests
 #
-# Validates the WezTerm Home Manager module configuration:
+# Validates the WezTerm Home Manager configuration as each host composes it:
+# - modules/home/wezterm.nix alone (macOS, a native NixOS machine)
+# - plus hosts/wsl/home/wezterm-windows-config.nix (the WSL host)
+#
+# Covers:
 # 1. Lua syntax validation for generated config
-# 2. Platform-specific conditional logic (Linux/macOS)
+# 2. Platform-specific and host-specific logic
 # 3. Variable interpolation (username, home directory)
 # 4. Activation script logic for WSL Windows config copy
+#
+# Modules are evaluated with lib.evalModules against stub declarations of the
+# few home-manager options they touch, so fragment ordering (mkBefore/mkOrder/
+# mkAfter) and mkIf are resolved exactly as home-manager would resolve them.
 
 { pkgs, lib, ... }:
 
 let
-  # Import the wezterm module for testing
-  weztermModule = import ../modules/home/wezterm.nix;
+  weztermModule = ../modules/home/wezterm.nix;
+  wslWeztermModule = ../hosts/wsl/home/wezterm-windows-config.nix;
 
-  # Test helper: Evaluate module with mock config
+  # lib.hm.dag stand-in: records the DAG entry so tests can inspect it.
+  hmLib = lib.extend (
+    _final: _prev: {
+      hm.dag.entryAfter = deps: data: {
+        _type = "dagEntryAfter";
+        after = deps;
+        inherit data;
+      };
+    }
+  );
+
+  # Declarations for the home-manager options the modules under test set.
+  stubOptions =
+    { lib, ... }:
+    {
+      options = {
+        home.username = lib.mkOption { type = lib.types.str; };
+        home.homeDirectory = lib.mkOption { type = lib.types.str; };
+        home.activation = lib.mkOption {
+          type = lib.types.attrsOf lib.types.raw;
+          default = { };
+        };
+        programs.wezterm = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+          };
+          package = lib.mkOption { type = lib.types.raw; };
+          extraConfig = lib.mkOption {
+            type = lib.types.lines;
+            default = "";
+          };
+        };
+        systemd.user.services = lib.mkOption {
+          type = lib.types.attrsOf lib.types.raw;
+          default = { };
+        };
+      };
+    };
+
+  # Test helper: Evaluate the modules a host would import, with mock config.
+  # `wslHost` adds the WSL host module, as flake.nix does for the wsl host.
   evaluateModule =
     {
       username ? "testuser",
       homeDirectory ? "/home/testuser",
       isLinux ? true,
       isDarwin ? false,
+      wslHost ? false,
     }:
     assert lib.assertMsg (username != "") "evaluateModule: username cannot be empty";
     assert lib.assertMsg (homeDirectory != "") "evaluateModule: homeDirectory cannot be empty";
@@ -30,6 +80,9 @@ let
     assert lib.assertMsg (
       !(isLinux && isDarwin)
     ) "evaluateModule: Cannot have both isLinux=true and isDarwin=true (mutually exclusive platforms)";
+    assert lib.assertMsg (
+      !(wslHost && !isLinux)
+    ) "evaluateModule: wslHost requires isLinux=true";
     let
       mockPkgs = pkgs // {
         stdenv = pkgs.stdenv // {
@@ -37,21 +90,24 @@ let
           isDarwin = isDarwin;
         };
       };
-      mockConfig = {
-        home = {
-          username = username;
-          homeDirectory = homeDirectory;
-        };
-      };
     in
-    weztermModule {
-      config = mockConfig;
-      pkgs = mockPkgs;
-      lib = lib;
-    };
+    (hmLib.evalModules {
+      modules = [
+        stubOptions
+        weztermModule
+        {
+          home.username = username;
+          home.homeDirectory = homeDirectory;
+        }
+      ] ++ lib.optional wslHost wslWeztermModule;
+      specialArgs.pkgs = mockPkgs;
+    }).config;
 
   # Test helper: Extract Lua config from module evaluation
   extractLuaConfig = moduleResult: moduleResult.programs.wezterm.extraConfig;
+
+  # Test helper: Extract the copy-to-Windows activation entry, or null
+  extractCopyActivation = moduleResult: moduleResult.home.activation.copyWeztermToWindows or null;
 
   # Test helper: Validate Lua syntax using lua interpreter
   validateLuaSyntax =
@@ -78,13 +134,13 @@ let
   # Test 1: Basic module structure
   test-module-structure = pkgs.runCommand "test-wezterm-module-structure" { } ''
     ${
-      if (evaluateModule { }).programs.wezterm.enable or false then
+      if (evaluateModule { }).programs.wezterm.enable then
         "echo 'PASS: Module enables wezterm'"
       else
         "echo 'FAIL: Module does not enable wezterm' && exit 1"
     }
     ${
-      if (evaluateModule { }).programs.wezterm ? extraConfig then
+      if (extractLuaConfig (evaluateModule { })) != "" then
         "echo 'PASS: Module provides extraConfig'"
       else
         "echo 'FAIL: Module missing extraConfig' && exit 1"
@@ -92,8 +148,106 @@ let
     touch $out
   '';
 
-  # Test 2: Linux-specific configuration
+  # Test 2: WSL host configuration (shared module + WSL host module)
   test-linux-config =
+    let
+      result = evaluateModule {
+        username = "linuxuser";
+        homeDirectory = "/home/linuxuser";
+        isLinux = true;
+        isDarwin = false;
+        wslHost = true;
+      };
+      luaConfig = extractLuaConfig result;
+      # Everything before the shared body: must carry the WSL fragment.
+      preamble = builtins.head (lib.splitString "-- Auto-discover" luaConfig);
+    in
+    pkgs.runCommand "test-wezterm-linux-config" { } ''
+      ${
+        if lib.hasInfix "target_triple" luaConfig && lib.hasInfix "windows" luaConfig then
+          "echo 'PASS: WSL config guards default_prog with target_triple windows check'"
+        else
+          "echo 'FAIL: WSL config missing target_triple windows guard' && exit 1"
+      }
+      ${
+        if lib.hasInfix "default_prog" luaConfig && lib.hasInfix "wsl.exe" luaConfig then
+          "echo 'PASS: WSL config includes default_prog with wsl.exe'"
+        else
+          "echo 'FAIL: WSL config missing default_prog/wsl.exe' && exit 1"
+      }
+      ${
+        if lib.hasInfix "/home/" luaConfig && lib.hasInfix "linuxuser" luaConfig then
+          "echo 'PASS: WSL config includes correct home directory'"
+        else
+          "echo 'FAIL: WSL config has wrong home directory' && exit 1"
+      }
+      ${
+        if lib.hasInfix "default_gui_startup_args" luaConfig && lib.hasInfix "'connect', 'wsl'" luaConfig then
+          "echo 'PASS: WSL config includes default_gui_startup_args to auto-connect to wsl mux'"
+        else
+          "echo 'FAIL: WSL config missing default_gui_startup_args for wsl mux auto-connect' && exit 1"
+      }
+      ${
+        if lib.hasPrefix "local config = wezterm.config_builder()" luaConfig then
+          "echo 'PASS: WSL config opens with config_builder()'"
+        else
+          "echo 'FAIL: WSL config does not open with config_builder()' && exit 1"
+      }
+      ${
+        if lib.hasInfix "default_prog" preamble then
+          "echo 'PASS: WSL fragment is ordered before the shared body'"
+        else
+          "echo 'FAIL: WSL fragment is not ordered before the shared body' && exit 1"
+      }
+      ${
+        if lib.hasSuffix "return config\n" luaConfig then
+          "echo 'PASS: WSL config ends with return config'"
+        else
+          "echo 'FAIL: WSL config does not end with return config' && exit 1"
+      }
+      ${
+        if lib.hasInfix "native_macos_fullscreen_mode" luaConfig then
+          "echo 'FAIL: WSL config should not include macOS settings' && exit 1"
+        else
+          "echo 'PASS: WSL config excludes macOS settings'"
+      }
+      ${
+        if lib.hasInfix "ssh_domains" luaConfig then
+          "echo 'PASS: WSL config includes ssh_domains'"
+        else
+          "echo 'FAIL: WSL config missing ssh_domains' && exit 1"
+      }
+      ${
+        if lib.hasInfix "config.ssh_domains = ssh_domains" luaConfig then
+          "echo 'PASS: WSL config assigns ssh_domains to config'"
+        else
+          "echo 'FAIL: WSL config missing config.ssh_domains assignment' && exit 1"
+      }
+      ${
+        if lib.hasInfix "pcall" luaConfig then
+          "echo 'PASS: WSL config wraps ssh_domains discovery in pcall'"
+        else
+          "echo 'FAIL: WSL config missing pcall wrapper for ssh_domains' && exit 1"
+      }
+      ${
+        if lib.hasInfix "tailscale" luaConfig then
+          "echo 'PASS: WSL config includes tailscale'"
+        else
+          "echo 'FAIL: WSL config missing tailscale' && exit 1"
+      }
+      ${
+        if lib.hasInfix "wsl.exe" luaConfig && lib.hasInfix "tailscale_status_cmd" luaConfig then
+          "echo 'PASS: WSL config calls tailscale via wsl.exe on Windows'"
+        else
+          "echo 'FAIL: WSL config missing wsl.exe tailscale invocation' && exit 1"
+      }
+      touch $out
+    '';
+
+  # Test 2b: Native Linux configuration (shared module only). The WSL pieces
+  # used to be gated on stdenv.isLinux, which would have enabled them on a
+  # native NixOS machine; host scoping must keep them out.
+  test-native-linux-config =
     let
       result = evaluateModule {
         username = "linuxuser";
@@ -103,66 +257,36 @@ let
       };
       luaConfig = extractLuaConfig result;
     in
-    pkgs.runCommand "test-wezterm-linux-config" { } ''
+    pkgs.runCommand "test-wezterm-native-linux-config" { } ''
       ${
-        if lib.hasInfix "target_triple" luaConfig && lib.hasInfix "windows" luaConfig then
-          "echo 'PASS: Linux config guards default_prog with target_triple windows check'"
+        if lib.hasInfix "default_prog" luaConfig then
+          "echo 'FAIL: native Linux config should not include WSL default_prog' && exit 1"
         else
-          "echo 'FAIL: Linux config missing target_triple windows guard' && exit 1"
+          "echo 'PASS: native Linux config excludes WSL default_prog'"
       }
       ${
-        if lib.hasInfix "default_prog" luaConfig && lib.hasInfix "wsl.exe" luaConfig then
-          "echo 'PASS: Linux config includes default_prog with wsl.exe'"
+        if lib.hasInfix "default_gui_startup_args" luaConfig then
+          "echo 'FAIL: native Linux config should not auto-connect to the wsl mux' && exit 1"
         else
-          "echo 'FAIL: Linux config missing default_prog/wsl.exe' && exit 1"
+          "echo 'PASS: native Linux config excludes wsl mux auto-connect'"
       }
       ${
-        if lib.hasInfix "/home/" luaConfig && lib.hasInfix "linuxuser" luaConfig then
-          "echo 'PASS: Linux config includes correct home directory'"
+        if extractCopyActivation result == null then
+          "echo 'PASS: native Linux config excludes Windows copy activation'"
         else
-          "echo 'FAIL: Linux config has wrong home directory' && exit 1"
+          "echo 'FAIL: native Linux config should not copy config to Windows' && exit 1"
       }
       ${
-        if lib.hasInfix "default_gui_startup_args" luaConfig && lib.hasInfix "'connect', 'wsl'" luaConfig then
-          "echo 'PASS: Linux config includes default_gui_startup_args to auto-connect to wsl mux'"
+        if result.systemd.user.services ? wezterm-mux-server then
+          "echo 'PASS: native Linux config runs the mux server service'"
         else
-          "echo 'FAIL: Linux config missing default_gui_startup_args for wsl mux auto-connect' && exit 1"
-      }
-      ${
-        if lib.hasInfix "native_macos_fullscreen_mode" luaConfig then
-          "echo 'FAIL: Linux config should not include macOS settings' && exit 1"
-        else
-          "echo 'PASS: Linux config excludes macOS settings'"
+          "echo 'FAIL: native Linux config missing mux server service' && exit 1"
       }
       ${
         if lib.hasInfix "ssh_domains" luaConfig then
-          "echo 'PASS: Linux config includes ssh_domains'"
+          "echo 'PASS: native Linux config includes ssh_domains'"
         else
-          "echo 'FAIL: Linux config missing ssh_domains' && exit 1"
-      }
-      ${
-        if lib.hasInfix "config.ssh_domains = ssh_domains" luaConfig then
-          "echo 'PASS: Linux config assigns ssh_domains to config'"
-        else
-          "echo 'FAIL: Linux config missing config.ssh_domains assignment' && exit 1"
-      }
-      ${
-        if lib.hasInfix "pcall" luaConfig then
-          "echo 'PASS: Linux config wraps ssh_domains discovery in pcall'"
-        else
-          "echo 'FAIL: Linux config missing pcall wrapper for ssh_domains' && exit 1"
-      }
-      ${
-        if lib.hasInfix "tailscale" luaConfig then
-          "echo 'PASS: Linux config includes tailscale'"
-        else
-          "echo 'FAIL: Linux config missing tailscale' && exit 1"
-      }
-      ${
-        if lib.hasInfix "wsl.exe" luaConfig && lib.hasInfix "tailscale_status_cmd" luaConfig then
-          "echo 'PASS: Linux config calls tailscale via wsl.exe on Windows'"
-        else
-          "echo 'FAIL: Linux config missing wsl.exe tailscale invocation' && exit 1"
+          "echo 'FAIL: native Linux config missing ssh_domains' && exit 1"
       }
       touch $out
     '';
@@ -212,8 +336,18 @@ let
       touch $out
     '';
 
-  # Test 4: Lua syntax validation for all platform combinations
+  # Test 4: Lua syntax validation for all platform/host combinations
   test-lua-syntax-linux =
+    let
+      luaConfig = extractLuaConfig (evaluateModule {
+        isLinux = true;
+        isDarwin = false;
+        wslHost = true;
+      });
+    in
+    validateLuaSyntax luaConfig;
+
+  test-lua-syntax-native-linux =
     let
       luaConfig = extractLuaConfig (evaluateModule {
         isLinux = true;
@@ -254,6 +388,7 @@ let
           luaConfig = extractLuaConfig (evaluateModule {
             username = username;
             isLinux = true;
+            wslHost = true;
           });
         in
         lib.hasInfix username luaConfig
@@ -301,6 +436,7 @@ let
           luaConfig = extractLuaConfig (evaluateModule {
             username = testCase.username;
             isLinux = true;
+            wslHost = true;
           });
         in
         {
@@ -321,26 +457,37 @@ let
         touch $out
       '';
 
+  # Platforms/hosts every config-wide test runs against
+  testPlatforms = [
+    {
+      name = "wsl";
+      isLinux = true;
+      isDarwin = false;
+      wslHost = true;
+    }
+    {
+      name = "linux";
+      isLinux = true;
+      isDarwin = false;
+      wslHost = false;
+    }
+    {
+      name = "macos";
+      isLinux = false;
+      isDarwin = true;
+      wslHost = false;
+    }
+    {
+      name = "generic";
+      isLinux = false;
+      isDarwin = false;
+      wslHost = false;
+    }
+  ];
+
   # Test 9: Common configuration present in all platforms
   test-common-config =
     let
-      testPlatforms = [
-        {
-          name = "linux";
-          isLinux = true;
-          isDarwin = false;
-        }
-        {
-          name = "macos";
-          isLinux = false;
-          isDarwin = true;
-        }
-        {
-          name = "generic";
-          isLinux = false;
-          isDarwin = false;
-        }
-      ];
       # All platforms should have config_builder
       commonSettings = [
         "config_builder"
@@ -353,8 +500,7 @@ let
         platform:
         let
           luaConfig = extractLuaConfig (evaluateModule {
-            isLinux = platform.isLinux;
-            isDarwin = platform.isDarwin;
+            inherit (platform) isLinux isDarwin wslHost;
           });
         in
         lib.concatMapStringsSep "\n" (
@@ -379,92 +525,68 @@ let
         touch $out
       '';
 
-  # Test 13: Home Manager integration test
+  # Test 13: Home Manager integration test — which host gets which pieces
   test-homemanager-integration =
     let
-      linuxPkgs = pkgs // {
-        stdenv = pkgs.stdenv // {
-          isLinux = true;
-          isDarwin = false;
-        };
+      wslResult = evaluateModule {
+        isLinux = true;
+        wslHost = true;
       };
-
-      macosPkgs = pkgs // {
-        stdenv = pkgs.stdenv // {
-          isLinux = false;
-          isDarwin = true;
-        };
-      };
-
-      mockLinuxConfig = {
-        home = {
-          username = "testuser";
-          homeDirectory = "/home/testuser";
-        };
-      };
-
-      mockMacosConfig = {
-        home = {
-          username = "macuser";
-          homeDirectory = "/Users/macuser";
-        };
-      };
-
-      linuxResult = weztermModule {
-        config = mockLinuxConfig;
-        pkgs = linuxPkgs;
-        lib = lib;
-      };
-
-      macosResult = weztermModule {
-        config = mockMacosConfig;
-        pkgs = macosPkgs;
-        lib = lib;
+      linuxResult = evaluateModule { isLinux = true; };
+      macosResult = evaluateModule {
+        username = "macuser";
+        homeDirectory = "/Users/macuser";
+        isLinux = false;
+        isDarwin = true;
       };
     in
     pkgs.runCommand "test-homemanager-integration" { } ''
-      ${
-        if linuxResult.programs.wezterm.enable or false then
-          "echo 'PASS: Linux config evaluates and enables wezterm'"
-        else
-          "echo 'FAIL: Linux config evaluation failed or wezterm not enabled' && exit 1"
+      ${lib.concatMapStringsSep "\n"
+        (
+          { name, result }:
+          if result.programs.wezterm.enable then
+            "echo 'PASS: ${name} config evaluates and enables wezterm'"
+          else
+            "echo 'FAIL: ${name} config evaluation failed or wezterm not enabled' && exit 1"
+        )
+        [
+          {
+            name = "WSL";
+            result = wslResult;
+          }
+          {
+            name = "native Linux";
+            result = linuxResult;
+          }
+          {
+            name = "macOS";
+            result = macosResult;
+          }
+        ]
       }
       ${
-        if macosResult.programs.wezterm.enable or false then
-          "echo 'PASS: macOS config evaluates and enables wezterm'"
+        if extractCopyActivation wslResult != null then
+          "echo 'PASS: WSL config includes activation script in DAG'"
         else
-          "echo 'FAIL: macOS config evaluation failed or wezterm not enabled' && exit 1"
+          "echo 'FAIL: WSL config missing activation script in DAG' && exit 1"
       }
       ${
-        if linuxResult.home.activation ? copyWeztermToWindows then
-          "echo 'PASS: Linux config includes activation script in DAG'"
-        else
-          "echo 'FAIL: Linux config missing activation script in DAG' && exit 1"
-      }
-      ${
-        let
-          activationScript = macosResult.home.activation.copyWeztermToWindows or null;
-          isConditional = activationScript != null && (activationScript._type or null) == "if";
-          conditionValue = if isConditional then (activationScript.condition or null) else null;
-        in
-        if isConditional && conditionValue == false then
-          "echo 'PASS: macOS config correctly disables activation script via mkIf'"
-        else if activationScript == null then
+        if extractCopyActivation macosResult == null then
           "echo 'PASS: macOS config excludes activation script'"
         else
-          "echo 'FAIL: macOS config should not include active activation script' && exit 1"
+          "echo 'FAIL: macOS config should not include activation script' && exit 1"
       }
       ${
-        if linuxResult.programs.wezterm ? extraConfig then
-          "echo 'PASS: Linux config includes extraConfig'"
+        if wslResult.systemd.user.services ? wezterm-mux-server then
+          "echo 'PASS: WSL config runs the mux server service'"
         else
-          "echo 'FAIL: Linux config missing extraConfig' && exit 1"
+          "echo 'FAIL: WSL config missing mux server service' && exit 1"
       }
       ${
-        if macosResult.programs.wezterm ? extraConfig then
-          "echo 'PASS: macOS config includes extraConfig'"
+        if macosResult.systemd.user.services ? wezterm-mux-server then
+          "echo 'FAIL: macOS config should not define a systemd mux service' && exit 1"
         else
-          "echo 'FAIL: macOS config missing extraConfig' && exit 1"
+          "echo 'PASS: macOS config excludes systemd mux service'"
       }
 
       echo ""
@@ -472,73 +594,40 @@ let
       touch $out
     '';
 
+  # The WSL host's copy-to-Windows activation entry, shared by tests 14 and 15.
+  wslMockConfig = {
+    username = "testuser";
+    homeDirectory = "/home/testuser";
+  };
+  wslDagEntry = extractCopyActivation (
+    evaluateModule (
+      wslMockConfig
+      // {
+        isLinux = true;
+        wslHost = true;
+      }
+    )
+  );
+  wslScriptData = if wslDagEntry != null && wslDagEntry ? data then wslDagEntry.data else null;
+
   # Test 14: Activation script DAG execution and variable access
   test-activation-dag-execution =
     let
-      linuxPkgs = pkgs // {
-        stdenv = pkgs.stdenv // {
-          isLinux = true;
-          isDarwin = false;
-        };
-      };
-
-      mockConfig = {
-        home = {
-          username = "testuser";
-          homeDirectory = "/home/testuser";
-        };
-      };
-
-      mockLib = lib // {
-        hm = {
-          dag = {
-            entryAfter = deps: data: {
-              _type = "dagEntryAfter";
-              after = deps;
-              inherit data;
-            };
-          };
-        };
-      };
-
-      moduleResult = weztermModule {
-        config = mockConfig;
-        pkgs = linuxPkgs;
-        lib = mockLib;
-      };
-
-      activationScript = moduleResult.home.activation.copyWeztermToWindows or null;
-
-      dagEntry =
-        if activationScript != null && activationScript ? _type && activationScript._type == "if" then
-          activationScript.content or null
-        else
-          activationScript;
-
-      scriptData = if dagEntry != null && dagEntry ? data then dagEntry.data else null;
+      dagEntry = wslDagEntry;
+      scriptData = wslScriptData;
     in
     pkgs.runCommand "test-activation-dag-execution" { } ''
       ${
-        if activationScript != null then
-          "echo 'PASS: Activation script exists on Linux'"
+        if dagEntry != null then
+          "echo 'PASS: Activation script exists on the WSL host'"
         else
-          "echo 'FAIL: Activation script missing on Linux' && exit 1"
-      }
-      ${
-        if
-          activationScript != null
-          && (activationScript._type or null) == "if"
-          && activationScript.condition == true
-        then
-          "echo 'PASS: Activation script is wrapped in lib.mkIf with condition=true for Linux'"
-        else
-          "echo 'FAIL: Activation script not properly wrapped in lib.mkIf for Linux' && exit 1"
+          "echo 'FAIL: Activation script missing on the WSL host' && exit 1"
       }
       ${
         if dagEntry != null && (dagEntry._type or null) == "dagEntryAfter" then
-          "echo 'PASS: Inner structure is a proper DAG entry (type: dagEntryAfter)'"
+          "echo 'PASS: Activation script is a proper DAG entry (type: dagEntryAfter)'"
         else
-          "echo 'FAIL: Inner structure is not a proper DAG entry' && exit 1"
+          "echo 'FAIL: Activation script is not a proper DAG entry' && exit 1"
       }
       ${
         if dagEntry != null && (builtins.elem "linkGeneration" (dagEntry.after or [ ])) then
@@ -565,33 +654,10 @@ let
           "echo 'FAIL: Activation script missing VERBOSE_ARG variable reference' && exit 1"
       }
       ${
-        if scriptData != null && lib.hasInfix mockConfig.home.homeDirectory scriptData then
+        if scriptData != null && lib.hasInfix wslMockConfig.homeDirectory scriptData then
           "echo 'PASS: Activation script uses interpolated homeDirectory value'"
         else
           "echo 'FAIL: Activation script missing homeDirectory value' && exit 1"
-      }
-      ${
-        let
-          macosPkgs = pkgs // {
-            stdenv = pkgs.stdenv // {
-              isLinux = false;
-              isDarwin = true;
-            };
-          };
-          macosResult = weztermModule {
-            config = mockConfig;
-            pkgs = macosPkgs;
-            lib = mockLib;
-          };
-          macosActivation = macosResult.home.activation.copyWeztermToWindows or null;
-          isConditionallyDisabled =
-            macosActivation == null
-            || (macosActivation ? _type && macosActivation._type == "if" && macosActivation.condition == false);
-        in
-        if isConditionallyDisabled then
-          "echo 'PASS: Activation script properly excluded on macOS via lib.mkIf'"
-        else
-          "echo 'FAIL: Activation script not properly excluded on macOS' && exit 1"
       }
 
       echo ""
@@ -600,54 +666,14 @@ let
     '';
 
   # Test 15: Fidelity anchor — activation script contains three-tier detection tokens
-  # Asserts the real nix string in wezterm.nix includes the key tokens introduced
-  # by the three-tier Windows-user detection chain (issue #62). The bash test suite
-  # validates the algorithm against a reimplementation; this test ties it to the
-  # actual nix activation string so a typo there fails here.
+  # Asserts the real nix string in hosts/wsl/home/wezterm-windows-config.nix
+  # includes the key tokens introduced by the three-tier Windows-user detection
+  # chain (issue #62). The bash test suite validates the algorithm against a
+  # reimplementation; this test ties it to the actual nix activation string so a
+  # typo there fails here.
   test-activation-script-tokens =
     let
-      linuxPkgs = pkgs // {
-        stdenv = pkgs.stdenv // {
-          isLinux = true;
-          isDarwin = false;
-        };
-      };
-
-      mockConfig = {
-        home = {
-          username = "testuser";
-          homeDirectory = "/home/testuser";
-        };
-      };
-
-      mockLib = lib // {
-        hm = {
-          dag = {
-            entryAfter = deps: data: {
-              _type = "dagEntryAfter";
-              after = deps;
-              inherit data;
-            };
-          };
-        };
-      };
-
-      moduleResult = weztermModule {
-        config = mockConfig;
-        pkgs = linuxPkgs;
-        lib = mockLib;
-      };
-
-      activationScript = moduleResult.home.activation.copyWeztermToWindows or null;
-
-      dagEntry =
-        if activationScript != null && activationScript ? _type && activationScript._type == "if" then
-          activationScript.content or null
-        else
-          activationScript;
-
-      scriptData = if dagEntry != null && dagEntry ? data then dagEntry.data else null;
-
+      scriptData = wslScriptData;
       requiredTokens = [
         "WEZTERM_WINDOWS_USER"
         "cmd.exe"
@@ -673,65 +699,46 @@ let
     '';
 
   # Test: format-tab-title event handler
-  test-format-tab-title =
-    let
-      testPlatforms = [
-        {
-          name = "linux";
-          isLinux = true;
-          isDarwin = false;
+  test-format-tab-title = pkgs.runCommand "test-wezterm-format-tab-title" { } ''
+    ${lib.concatMapStringsSep "\n" (
+      platform:
+      let
+        luaConfig = extractLuaConfig (evaluateModule {
+          inherit (platform) isLinux isDarwin wslHost;
+        });
+      in
+      ''
+        ${
+          if lib.hasInfix "format-tab-title" luaConfig then
+            "echo 'PASS: ${platform.name} config includes format-tab-title event handler'"
+          else
+            "echo 'FAIL: ${platform.name} config missing format-tab-title event handler' && exit 1"
         }
-        {
-          name = "macos";
-          isLinux = false;
-          isDarwin = true;
+        ${
+          if lib.hasInfix "user_vars.git_branch" luaConfig then
+            "echo 'PASS: ${platform.name} config reads git_branch user variable'"
+          else
+            "echo 'FAIL: ${platform.name} config missing user_vars.git_branch' && exit 1"
         }
-        {
-          name = "generic";
-          isLinux = false;
-          isDarwin = false;
+        ${
+          if lib.hasInfix " > " luaConfig then
+            "echo 'PASS: ${platform.name} config uses branch > title separator'"
+          else
+            "echo 'FAIL: ${platform.name} config missing branch > title separator' && exit 1"
         }
-      ];
-    in
-    pkgs.runCommand "test-wezterm-format-tab-title" { } ''
-      ${lib.concatMapStringsSep "\n" (
-        platform:
-        let
-          luaConfig = extractLuaConfig (evaluateModule {
-            isLinux = platform.isLinux;
-            isDarwin = platform.isDarwin;
-          });
-        in
-        ''
-          ${
-            if lib.hasInfix "format-tab-title" luaConfig then
-              "echo 'PASS: ${platform.name} config includes format-tab-title event handler'"
-            else
-              "echo 'FAIL: ${platform.name} config missing format-tab-title event handler' && exit 1"
-          }
-          ${
-            if lib.hasInfix "user_vars.git_branch" luaConfig then
-              "echo 'PASS: ${platform.name} config reads git_branch user variable'"
-            else
-              "echo 'FAIL: ${platform.name} config missing user_vars.git_branch' && exit 1"
-          }
-          ${
-            if lib.hasInfix " > " luaConfig then
-              "echo 'PASS: ${platform.name} config uses branch > title separator'"
-            else
-              "echo 'FAIL: ${platform.name} config missing branch > title separator' && exit 1"
-          }
-        ''
-      ) testPlatforms}
-      touch $out
-    '';
+      ''
+    ) testPlatforms}
+    touch $out
+  '';
 
   # Aggregate all tests into a test suite
   allTests = [
     test-module-structure
     test-linux-config
+    test-native-linux-config
     test-macos-config
     test-lua-syntax-linux
+    test-lua-syntax-native-linux
     test-lua-syntax-macos
     test-lua-syntax-generic
     test-username-interpolation
@@ -759,8 +766,10 @@ in
     inherit
       test-module-structure
       test-linux-config
+      test-native-linux-config
       test-macos-config
       test-lua-syntax-linux
+      test-lua-syntax-native-linux
       test-lua-syntax-macos
       test-lua-syntax-generic
       test-username-interpolation

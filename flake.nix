@@ -111,9 +111,9 @@
           # generates ~/.config/wezterm/wezterm.lua. Installing the pinned build
           # here — rather than an out-of-Nix GUI — keeps this Mac's `wezterm
           # connect` client in version lockstep with the WSL mux server, which is
-          # built from the same pin. The Linux-only mux service and Windows-copy
-          # activation in that module are guarded by pkgs.stdenv.isLinux, so they
-          # stay inert on darwin.
+          # built from the same pin. The module's Linux-only mux service is
+          # guarded by pkgs.stdenv.isLinux; the Windows-side pieces live in
+          # hosts/wsl/home and are not imported here.
         ];
       };
 

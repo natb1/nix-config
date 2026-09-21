@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for wezterm.nix activation script
+# Tests for the copyWeztermToWindows activation script
+# (hosts/wsl/home/wezterm-windows-config.nix)
 # Tests Windows user detection and config copy logic on WSL
 # Shell unit tests for activation script logic (user detection, file copy, error handling).
 
@@ -40,7 +41,7 @@ report_fail() {
   ((FAILURES++))
 }
 
-echo "Running wezterm.nix activation script tests..."
+echo "Running wezterm-windows-config.nix activation script tests..."
 echo ""
 
 # Test 1: Windows user detection with valid user directories
@@ -575,7 +576,7 @@ fi
 # Tests 24-26: Three-tier detection chain precedence tests
 #
 # These tests exercise the full three-tier Windows-user detection chain from
-# wezterm.nix (override env var > cmd.exe/wslpath interop > ls/grep/head
+# wezterm-windows-config.nix (override env var > cmd.exe/wslpath interop > ls/grep/head
 # heuristic) using PATH-stubbed executables and a temp mount that stands in
 # for /mnt/c.
 #

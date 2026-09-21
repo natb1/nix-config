@@ -24,13 +24,13 @@
   # Renamed from the NixOS-WSL default ("nixos") so the three machines are
   # distinguishable. This name is what Tailscale registers as the node name
   # (wsl.<tailnet>.ts.net), what avahi publishes (wsl.local), and what the
-  # wezterm mux domain in modules/home/wezterm.nix connects to
+  # wezterm mux domain in hosts/wsl/home/wezterm-windows-config.nix connects to
   # (`default_gui_startup_args = { 'connect', 'wsl' }`) — those three move
   # together, so change them together.
   #
   # NOT affected: the Windows-side WSL distro name stays "NixOS". That is
   # registered with Windows, not with NixOS, so `wsl.exe -d NixOS` and the
-  # `//wsl$/NixOS/...` UNC paths in modules/home/wezterm.nix are unchanged.
+  # `//wsl$/NixOS/...` UNC paths in the wezterm modules are unchanged.
   networking.hostName = "wsl";
 
   # This value determines the NixOS release from which the default
