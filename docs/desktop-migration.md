@@ -91,7 +91,9 @@ parallel.)
 | Latest rev 1.0 BIOS version | Step 2 | Newest found by search: F39 (2025-12-28). Confirm on Gigabyte's rev 1.0 page — there may be newer |
 | Board revision on the PCB itself | Step 2 | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
 | Wi-Fi interface name on NixOS | Phase 3 (Samba), firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
-| Where the media lives today | Media storage | It has to be copied onto `/srv/media` after Phase 2. Since it is irreplaceable, the original stays put until the Hetzner backup of `/srv/media` has passed a restore test |
+| Total size of the media, across all three sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + the MacBook + a GCS bucket must fit in ~730 GB after de-duplication. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
+| GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
+| Fate of the Drive/GCS/MacBook copies | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
 | Stale NVRAM entry for the old ESP | Phase 2 | Once disko wipes the 1 TB drive, the old "Windows Boot Manager" entry points at nothing. `efibootmgr -b <n> -B` it, alongside the `efibootmgr -o` step |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
@@ -938,8 +940,14 @@ neighbour, which raises the stakes on the `disko --mode disko` warning below:
 the destructive mode takes the operating system with the media now, not just
 the media.
 
-Two steps, in this order. The share is useful on day one; the backup is what
-makes the share safe to depend on.
+Three steps, in this order. The share is useful on day one; the backup is what
+makes the share safe to depend on; and only then does the media come in —
+because it is irreplaceable, it arrives on a volume whose backup already works.
+
+**Where the media is today** (2026-09-21): spread across three places —
+**Google Drive**, **the MacBook's internal storage**, and a **GCS bucket** it has
+to be exported from. None of them is this machine, which is good news: every
+source is itself a copy that survives the migration untouched.
 
 ### Step 1 — `/srv/media` as a network share
 
@@ -1169,6 +1177,35 @@ A backup is a claim until it is restored. All four, before trusting it:
 - [ ] `systemctl list-timers restic-backups-media` after a week, and confirm a
       deliberately broken run is actually noticed
 
+### Step 3 — bring the media in
+
+**`rclone` for all three sources**, because it speaks all three and it is
+already in the plan for the Drive mount (Phase 3). One tool, one verification
+command, one log format.
+
+| Source | How | Notes |
+| --- | --- | --- |
+| Google Drive | `rclone copy gdrive:<path> /srv/media/<dest> --progress` | Use the Drive remote configured for Phase 3's mount, not the mount itself — `copy` against the API is faster and resumable. Google-native Docs/Sheets are not media; exclude them |
+| GCS bucket | `rclone copy gcs:<bucket>/<path> /srv/media/<dest>` | Needs a `gcs` remote (service-account JSON or `gcloud` user creds — hand-provisioned, not in git). Internet egress is billed per GB, plus retrieval fees if the bucket is Coldline/Archive — check the class first. A one-off pull of a few hundred GB is tens of dollars, not a reason to hesitate |
+| MacBook | From the Mac: `rsync -avh --progress ~/<path>/ n8@desk:/srv/media/<dest>/` over Tailscale | Or drag into the SMB share from Finder. `rsync` is resumable and prints what it skipped |
+
+Then, per source, **verify rather than assume**:
+
+```sh
+rclone check gdrive:<path>        /srv/media/<dest> --one-way   # size + hash
+rclone check gcs:<bucket>/<path>  /srv/media/<dest> --one-way
+# Mac side: rerun the same rsync with --dry-run --checksum; it should list nothing.
+```
+
+Expect overlap between the three. Land each source in its own directory
+first, verify, *then* de-duplicate (`rclone dedupe`, or `fdupes -r` across the
+directories) — merging during the copy makes the verification meaningless.
+
+**Retiring a source is a separate decision, and it comes last.** Only after the
+first restic backup of the ingested media has passed the restore proofs above
+is `/srv/media` + Hetzner a trustworthy pair. Until then Drive, GCS and the
+MacBook are the backup.
+
 #### Checklist
 
 - [ ] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled
@@ -1180,7 +1217,13 @@ A backup is a claim until it is restored. All four, before trusting it:
       added to the README's unmanaged-state list
 - [ ] Append-only forced command, plus the offline prune key recorded somewhere
       that is not this machine
-- [ ] The four restore proofs above
+- [ ] The four restore proofs above — run once on a small test set before
+      ingest, and again after
+- [ ] Measure the total size of the three sources **before Phase 2**; it must
+      fit in ~730 GB after de-duplication
+- [ ] Ingest from Drive, GCS and the MacBook into separate directories;
+      `rclone check` / `rsync --dry-run --checksum` each; then de-duplicate
+- [ ] First full backup, restore proof, *then* decide the fate of the sources
 
 ---
 
