@@ -83,7 +83,7 @@ scripts/           maintenance scripts (wezterm pin refresh)
 **Host vs. platform.** A module lives in `modules/` only if it evaluates
 correctly on every host. Config that is specific to *one machine* lives under
 `hosts/<host>/` — including its home-manager modules (`hosts/wsl/home/`).
-A `pkgs.stdenv.isLinux` guard is for behavior that genuinely differs by
+A `pkgs.stdenv.hostPlatform.isLinux` guard is for behavior that genuinely differs by
 *platform*; it is not a substitute for host scoping, because a future native
 NixOS box is also Linux and would wrongly pick up WSL-only modules.
 

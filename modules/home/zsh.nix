@@ -10,7 +10,7 @@
     enable = true;
     # Put Homebrew on PATH for login shells. Previously this lived in an
     # unmanaged ~/.zprofile; managing it here lets Home Manager own the file.
-    profileExtra = lib.optionalString pkgs.stdenv.isDarwin ''
+    profileExtra = lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
       eval "$(/opt/homebrew/bin/brew shellenv)"
     '';
     initContent = lib.mkOrder 1000 ''

@@ -38,7 +38,7 @@
         local config = wezterm.config_builder()
       '')
 
-      (lib.mkIf pkgs.stdenv.isDarwin ''
+      (lib.mkIf pkgs.stdenv.hostPlatform.isDarwin ''
         -- Enable macOS native fullscreen mode
         config.native_macos_fullscreen_mode = true
       '')
@@ -141,7 +141,7 @@
   # Note: on a headless server this user service only runs while the user has a
   # session. To keep it up across logins, enable lingering once on the box:
   #   loginctl enable-linger <user>
-  systemd.user.services.wezterm-mux-server = lib.mkIf pkgs.stdenv.isLinux {
+  systemd.user.services.wezterm-mux-server = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
     Unit = {
       Description = "WezTerm multiplexer server";
       After = [ "default.target" ];

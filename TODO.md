@@ -286,9 +286,10 @@ blank lines (the empty darwin block used to leave four); nothing else changed.
       fixed-output derivation; or mirror the asset somewhere we own. Until then,
       `scripts/sync-wezterm.sh` re-syncs the pin and re-enables the install until
       upstream's next nightly.
-- [ ] `stdenv.isLinux` / `stdenv.isDarwin` are deprecated in nixpkgs 26.11 (they
+- [x] `stdenv.isLinux` / `stdenv.isDarwin` are deprecated in nixpkgs 26.11 (they
       warn on every eval). Mechanical sweep to `stdenv.hostPlatform.isLinux` /
-      `.isDarwin` across `modules/` and `hosts/`.
+      `.isDarwin` across `modules/` and `hosts/`. Done 2026-09-21, tests' mocks
+      updated to match; both hosts' toplevel derivations unchanged, eval warning-free.
 
 ---
 

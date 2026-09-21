@@ -86,8 +86,10 @@ let
     let
       mockPkgs = pkgs // {
         stdenv = pkgs.stdenv // {
-          isLinux = isLinux;
-          isDarwin = isDarwin;
+          hostPlatform = pkgs.stdenv.hostPlatform // {
+            isLinux = isLinux;
+            isDarwin = isDarwin;
+          };
         };
       };
     in

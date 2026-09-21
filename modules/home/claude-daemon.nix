@@ -44,7 +44,7 @@
 }:
 
 {
-  systemd.user.services.claude-daemon = lib.mkIf pkgs.stdenv.isLinux {
+  systemd.user.services.claude-daemon = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
     Unit = {
       Description = "Claude Code durable background session supervisor";
       After = [ "network-online.target" ];
