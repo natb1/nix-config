@@ -5,7 +5,8 @@ but **nothing has been switched**. The WSL box is still running generation 49,
 built from `commons.systems` `main`.
 
 > **Update 2026-09-21:** the WSL box has been switched to `.#wsl` and §1's QA
-> passes, including `wezterm connect` from the Mac and from Windows. §2 and §3 are next.
+> passes, including `wezterm connect` from the Mac and from Windows. §2 and §3 are done too; §5–7
+> remain, and this file is deleted once they are.
 
 > **Update 2026-09-19:** the Mac (`darwinConfigurations.mba`) has now been built
 > and switched — see §4, which is done. The WSL box (§1) is still on generation
@@ -150,7 +151,7 @@ name is still `NixOS`. `wsl.exe -d NixOS` and the `//wsl$/NixOS/...` UNC paths i
 
 Only after the QA above passes.
 
-- [ ] Remove the dead `/etc/nixos` stub and its three backups. The stub imports
+- [x] Remove the dead `/etc/nixos` stub and its three backups. The stub imports
       `commons.systems/worktrees/main/nix/nixos/configuration.nix`, a path that
       no longer exists, so it is already broken — nothing reads it in flake mode.
 
@@ -158,7 +159,7 @@ Only after the QA above passes.
       sudo rm /etc/nixos/configuration.nix /etc/nixos/configuration.nix.backup*
       ```
 
-- [ ] Remove the unused channels. The system has been flake-built for a while;
+- [x] Remove the unused channels. The system has been flake-built for a while;
       these two are registered but contribute nothing, and a stale channel is the
       usual cause of "why did my rebuild pick up the wrong nixpkgs".
 
@@ -168,10 +169,12 @@ Only after the QA above passes.
       sudo nix-channel --remove nixos-wsl
       ```
 
-- [ ] Decide about `/etc/office-hours/producer.env`. It is the hand-provisioned
+- [x] Decide about `/etc/office-hours/producer.env`. Nothing to do (2026-09-21):
+      the file and `/etc/office-hours/` never existed on this box, so the producer
+      was never provisioned here. It is the hand-provisioned
       secret for the office-hours producer, which this repo no longer schedules.
       Delete it (mode 0600, holds credentials) unless something else reads it.
-- [ ] `nix-collect-garbage -d` once you are confident in the new generation — the
+- [x] `nix-collect-garbage -d` once you are confident in the new generation — the
       dropped nodejs closure is ~128 MB, and old generations pin it until
       collected. This also deletes the rollback target, so not before QA.
 
