@@ -71,14 +71,22 @@ plan gates it now — Phase 0 is the only go/no-go.
   activated with a digital license linked to your Microsoft account."* The
   new ESP is proven, so **the 1 TB drive's ESP is now disposable**; Phase 2
   wipes it with the rest of that drive.
+- **Firmware F9d → F43c** (2026-09-23), flashed with Q-Flash from a FAT32
+  stick after the image's 16-bit sum matched the published `9D0F`
+  (SHA-256 `21A6448F…36748C0C`). `Win32_BIOS` → `F43c`, 2026-07-20. Windows
+  boots, is still activated (`LicenseStatus` 1), and Wi-Fi is up. The
+  setup-screen half of the [post-flash checklist](#firmware-update) is still
+  open. Windows reports **Secure Boot back on**, as F38 predicted, and memory
+  at **JEDEC 4800** (EXPO off).
 
 ### Next, in order
 
-1. **Update the motherboard firmware** — see
-   [Firmware update](#firmware-update). Only now that the new ESP is proven,
-   so a boot failure has one cause, not two.
+1. **Finish the post-flash checklist**, in firmware setup: Secure Boot off,
+   IOMMU Enabled, Initial Display Output IGD, ErP off with PCIe wake on, and
+   boot order (the 2 TB Windows Boot Manager first) — see
+   [Firmware update](#firmware-update). Fold it into the first step-2 visit.
 2. **Tune the BIOS** — memory timings first, then the CPU — see
-   [BIOS tuning](#bios-tuning). After step 1, because the flash resets every
+   [BIOS tuning](#bios-tuning). After the flash, because it resets every
    setting; **before step 6**, because a failed memory-training boot ends in a
    CMOS clear, which would also wipe the Secure Boot keys Phase 2b enrolls.
 3. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
@@ -184,11 +192,11 @@ the text was wrong about how the machine behaves.
 | dGPU's Linux PCI address | [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) | `<DGPU_ADDR>` — Windows reports bus 3, but Linux numbers buses independently; take it from `lspci -nn -d 1002:73ff` on the live USB |
 | Wake-on-WLAN on the MT7922 | [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) | `iw phy` on the live USB must list `WoWLAN support` with `wake up on magic packet`. If it does not, suspend is off before it is tried |
 | ancs4linux: pinned revision and hash | [iPhone notifications](#iphone-notifications-over-ancs) | Not in nixpkgs; packaged in this repo, pinned by rev and hash like every other out-of-tree artifact here |
-| Memory kit and its current settings | [BIOS tuning](#bios-tuning) | Part number, rated EXPO profile, and whether EXPO is on today — read before the flash resets it (`Get-CimInstance Win32_PhysicalMemory \| Select Manufacturer,PartNumber,Capacity,Speed,ConfiguredClockSpeed`). The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
+| Memory kit's DRAM IC | [BIOS tuning](#bios-tuning) | Kit: 2 × 16 GB Corsair Vengeance **`CMK32GX5M2D6000C36`** — rated EXPO DDR5-6000 CL36; running JEDEC 4800 after the flash. The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
 
 ### Firmware update
 
-**Currently F9d (2023-09). Target: F43c (2026-07-20, AGESA 1.3.0.1c).**
+**Done 2026-09-23: F9d (2023-09) → F43c (2026-07-20, AGESA 1.3.0.1c).**
 
 The board is rev 1.0, and rev 1.0/1.1 BIOSes are listed on Gigabyte's
 *un-suffixed* B650I AORUS ULTRA page — the same F-series line this board is
@@ -199,7 +207,8 @@ and their own files; **never flash a file from those.** Checked 2026-09-21:
 | --- | --- |
 | Support page | <https://www.gigabyte.com/Motherboard/B650I-AORUS-ULTRA/support> |
 | File | [`mb_bios_b650i-aorus-ultra_8arpl109_f43c.zip`](https://download.gigabyte.com/FileList/BIOS/mb_bios_b650i-aorus-ultra_8arpl109_f43c.zip) (14.57 MB) |
-| Checksum (as published) | `9D0F` |
+| Checksum (as published) | `9D0F` — the 16-bit sum of the image's bytes, which catches corruption, not tampering. `B650IAORUSULTRA.F43c` (33,554,432 bytes) matched it |
+| SHA-256, as downloaded 2026-09-23 | zip `25F6CEC3331791F1ACE1B42D8C137C10BCA0F15D854576333AB6ACC5347B2890`; image `21A6448FC08FD9ADC6DDA75D0FA629808B2849C5633DE5FBFEA699F636748C0C` |
 | Previous | F43b (2026-06-29), F42 (2026-05-20) — fallbacks if F43c misbehaves |
 
 Three years of AGESA updates is worth taking before the
@@ -222,7 +231,8 @@ A firmware update resets settings to defaults. Afterwards, re-check:
       `BAR 0: can't reserve` — see [Phase 4](#phase-4--vfio-and-the-libvirt-host).
       Bare-metal Windows is unaffected: it drives the dGPU from its own driver
       whichever GPU the firmware posted on
-- [ ] **Secure Boot off — it will not be.** F38's release notes: *Secure Boot
+- [ ] **Secure Boot off — it will not be.** *Confirmed 2026-09-23:
+      `UEFISecureBootEnabled` = 1 after the flash.* F38's release notes: *Secure Boot
       enabled as system default*. So after flashing it is **on**, and must be
       turned off again (Windows boots either way; systemd-boot without
       lanzaboote does not). CSM off. *Once [Phase 2b](#phase-2b--restore-secure-boot)
@@ -231,20 +241,23 @@ A firmware update resets settings to defaults. Afterwards, re-check:
       until the keys are re-enrolled. See Phase 2b's recovery note
 - [ ] Boot order — Windows Boot Manager on the **2 TB** drive first (until
       NixOS exists)
-- [ ] XMP/EXPO memory profile, if it was on before — and after
+- [ ] XMP/EXPO memory profile, if it was on before — *after the flash:
+      4800 MT/s, so off. Whether it was on under F9d went unrecorded; either
+      way it is [BIOS tuning](#bios-tuning)'s first step now* — and after
       [BIOS tuning](#bios-tuning), every setting in its table: reload the saved
       profile, then check it against the table, since a profile saved on one
       BIOS version is not guaranteed to load on the next
-- [ ] Windows boots and is still activated. The fTPM may be cleared by an AGESA
+- [x] Windows boots and is still activated — *2026-09-23, `LicenseStatus` 1*. The fTPM may be cleared by an AGESA
       jump; with BitLocker off that costs nothing but possibly a Windows Hello
       PIN re-setup
-- [ ] Wi-Fi still works in Windows (the only network this machine has)
+- [x] Wi-Fi still works in Windows (the only network this machine has) —
+      *2026-09-23, `Wi-Fi` (RZ616) Up*
 - [ ] **Wake from PCIe devices on, ErP off** (Gigabyte: *Power* → *ErP*
       Disabled, *PME Event Wake Up* / *Resume by PCI-E Device* Enabled — names
       vary by version). The Wi-Fi card is a PCIe device, and without this
       Wake-on-WLAN cannot wake the machine from suspend — see
       [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
-- [ ] Record the new version in the Phase 0 table
+- [x] Record the new version in the Phase 0 table
 
 ### BIOS tuning
 
@@ -413,7 +426,7 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 
 | Item | Measured | Consequence for this plan |
 | --- | --- | --- |
-| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F9d** (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. Board is **rev 1.0** (per the box). The BIOS is three years old (latest for this revision: **F43c**, 2026-07-20) — [Firmware update](#firmware-update) |
+| Board / BIOS | Gigabyte **B650I AORUS ULTRA** (mini-ITX), AMI BIOS **F43c** (2026-07-20), flashed 2026-09-23 from F9d (2023-09) | Mini-ITX has **one** x16 slot: "move the card to another slot" is not an IOMMU-gate fallback here. Board is **rev 1.0** (per the box). F43c is the latest for this revision — [Firmware update](#firmware-update) |
 | CPU / RAM | Ryzen 5 **7600X**, 6C/12T, **one CCD**; **32 GB** RAM; SVM enabled in firmware | No cross-CCD concern. Phase 5's numbers were written for a 16-core/64 GB box and are now corrected — guest 4C/8T + 16 GiB, host 2C/4T |
 | dGPU | **Radeon RX 6600 XT** (Navi 23, RDNA2) `1002:73ff` + HDMI audio `1002:ab28`, Windows PCI bus 3 fn 0/1 | RDNA2: **no `vendor-reset`**. Both IDs are unique on this box, so `vfio-pci.ids` is safe *for the GPU* |
 | iGPU | Raphael `1002:164e` | Host graphics; different ID from the dGPU, so the `vfio-pci.ids` match cannot catch it |
@@ -423,7 +436,7 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 | Windows' RTC | `RealTimeIsUniversal = 1` — Windows already keeps the RTC in **UTC** | `time.hardwareClockInLocalTime = true` would *create* the clock fight it was meant to prevent. Removed from `disko.nix`; NixOS's UTC default is correct |
 | Fast Startup | Was **on**; `powercfg /h off` run 2026-09-21, `powercfg /a` now reports hibernation not enabled and Fast Startup unavailable | Done. Re-check after feature updates — [Risk 6](#risks-ranked) |
 | BitLocker | `manage-bde -status`: C: **Fully Decrypted**, no key protectors | Nothing to do; the guest will boot without a recovery prompt. Watch for Device Encryption re-enabling itself — [Risk 8](#risks-ranked) |
-| Secure Boot | `Confirm-SecureBootUEFI` → **False** | Already off. systemd-boot installs without lanzaboote |
+| Secure Boot | `Confirm-SecureBootUEFI` → **False** | Already off. systemd-boot installs without lanzaboote. **F43c turned it back on** — off again is on the [post-flash checklist](#firmware-update) |
 | SMBIOS | system/board manufacturer `Gigabyte Technology Co., Ltd.`, product `B650I AORUS ULTRA`, serials `Default string`, UUID `03560274-043C-0547-E806-FF0700080009` | The `<sysinfo>` block in the licensing section can be filled from this (confirm against `dmidecode` in Phase 0 — Windows byte-swaps the first three UUID fields on some firmware) |
 | Network | Windows runs on **Wi-Fi** (MediaTek RZ616 / MT7922, MAC `F0:A6:54:14:9B:0D`); the Intel I225-V wired port (`74:56:3C:47:E8:FF`) is **disconnected** | **Decided: Wi-Fi for everything, for now.** See [Networking on Wi-Fi](#networking-on-wi-fi) |
 | WSL | Switched onto this repo 2026-09-21: hostname `wsl`, applies `.#wsl` as locked, `/etc/nixos` stubs removed, SSH key comment `n8@wsl` | Done — nothing on the WSL side gates this plan any more |
@@ -541,10 +554,11 @@ Also in Phase 0:
       mode has to serve
 - [x] Record how much free space the fast drive has — *89 GB free on the 2 TB
       `C:`; Steam's only library is on `C:` and stays there*
-- [ ] **Update the motherboard firmware** (F9d → latest for the board
-      revision) before the Linux pass — [Firmware update](#firmware-update)
-- [ ] **Give Windows its own ESP on the 2 TB drive** and prove it boots —
-      *created 2026-09-21; the boot from it and the `reagentc` re-run remain* —
+- [x] **Update the motherboard firmware** (F9d → latest for the board
+      revision) before the Linux pass — *F43c, 2026-09-23* — [Firmware update](#firmware-update)
+- [x] **Give Windows its own ESP on the 2 TB drive** and prove it boots —
+      *created 2026-09-21; booted, WinRE re-registered, and activation
+      confirmed 2026-09-23* —
       [The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive). Hard
       precondition for Phase 2
 - [x] Identify what is on the 1 TB drive's five Linux partitions — *an old
