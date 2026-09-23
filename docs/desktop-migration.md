@@ -73,13 +73,17 @@ plan gates it now — Phase 0 is the only go/no-go.
 2. **Update the motherboard firmware** — see
    [Firmware update](#firmware-update). After step 1, so a boot failure has one
    cause, not two.
-3. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
-   steps 1–2; can run any time.
-4. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
+3. **Tune the BIOS** — memory timings first, then the CPU — see
+   [BIOS tuning](#bios-tuning). After step 2, because the flash resets every
+   setting; **before step 7**, because a failed memory-training boot ends in a
+   CMOS clear, which would also wipe the Secure Boot keys Phase 2b enrolls.
+4. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
+   steps 1–3; can run any time.
+5. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
    `nixos-generate-config`, interface names from `ip link`.
-5. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
-6. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
+6. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
+7. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
 
 ### Decided 2026-09-21
@@ -151,6 +155,7 @@ the text was wrong about how the machine behaves.
 | Game library vs ProtonDB, and each title's Secure Boot/TPM requirement | Before Phase 7; Phase 2b | Which titles need Windows at all, which of those need bare metal (kernel anti-cheat), and which of *those* refuse to start without Secure Boot (e.g. Battlefield 6, recent Call of Duty). The last list is why [Phase 2b](#phase-2b--restore-secure-boot) exists |
 | Printer's USB URI | [Printer sharing](#printer-sharing) | The serial-keyed `usb://Brother/HL-L2305%20series?serial=U66480F3N341782` is built from what Windows reports; `lpinfo -v` after Phase 2 is authoritative |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet |
+| Memory kit and its current settings | [BIOS tuning](#bios-tuning) | Part number, rated EXPO profile, and whether EXPO is on today — read before the flash resets it (`Get-CimInstance Win32_PhysicalMemory \| Select Manufacturer,PartNumber,Capacity,Speed,ConfiguredClockSpeed`). The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
 
 ### Firmware update
 
@@ -197,12 +202,127 @@ A firmware update resets settings to defaults. Afterwards, re-check:
       until the keys are re-enrolled. See Phase 2b's recovery note
 - [ ] Boot order — Windows Boot Manager on the **2 TB** drive first (until
       NixOS exists)
-- [ ] XMP/EXPO memory profile, if it was on before
+- [ ] XMP/EXPO memory profile, if it was on before — and after
+      [BIOS tuning](#bios-tuning), every setting in its table: reload the saved
+      profile, then check it against the table, since a profile saved on one
+      BIOS version is not guaranteed to load on the next
 - [ ] Windows boots and is still activated. The fTPM may be cleared by an AGESA
       jump; with BitLocker off that costs nothing but possibly a Windows Hello
       PIN re-setup
 - [ ] Wi-Fi still works in Windows (the only network this machine has)
 - [ ] Record the new version in the Phase 0 table
+
+### BIOS tuning
+
+**After the [firmware update](#firmware-update), before [Phase 2b](#phase-2b--restore-secure-boot),
+and validated before any media is ingested
+([Step 3](#step-3--bring-the-media-in)).** The firmware defaults run this
+machine safely and slowly: on AM5 that mostly means JEDEC memory (DDR5-4800,
+loose timings) and stock boost behaviour. Both are worth tuning on a box that
+spends its time compiling and gaming. The tuning itself is ordinary; what this
+plan adds is *when*, *how it is proven*, and *where it is written down*.
+
+#### Why the ordering matters here
+
+- **Unstable memory corrupts the things this plan cannot rebuild.** A bit flip
+  in RAM happens *before* btrfs computes a checksum, so the checksum faithfully
+  protects the corrupted data, `autoScrub` finds nothing, and restic backs it
+  up to Hetzner. The same flip in the guest lands on the one Windows install.
+  So memory is proven stable before the irreplaceable media arrives, not after.
+- **A failed memory-training boot ends in a CMOS clear**, and a CMOS clear
+  resets the Secure Boot key databases to factory ([Risk 14](#risks-ranked)).
+  Tuning before Phase 2b means the trial-and-error happens while there are no
+  keys to lose. Tuning *after* it means re-enrolling keys every time a timing
+  is one step too tight.
+- **The firmware update resets everything.** Tune once, on the firmware you
+  will run, not on F9d.
+
+#### What to tune, in order
+
+One change at a time, each validated before the next. A tune that fails a test
+two changes later cannot be attributed.
+
+1. **Baseline.** Record what the kit is and what it runs at now (the residual
+   above). Run the validation set below at defaults, so a later failure has a
+   known-good point to fall back to.
+2. **EXPO profile.** The kit's rated profile. On a 7600X the target is
+   DDR5-6000 with **FCLK 2000 MHz** and **UCLK = MEMCLK (1:1)** — check the
+   firmware did not drop UCLK to 1:2, which silently costs more than the EXPO
+   gain. Validate. For many kits this is where to stop, and that is fine.
+3. **Memory timings, only if EXPO validated cleanly.** In order of payoff for
+   DDR5 on AM5: **tRFC** (by far the largest, and very IC-dependent — Hynix
+   A/M-die goes much lower than the profile), then **tREFI** raised (large gain,
+   but temperature-sensitive — see below), then tRRD/tFAW/tWR, then primaries.
+   Leave voltages at the EXPO values unless a specific timing needs them; VSOC
+   stays **at or below 1.30 V** — AM5's hard limit, and the one setting in this
+   list that can kill the CPU.
+4. **Memory Context Restore.** AM5 retrains memory on every boot unless this is
+   on, which is the 30–60 s black screen before POST. Turn it on **with Power
+   Down Enable**, *after* the timings are final — with MCR on a marginal tune
+   can pass training and fail later, so it must not be on while tuning.
+   Re-validate: a tune that is stable with MCR off is not proven with it on.
+5. **CPU: PBO + Curve Optimizer**, or nothing. Negative per-core offsets,
+   modest ones (−10 to −20), validated per-core — an all-core load does not
+   test the light-load boost states where Curve Optimizer instability lives.
+   The payoff on a 7600X is lower temperatures and a little clock; the cost of
+   getting it wrong is a compile that segfaults once a week. If the per-core
+   test is too tedious, skip it: stock is a perfectly good answer here.
+6. **Fan curves** — last, because the tune changes the heat. On mini-ITX the
+   DIMMs sit in the GPU's exhaust; see temperature below.
+
+Leave alone, and re-check after each change since some firmware menus move
+them: **SVM**, **IOMMU Enabled**, **Initial Display Output: IGD**, CSM off, and
+**Above 4G Decoding** on. **Resizable BAR** stays on for bare-metal gaming; it is
+the one setting that interacts with passthrough, so the Phase 8 guest checks
+(no Code 43, frame times) are also its test, and turning it off is the first
+thing to try if the guest's dGPU misbehaves.
+
+#### Validation — the definition of "stable"
+
+Each step passes all of these, or it is reverted:
+
+| Test | Where | Pass |
+| --- | --- | --- |
+| MemTest86+ | USB now; `boot.loader.systemd-boot.memtest86.enable = true` once NixOS exists | 4 full passes, zero errors |
+| TestMem5 (anta777 *extreme* config) | Bare-metal Windows | 3 cycles, zero errors |
+| y-cruncher (VT3 / all tests) | Bare-metal Windows | 1 hour, no errors |
+| CoreCycler | Bare-metal Windows, **Curve Optimizer only** | Every core, several hours overnight |
+| `stressapptest -s 3600 -M <most of free RAM>` | Linux (live USB, later the host) | "Status: PASS" |
+| Hot run | Whatever the machine does at its hottest — a long game session plus a build | Nothing below, afterwards |
+| Error logs | Windows Event Viewer → System, source **WHEA-Logger**; Linux `journalctl -k -g 'mce\|EDAC\|Hardware Error'` | **Empty.** A corrected WHEA-19 is a failure, not a warning: it means the margin is gone |
+
+**Temperature is the hidden variable.** DDR5 errors climb with DIMM
+temperature, and tREFI is where they show first. A mini-ITX case with the RX
+6600 XT exhausting across the DIMMs is the worst case, and a synthetic memory
+test with the GPU idle does not reproduce it. Watch the SPD hub sensors
+(HWiNFO on Windows; `sensors` via the `spd5118` driver on Linux) during the
+hot run; keep the DIMMs under ~55 °C, and back tREFI off before anything else
+if errors appear only when warm.
+
+#### Where it is written down
+
+BIOS settings are not declarative, so the record is the declaration:
+
+- **A table in `hosts/desk/bios.md`**: firmware version, every non-default
+  setting with its value, and the validation date. It is what gets the machine
+  back after the next firmware update, which will reset all of it.
+- **The firmware's own profile save** (Save Profile → to USB, plus a slot on
+  the board) as the fast path — but the table is authoritative, because
+  profiles are not guaranteed to load across BIOS versions.
+- A photo of each settings page is a cheap third copy.
+
+#### BIOS tuning checklist
+
+- [ ] Baseline recorded; validation set passes at defaults
+- [ ] EXPO on, FCLK 2000, UCLK = MEMCLK; validated
+- [ ] Timings tightened (or explicitly stopped at EXPO); VSOC ≤ 1.30 V; validated
+- [ ] Memory Context Restore + Power Down Enable on; re-validated; cold boot
+      is fast and warm reboots do not retrain
+- [ ] Curve Optimizer validated per-core (or explicitly skipped)
+- [ ] Fan curves set; hot run clean, DIMMs under ~55 °C
+- [ ] SVM, IOMMU, IGD, Above 4G, CSM, ReBAR re-checked
+- [ ] `hosts/desk/bios.md` committed; profile saved to USB
+- [ ] **Before Phase 2b and before media Step 3**, all of the above done
 
 ---
 
@@ -1617,6 +1737,8 @@ also holding the other four sources un-de-duplicated.
       quota Photos already fills, so it needs free space equal to the library.
       No headroom → download-link delivery, pulled inside the window, or a
       month of extra storage
+- [ ] [BIOS tuning](#bios-tuning) validated — memory proven stable before
+      irreplaceable data passes through it
 - [ ] Ingest from Drive, Photos, GCS, the MacBook and Flickr into separate
       directories; `rclone check` / `rsync --dry-run --checksum` / item counts
       each; merge the Takeout sidecars back into the media; then de-duplicate
@@ -2407,6 +2529,10 @@ Nix proves the closure; it cannot prove any of this.
 - [ ] rclone Drive mount present and writable
 - [ ] `claude --version`, `gh auth status`, `docker run --rm hello-world`, `nvim --version`
 - [ ] `git config user.email` -> `nathan@natb1.com`; `authorized_keys` has both keys, mode 600
+- [ ] No machine-check errors since cutover: `journalctl -k -b -g 'mce|Hardware Error'`
+      empty on the host, no **WHEA-Logger** events in Windows — the
+      [BIOS tuning](#bios-tuning) holds under the real workload, not just the
+      synthetic one. Check again after a week
 - [ ] `df -h / /srv/games /srv/media` — root, the host-side game library and
       the media volume share the 1 TB drive; headroom on each is the cost of
       this layout, and it should be a number you accepted rather than one you
@@ -2586,6 +2712,12 @@ Only after Phase 8 passes.
     [Phase 6](#phase-6--managing-the-one-windows-install) recovers some of it;
     whatever else replaces them should land in the same PR as the deletion, or
     it never lands.
+16. **A marginal memory tune.** Not a crash — those get noticed — but a rare
+    bit flip that corrupts a file *before* btrfs checksums it, so scrub,
+    restic and Hetzner all preserve the damage faithfully. Ranked low because
+    [BIOS tuning](#bios-tuning) validates before the media lands and the
+    WHEA/MCE check in Phase 8 keeps watching; worth listing because it defeats
+    every other integrity mechanism in this plan. If in doubt, EXPO alone.
 
 ## Deliberately not doing
 
