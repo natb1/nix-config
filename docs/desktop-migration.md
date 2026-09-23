@@ -56,19 +56,20 @@ plan gates it now — Phase 0 is the only go/no-go.
   copy-to-Windows activation moved out of the shared module into
   `hosts/wsl/home/wezterm-windows-config.nix`, and the platform guards became
   `stdenv.hostPlatform.*`. A second Linux host no longer inherits WSL behavior.
-- **Windows' own ESP** — a 300 MB ESP now exists on the 2 TB drive (disk 1,
-  partition 4), `bcdboot` wrote the boot files to it, and WinRE was
-  re-registered. **Not yet booted from**: Windows is still running from the old
-  ESP on the 1 TB drive (disk 0, partition 1).
+- **Windows' own ESP** — a 300 MB ESP exists on the 2 TB drive (disk 1,
+  partition 3), `bcdboot` wrote the boot files to it, and **Windows booted from
+  it** on 2026-09-23: `Get-Partition | ? IsSystem` → disk 1, partition 3, and
+  `Get-Partition -DiskNumber 1` shows MSR, `C:`, ESP (300 MB,
+  `{c12a7328-…}`, `IsSystem`), WinRE — in that order, numbered 1–4.
 
 ### Next, in order
 
-1. **Prove the new ESP.** Reboot, pick the 2 TB drive's Windows Boot Manager
-   from the F12 menu, then (elevated):
-   `reagentc /disable; reagentc /enable; reagentc /info; Get-Partition | ? IsSystem | Select DiskNumber,PartitionNumber`
-   → must show **disk 1, partition 4**. The `reagentc` re-run is required: the
-   first one registered WinRE in the BCD Windows was running from, which was
-   the *old* ESP's. Then confirm Settings → System → Activation.
+1. **Finish proving the new ESP.** The boot from it is done (above). Still to
+   do, from that boot (elevated):
+   `reagentc /disable; reagentc /enable; reagentc /info` → WinRE **Enabled**.
+   The re-run is required: the first one registered WinRE in the BCD Windows
+   was running from, which was the *old* ESP's. Then confirm Settings → System
+   → Activation.
 2. **Update the motherboard firmware** — see
    [Firmware update](#firmware-update). After step 1, so a boot failure has one
    cause, not two.
@@ -804,10 +805,14 @@ $esp | Remove-PartitionAccessPath -AccessPath S:
 reagentc /disable; reagentc /enable    # re-run after the first boot from the new ESP — see below
 ```
 
-Result: disk 1 is now MSR (16 MB), `C:`, **ESP (300 MB, partition 4)**, WinRE
-(909 MB). Partition numbers follow creation order, not disk position.
+Result: disk 1 is now MSR (16 MB), `C:`, **ESP (300 MB, partition 3)**, WinRE
+(909 MB, partition 4). This plan first recorded the ESP as partition 4, on the
+assumption that numbers follow creation order; after the reboot Windows reports
+them in disk order, the ESP as 3 and WinRE as 4. Identify the ESP by its
+`GptType` (`{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}`) or `IsSystem`, never by
+number.
 
-One consequence of that order, for later rather than now: WinRE is no longer
+One consequence of the ESP sitting between `C:` and WinRE, for later rather than now: WinRE is no longer
 adjacent to `C:`. When a servicing update needs a bigger recovery partition it
 grows WinRE by shrinking the *neighbouring* OS partition, and the ESP is now in
 the way — so such an update fails with a `0x80070643`-style error instead of
@@ -828,7 +833,7 @@ never a moment when nothing boots.
 **WinRE registration has to be redone after the first boot from the new ESP.**
 `reagentc` writes to the BCD of the ESP Windows *booted from*, and the run above
 happened while that was still the old one. Once `Get-Partition | ? IsSystem`
-reports disk 1 partition 4, `reagentc /disable; reagentc /enable` registers
+reports disk 1 partition 3, `reagentc /disable; reagentc /enable` registers
 WinRE in the new BCD.
 
 **Disko gets a whole drive again, and the awkwardness of the previous draft
