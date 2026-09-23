@@ -61,15 +61,17 @@ plan gates it now — Phase 0 is the only go/no-go.
   it** on 2026-09-23: `Get-Partition | ? IsSystem` → disk 1, partition 3, and
   `Get-Partition -DiskNumber 1` shows MSR, `C:`, ESP (300 MB,
   `{c12a7328-…}`, `IsSystem`), WinRE — in that order, numbered 1–4.
+- **WinRE, re-registered in the new ESP's BCD** (2026-09-23) — `reagentc /info`
+  → **Enabled**, location `harddisk1\partition4\Recovery\WindowsRE`, and
+  `{current}`'s `recoverysequence` points at the new WinRE loader. It took the
+  `ReAgent.xml` fix in
+  [WinRE after moving the ESP](#winre-after-moving-the-esp): the plain
+  `/disable; /enable` failed with error 2.
 
 ### Next, in order
 
-1. **Finish proving the new ESP.** The boot from it is done (above). Still to
-   do, from that boot (elevated):
-   `reagentc /disable; reagentc /enable; reagentc /info` → WinRE **Enabled**.
-   The re-run is required: the first one registered WinRE in the BCD Windows
-   was running from, which was the *old* ESP's. Then confirm Settings → System
-   → Activation.
+1. **Confirm activation** — Settings → System → Activation, from a boot off the
+   new ESP. The last check before the 1 TB drive's ESP is disposable.
 2. **Update the motherboard firmware** — see
    [Firmware update](#firmware-update). After step 1, so a boot failure has one
    cause, not two.
@@ -950,11 +952,39 @@ worth being exact about why it is acceptable: it is a 300 MB shrink with a
 backstop — the old ESP stays bootable until the new one is proven, so there is
 never a moment when nothing boots.
 
+##### WinRE after moving the ESP
+
 **WinRE registration has to be redone after the first boot from the new ESP.**
 `reagentc` writes to the BCD of the ESP Windows *booted from*, and the run above
 happened while that was still the old one. Once `Get-Partition | ? IsSystem`
-reports disk 1 partition 3, `reagentc /disable; reagentc /enable` registers
-WinRE in the new BCD.
+reports disk 1 partition 3, re-register WinRE in the new BCD.
+
+The plain `reagentc /disable; reagentc /enable` does **not** do it. What
+happened on 2026-09-23: `/disable` reported WinRE already disabled, `/enable`
+failed with `Operation failed: 2`, and `/info` showed a BCD identifier but no
+location. The cause is `C:\Windows\System32\Recovery\ReAgent.xml`, which still
+held `<WinreBCD id="{8aa2fce2-…}"/>` — the WinRE loader in the *old* ESP's BCD.
+`bcdboot` built the new BCD without that object, but carried over boot-loader
+`recoverysequence` values pointing at it, so
+`bcdedit /enum all | Select-String <id>` printed `recoverysequence` lines and no
+`identifier` line: a dangling reference. `/enable` looks for the object, finds
+nothing, and fails. `Winre.wim` itself was intact in
+`C:\Windows\System32\Recovery`, where `/disable` leaves it.
+
+The fix is to blank the stale ID so `/enable` creates a fresh loader:
+
+```powershell
+$x = 'C:\Windows\System32\Recovery\ReAgent.xml'
+Copy-Item $x "$x.bak"
+$s = [IO.File]::ReadAllText($x) -replace '<WinreBCD id="\{[^}]*\}"/>', '<WinreBCD id=""/>'
+[IO.File]::WriteAllText($x, $s, (New-Object Text.UTF8Encoding $false))  # no BOM, as found
+reagentc /enable; reagentc /info
+```
+
+`/enable` moves `Winre.wim` (815 MB) back onto the 909 MB WinRE partition,
+creates a new WinRE loader, and points `{current}`'s `recoverysequence` at it.
+`bcdedit /enum osloader` should then show exactly two loaders: `{current}` and
+"Windows Recovery Environment".
 
 **Disko gets a whole drive again, and the awkwardness of the previous draft
 disappears with it.** No hand-partitioning, no hand-written `fileSystems`, no
