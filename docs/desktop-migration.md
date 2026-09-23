@@ -76,7 +76,8 @@ plan gates it now — Phase 0 is the only go/no-go.
    steps 1–2; can run any time.
 4. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
-   `nixos-generate-config`, interface names from `ip link`.
+   `nixos-generate-config`, interface names from `ip link`, the USB
+   port-to-controller map.
 5. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
 6. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
@@ -92,6 +93,11 @@ plan gates it now — Phase 0 is the only go/no-go.
 - **The media is irreplaceable** — cannot be re-downloaded or re-ripped. So the
   offsite backup is Hetzner, append-only is mandatory rather than optional, and
   the backup lands before the media does. See [Media storage](#media-storage).
+- **Printer: NixOS shares it** (added 2026-09-23). The Brother HL-L2305 on
+  USB moves from a local Windows queue to a CUPS queue on the host, published
+  to the LAN, the guest and the tailnet — see
+  [Printer sharing](#printer-sharing). Bare-metal Windows keeps printing
+  locally; the network loses the printer for those sessions.
 - **Board revision: 1.0** (per the box). Firmware must come from the rev 1.0
   download page — see [Firmware update](#firmware-update).
 
@@ -129,7 +135,7 @@ the text was wrong about how the machine behaves.
 | Item | Where it bites | Notes |
 | --- | --- | --- |
 | Board revision on the PCB itself | Step 2 | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
-| Wi-Fi interface name on NixOS | Phase 3 (Samba), firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
+| Wi-Fi interface name on NixOS | Samba, CUPS, firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
 | Total size of the media, across all five sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication — **together with the host-side Steam library**, which shares that volume. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
 | GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
 | Flickr export request | [Step 3](#step-3--bring-the-media-in) | Asynchronous — Flickr prepares the archive over hours to days. Request it early so it is ready by ingest; download links expire |
@@ -143,6 +149,7 @@ the text was wrong about how the machine behaves.
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
 | `account.microsoft.com/devices` | Before Phase 8 | Note the name the PC is listed under — it is how the Activation Troubleshooter identifies it |
 | Game library vs ProtonDB, and each title's Secure Boot/TPM requirement | Before Phase 7; Phase 2b | Which titles need Windows at all, which of those need bare metal (kernel anti-cheat), and which of *those* refuse to start without Secure Boot (e.g. Battlefield 6, recent Call of Duty). The last list is why [Phase 2b](#phase-2b--restore-secure-boot) exists |
+| Printer's USB URI | [Printer sharing](#printer-sharing) | The serial-keyed `usb://Brother/HL-L2305%20series?serial=U66480F3N341782` is built from what Windows reports; `lpinfo -v` after Phase 2 is authoritative |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet |
 
 ### Firmware update
@@ -331,6 +338,14 @@ lstopo-no-graphics --of txt   # pkgs.hwloc — shows CCD/L3 boundaries
 #    the 1 TB is not degraded relative to the 2 TB.
 fio --name=r --rw=randread --bs=4k --iodepth=32 --numjobs=4 --size=2G \
     --runtime=30 --time_based --group_reporting --filename=/dev/<BULK>
+
+# 7. USB: which controller each port hangs off. Plug the printer in, note its
+#    bus in `lsusb`, then resolve each bus to a PCI address. Phase 7 must not
+#    pass the printer's controller to the guest — see Printer sharing.
+lsusb -t
+for b in /sys/bus/usb/devices/usb*; do
+  printf '%s -> %s\n' "${b##*/}" "$(basename "$(readlink -f "$b/..")")"
+done
 ```
 
 **The gate, part 1 — the dGPU.** The card and its HDMI-audio function must sit
@@ -1605,6 +1620,163 @@ also holding the other four sources un-de-duplicated.
 
 ---
 
+## Printer sharing
+
+Added 2026-09-23. **The Brother printer moves from Windows to NixOS, and NixOS
+shares it on the network.** Like [Media storage](#media-storage) it is off the
+phase sequence: it needs Phases 1–2 and nothing else, and nothing depends on it.
+
+### What it is — measured 2026-09-23
+
+| Item | Measured (bare-metal Windows) | Consequence |
+| --- | --- | --- |
+| Model | **Brother HL-L2305** (USB-only mono laser), USB `04f9:0075`, serial `U66480F3N341782` | Stays plugged into the desktop; the desktop becomes the print server |
+| USB interface | One interface, class `07/01/02` (bidirectional printer). **No `07/01/04`** | No IPP-over-USB, so `ipp-usb` and driverless printing are out on the host side — it needs a real CUPS driver |
+| Windows queue | `Brother HL-L2305 series`, inbox *Brother Laser Type1 Class Driver*, port `USB001`, **not shared** | Nothing to undo: Windows was never the print server. The local queue keeps working bare metal |
+| Host controller | AMD `1022:15b7`, Windows PCI bus 18 fn 4 — one of the CPU's USB controllers | Matters for Phase 7's USB-controller passthrough — [below](#the-usb-controller-must-stay-with-the-host) |
+| Region | en-US | `PageSize=Letter` |
+
+**Driver: `brlaser`.** The nixpkgs package tracks the maintained
+`Owl-Maintain/brlaser` fork (6.2.8), which lists `HL-L2305 series` with
+`PCFileName "brl2305.ppd"` — the upstream `pdewacht/brlaser` list stops at the
+HL-L2300D. Brother's own `.deb` driver would need patchelf wrapping and a
+32-bit userland; `brlaser` is open source and needs neither.
+
+### Protocol: IPP from CUPS, advertised over mDNS
+
+Not Samba printer sharing. SMB printing makes every client supply a driver; a
+shared CUPS queue renders on the host and advertises itself as an IPP
+Everywhere / AirPrint printer (`_ipp._tcp` with the `_universal` subtype), which
+**macOS adds with no driver** and **Windows 11 adds with its inbox IPP class
+driver**. The printer itself speaks neither — the host translates, which is the
+point of having a print server.
+
+```nix
+# hosts/desk/printing.nix
+{ pkgs, ... }:
+{
+  services.printing = {
+    enable = true;
+    drivers = [ pkgs.brlaser ];
+    # Listen beyond localhost; scope with allowFrom + the per-interface
+    # firewall, the same split as Samba's `hosts allow` in media.nix.
+    listenAddresses = [ "*:631" ];
+    allowFrom = [ "localhost" "192.168.0.0/16" "100.64.0.0/10" ];  # LAN + virbr0 + tailnet
+    browsing = true;          # publish shared queues via avahi (already on — modules/nixos/default.nix)
+    defaultShared = true;
+    # CUPS rejects requests whose Host: header is not one of its own names
+    # ("Request from ... using invalid Host: field"). Clients arrive as
+    # desk.local, desk.<tailnet>.ts.net and 192.168.122.1 — accept them all;
+    # allowFrom still decides who gets in.
+    extraConf = ''
+      ServerAlias *
+    '';
+  };
+
+  # Declarative queue: no hand-run lpadmin, nothing for Phase 9's
+  # unmanaged-state list. The URI is keyed on the serial, so it survives the
+  # printer moving to another port.
+  hardware.printers = {
+    ensureDefaultPrinter = "brother";
+    ensurePrinters = [{
+      name = "brother";
+      description = "Brother HL-L2305";
+      location = "desk";
+      deviceUri = "usb://Brother/HL-L2305%20series?serial=U66480F3N341782";  # confirm with `lpinfo -v`
+      model = "drv:///brlaser.drv/brl2305.ppd";
+      ppdOptions.PageSize = "Letter";
+    }];
+  };
+
+  # 631 on the same two interfaces as Samba. tailscale0 is already trusted.
+  # mDNS (5353/udp) is opened by services.avahi's own openFirewall default.
+  networking.firewall.interfaces."<FILL_ME_WLAN_IF>".allowedTCPPorts = [ 631 ];
+  networking.firewall.interfaces.virbr0.allowedTCPPorts = [ 631 ];
+}
+```
+
+Not `services.printing.openFirewall`: it opens 631 on every interface, and the
+Samba block already set the precedent of scoping by interface.
+
+**The tailnet gets IPP, not discovery.** mDNS does not cross Tailscale, so the
+MacBook adds the tailnet queue once, by address —
+`ipp://desk.<tailnet>.ts.net:631/printers/brother`, with *AirPrint* as the
+driver — while on the LAN it finds the printer by itself. It is the same queue
+either way, and the paper still comes out of a printer in the room you left.
+
+### Who prints how, in each boot mode
+
+This is the part the one-Windows design makes interesting:
+
+| State | Who owns the USB printer | Network clients (Mac, phones) | Windows |
+| --- | --- | --- | --- |
+| NixOS, no guest | NixOS | Print via CUPS | — |
+| NixOS + guest | **NixOS** — the printer is *not* passed through | Print via CUPS | The guest prints to CUPS over `virbr0`, like any client |
+| Bare-metal Windows | Windows (NixOS isn't running) | **No printer** | Prints locally over USB, as it does today |
+
+Two consequences, both accepted:
+
+1. **Bare metal takes the printer off the network.** Nothing hosts the share
+   while NixOS is down. Making bare-metal Windows share it too was considered
+   and rejected: Windows' sharing is SMB printing, which advertises no AirPrint
+   record, so the Mac would need a second queue that works only in the boot
+   mode used least. Bare metal is the anti-cheat exception, not the daily
+   state; for those hours the Mac waits.
+2. **The one Windows install has two queues for the same printer.** The local
+   USB queue (live bare metal, offline in the guest — the device isn't there)
+   and an IPP queue to the host (live in the guest, dead bare metal — the host
+   isn't there). Neither is wrong; each is the right queue in exactly one boot
+   mode. Two settings keep that from being confusing:
+   - The IPP queue is declared in the Windows profile
+     ([Phase 6](#phase-6--managing-the-one-windows-install)), not added by
+     hand, at the **`virbr0` address** rather than `desk.local` — the guest's
+     path to the host that depends neither on the Wi-Fi lease nor on mDNS
+     crossing NAT:
+     `Add-Printer -Name "Brother (desk)" -IppURL "http://192.168.122.1:631/printers/brother"`,
+     rendered into `Apply.ps1` behind a `Get-Printer` guard so reruns are
+     no-ops.
+   - **"Let Windows manage my default printer" stays on** (the Windows
+     default). It remembers the last-used printer per network, so each boot
+     mode settles on its own live queue without a rule for it.
+
+   The local queue is not in the profile: Windows re-creates it by PnP whenever
+   the device appears, with the inbox driver, so there is nothing to declare.
+
+### The USB controller must stay with the host
+
+[Phase 7](#phase-7--display-input-audio) says to pass a whole USB host
+controller to the guest if one sits in a clean IOMMU group. **Whichever
+controller the printer is on is not that controller** — pass it through and
+starting the guest silently yanks the printer out from under CUPS, and every
+job from the Mac sits queued until the guest stops. This box has four
+controllers (`1022:15b6`, `1022:15b7`, `1022:15b8` on the CPU; `1022:43f7` on
+the chipset), and the printer is on `15b7` today.
+
+So Phase 0 records a port map (step 7 of its script), and Phase 7 chooses
+with it.
+
+Either the guest gets a controller the printer isn't on, or the printer moves
+to a port on a controller the host keeps. The same goes for
+`spiceUSBRedirection` and `<hostdev type='usb'>`: never redirect `04f9:0075`.
+
+### Checklist
+
+- [ ] Phase 0: the USB port map ([step 7](#phase-0--inventory-and-the-gono-go-gate)), saved with the rest
+- [ ] After Phase 2: `lpinfo -v` shows the `usb://Brother/HL-L2305%20series?serial=…`
+      URI exactly as in `printing.nix`; fix the string if the backend reports
+      it differently
+- [ ] `lpstat -t` → `brother` enabled, accepting, default; `lp -d brother /etc/os-release` prints
+- [ ] From the Mac on the LAN: *desk*'s Brother appears under **Add Printer**
+      with *AirPrint* as the driver, and prints
+- [ ] From the Mac over Tailscale, off the LAN: the `ipp://desk.<tailnet>.ts.net`
+      queue prints
+- [ ] From the guest: `Brother (desk)` prints
+- [ ] Bare metal: the local USB queue prints
+- [ ] Guest up with its USB controller passed through: `lsusb` on the host
+      **still** lists `04f9:0075`, and a Mac job prints while the guest runs
+
+---
+
 ## Phase 4 — VFIO and the libvirt host
 
 **Two devices go to the guest, not one:** the dGPU (plus its HDMI-audio
@@ -1943,6 +2115,11 @@ hosts/desk/windows/
       sha256  = "<FILL_ME>";
     };
   };
+  # Network printers the guest reaches through the host. Rendered into
+  # Apply.ps1 as a guarded Add-Printer -IppURL — see Printer sharing.
+  printers = {
+    "Brother (desk)" = "http://192.168.122.1:631/printers/brother";
+  };
   settings = {
     showFileExtensions = true;
     taskbarAlignment = "Left";
@@ -2162,7 +2339,10 @@ Note `cgroup_device_acl` — libvirt's default device ACL does not include
 something else entirely.
 
 **Input.** Pass an entire USB host controller through VFIO if Phase 0 shows one
-in its own IOMMU group. That gives the guest real USB with no translation
+in its own IOMMU group — **and it is not the one the printer is on**, which
+stays with the host so CUPS keeps it while the guest runs
+([Printer sharing](#the-usb-controller-must-stay-with-the-host)). Bind it by
+address, like the NVMe. That gives the guest real USB with no translation
 layer — best for controllers, high-polling-rate mice, and VR. Otherwise use
 libvirt's `<input type='evdev'>` with a both-Ctrl hotkey to toggle capture.
 
@@ -2264,6 +2444,10 @@ Nix proves the closure; it cannot prove any of this.
       **Then boot bare metal and let Windows chkdsk** — `virsh destroy` is a
       power cut to the guest, and the filesystem it cut power to is the real one
 - [ ] Reboot with the VM set to autostart off, confirm nothing is degraded
+
+**Printer** — the [Printer sharing checklist](#checklist-1), in full: LAN,
+tailnet, guest and bare metal each print, and the printer survives the guest
+starting.
 
 **Windows management**
 
@@ -2389,6 +2573,11 @@ Only after Phase 8 passes.
     [Phase 6](#phase-6--managing-the-one-windows-install) recovers some of it;
     whatever else replaces them should land in the same PR as the deletion, or
     it never lands.
+16. **The printer goes to the guest with its USB controller.** Phase 7's
+    controller passthrough takes every port on that controller; if the printer
+    is on one, it vanishes from CUPS whenever the guest runs and Mac jobs queue
+    silently. Phase 0's port map and the Phase 8 check (`lsusb` on the host
+    with the guest up) exist for it.
 
 ## Deliberately not doing
 
