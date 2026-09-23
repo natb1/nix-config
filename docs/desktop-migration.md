@@ -109,6 +109,28 @@ plan gates it now — Phase 0 is the only go/no-go.
 - **Board revision: 1.0** (per the box). Firmware must come from the rev 1.0
   download page — see [Firmware update](#firmware-update).
 
+### Decided 2026-09-23 — the desktop session
+
+The plan had a slot for a desktop (`desktop.nix`: "display manager, PipeWire,
+fonts, browser") but no desktop in it. Settled here, in full in
+[The desktop session](#the-desktop-session):
+
+- **niri**, assembled à la carte: waybar, **swaync** for notifications,
+  fuzzel, swayidle. No prebuilt shell.
+- **getty autologin straight into niri, and no screen lock.** Anything
+  sensitive sits behind its own encryption — **gnome-keyring** holds Chrome's
+  and other apps' secrets under a password of its own.
+- **Idle: screens off, then suspend if Wake-on-WLAN proves reliable**; if it
+  does not, screens off and never suspend. Phase 8 decides, with a stated bar.
+- **iPhone notifications on the desktop over ANCS** (Bluetooth LE), via
+  `ancs4linux` into swaync. A use case today.
+- **The dGPU is lent to the host on demand**, not handed over at boot: the
+  iGPU runs the desktop always, `dgpu host` gives the RX 6600 XT to native and
+  Proton games, and starting `win` takes it back — see
+  [Lending the dGPU to the host](#lending-the-dgpu-to-the-host-on-demand).
+- **Push alerts to the phone (ntfy) are an optional follow-up**, not part of
+  the cutover — see [Optional follow-ups](#optional-follow-ups).
+
 ### Corrected 2026-09-23 (review)
 
 Nothing here changes a decision; each is a place where the pasted config or
@@ -158,7 +180,10 @@ the text was wrong about how the machine behaves.
 | `account.microsoft.com/devices` | Before Phase 8 | Note the name the PC is listed under — it is how the Activation Troubleshooter identifies it |
 | Game library vs ProtonDB, and each title's Secure Boot/TPM requirement | Before Phase 7; Phase 2b | Which titles need Windows at all, which of those need bare metal (kernel anti-cheat), and which of *those* refuse to start without Secure Boot (e.g. Battlefield 6, recent Call of Duty). The last list is why [Phase 2b](#phase-2b--restore-secure-boot) exists |
 | Printer's USB URI | [Printer sharing](#printer-sharing) | The serial-keyed `usb://Brother/HL-L2305%20series?serial=U66480F3N341782` is built from what Windows reports; `lpinfo -v` after Phase 2 is authoritative |
-| Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet |
+| Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet. The intended answer is ntfy, deferred to [Optional follow-ups](#optional-follow-ups); until then the unit is a desktop pop-up via swaync, which only helps if you are at the desk |
+| dGPU's Linux PCI address | [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) | `<DGPU_ADDR>` — Windows reports bus 3, but Linux numbers buses independently; take it from `lspci -nn -d 1002:73ff` on the live USB |
+| Wake-on-WLAN on the MT7922 | [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) | `iw phy` on the live USB must list `WoWLAN support` with `wake up on magic packet`. If it does not, suspend is off before it is tried |
+| ancs4linux: pinned revision and hash | [iPhone notifications](#iphone-notifications-over-ancs) | Not in nixpkgs; packaged in this repo, pinned by rev and hash like every other out-of-tree artifact here |
 | Memory kit and its current settings | [BIOS tuning](#bios-tuning) | Part number, rated EXPO profile, and whether EXPO is on today — read before the flash resets it (`Get-CimInstance Win32_PhysicalMemory \| Select Manufacturer,PartNumber,Capacity,Speed,ConfiguredClockSpeed`). The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
 
 ### Firmware update
@@ -214,6 +239,11 @@ A firmware update resets settings to defaults. Afterwards, re-check:
       jump; with BitLocker off that costs nothing but possibly a Windows Hello
       PIN re-setup
 - [ ] Wi-Fi still works in Windows (the only network this machine has)
+- [ ] **Wake from PCIe devices on, ErP off** (Gigabyte: *Power* → *ErP*
+      Disabled, *PME Event Wake Up* / *Resume by PCI-E Device* Enabled — names
+      vary by version). The Wi-Fi card is a PCIe device, and without this
+      Wake-on-WLAN cannot wake the machine from suspend — see
+      [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
 - [ ] Record the new version in the Phase 0 table
 
 ### BIOS tuning
@@ -334,7 +364,8 @@ BIOS settings are not declarative, so the record is the declaration:
 
 | Question | Answer | What it rules out |
 | --- | --- | --- |
-| GPU topology | dGPU → guest, AMD iGPU → NixOS | Single-GPU teardown hooks; the host never goes headless |
+| GPU topology | AMD iGPU → the NixOS desktop, always. dGPU → guest, **lent to the host on demand** for native/Proton games | Single-GPU teardown hooks; the host never goes headless; the compositor ever holding the dGPU |
+| Desktop session | niri, à la carte (waybar, swaync, fuzzel, swayidle); getty autologin, no lock; suspend on idle only if Wake-on-WLAN proves reliable | A display manager; a screen locker; a prebuilt shell |
 | How many Windows installs | **One.** The existing one, booted bare metal *or* as a guest | A separate VM image; an unactivated second copy; two config profiles |
 | How the guest gets its disk | **VFIO the whole fast NVMe controller** | Repartitioning Windows; a `qcow2`; virtio storage drivers |
 | Where NixOS lives | Entirely on the bulk drive, which disko owns outright | Disko ever meeting a Windows partition |
@@ -807,15 +838,20 @@ hosts/desk/
   default.nix                 # hostname, stateVersion, imports, user extraGroups
   hardware-configuration.nix  # from Phase 0
   disko.nix                   # partitioning — the BULK DRIVE ONLY
-  desktop.nix                 # display manager, PipeWire, fonts, browser
+  desktop.nix                 # niri, autologin, PipeWire, fonts, Chrome, keyring, WoWLAN
+  ancs.nix                    # Bluetooth + ancs4linux (iPhone notifications)
+  pkgs/ancs4linux.nix         # not in nixpkgs; pinned by rev + hash
   gaming.nix                  # steam, gamemode, mangohud, native-Proton side
   vfio.nix                    # IOMMU, vfio-pci binding (dGPU + fast NVMe), kvmfr
+  dgpu.nix                    # `dgpu host|vm`: lend the dGPU to the host on demand
   libvirt.nix                 # libvirtd, OVMF, swtpm, the NixVirt domain
   perf-hook.nix               # the while-the-VM-runs tuning (§5)
   secure-boot.nix             # lanzaboote (Phase 2b) — added after the install
   media.nix                   # Samba, btrfs scrub, restic (Media storage)
   windows/                    # the DSC profile Windows pulls and applies (§6)
   home/                       # host-only home modules
+    desktop.nix               # waybar, swaync, fuzzel, swayidle, the niri-session exec
+    niri.kdl                  # niri's config; `niri validate` runs as a flake check
 ```
 
 Promote a file to `modules/nixos/` the day a *second* machine wants it — not
@@ -1394,6 +1430,263 @@ into `Apply.ps1` from `wezterm-pin.nix`, never from winget.
 
 ---
 
+## The desktop session
+
+Decided 2026-09-23. Like media storage, this needs only Phases 1–2, and it is
+what you will touch every day, so it lands with the install rather than after
+the VM work. Every choice below is about one machine that is both a desktop
+and a small always-on server (Samba, CUPS, restic, the mux server, sometimes
+the guest). Where those two jobs conflict, the section says which one won.
+
+### Components
+
+niri is a compositor and nothing else, so the rest is chosen piece by piece.
+Each piece is small, in nixpkgs, and configured in this repo, so replacing one
+never touches the others.
+
+| Job | Choice | Why this one |
+| --- | --- | --- |
+| Compositor | **niri** (`programs.niri.enable`, nixpkgs) | Scrolling tiling. The nixpkgs module is enough, so there is no new flake input |
+| niri config | `hosts/desk/home/niri.kdl`, **validated at build** | A flake check runs `niri validate -c` on it, so a typo fails `nix flake check`, not the next login |
+| Login | **getty autologin** on tty1, `exec niri-session` from the login shell | No display manager to configure or break. The cost, accepted: a niri crash drops tty1 to a shell |
+| Screen lock | **None** | Decided: nothing sensitive is protected by the session. It sits behind its own encryption |
+| Bar | **waybar** | niri workspaces, tray (Steam, Tailscale, blueman), clock, a swaync button |
+| Notifications | **swaync** | Pop-ups, plus a history panel and do-not-disturb. The panel matters once a phone is forwarding everything ([ANCS](#iphone-notifications-over-ancs)). Action buttons are drawn, so a notification's actions are clickable |
+| Launcher | **fuzzel** | Wayland-native. niri's default config already binds it |
+| Idle | **swayidle** | Screens off, then the guarded suspend ([Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)). It honours Wayland idle inhibitors, so a playing video holds it off |
+| Secrets | **gnome-keyring** (Secret Service) | What Chrome and most apps expect. Locked at boot (autologin has no password to unlock it with), and it asks for its own password on first use |
+| X11 apps | **xwayland-satellite** on `PATH` | niri has no built-in Xwayland and starts this on demand. Steam needs it |
+| Portals | `xdg-desktop-portal-gnome` + `-gtk` | Screen sharing and file pickers. The niri module wires these, so there is no choice to make |
+| Polkit agent | `polkit_gnome`, as a user service | virt-manager and friends ask for elevation through it |
+| Bluetooth / audio / Wi-Fi UI | blueman, pwvucontrol, `nmtui` | Bluetooth is new on this host, for ANCS |
+| Screenshots | niri's built-in | Nothing to add |
+
+### Autologin, no lock
+
+```nix
+# hosts/desk/desktop.nix
+programs.niri.enable = true;
+services.getty.autologinUser = "n8";
+services.getty.autologinOnce = true;   # tty1, once per boot. Log out and you get a login prompt, not a loop
+services.gnome.gnome-keyring.enable = true;
+environment.systemPackages = with pkgs; [ xwayland-satellite fuzzel wl-clipboard pwvucontrol ];
+```
+
+```nix
+# hosts/desk/home/desktop.nix. Only tty1 starts niri. SSH logins and tty2 get a plain shell.
+programs.zsh.profileExtra = ''
+  if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+    exec niri-session
+  fi
+'';
+xdg.configFile."niri/config.kdl".source = ./niri.kdl;
+```
+
+**Chrome must be told where the keyring is.** Chrome picks its password store
+by guessing the desktop from `XDG_CURRENT_DESKTOP`. It does not recognise
+`niri`, so it falls back to `basic`, which keeps saved passwords and cookie
+keys **on disk with a hard-coded key**. That would quietly defeat the "secondary
+encryption" this setup relies on. Pin it:
+
+```nix
+(google-chrome.override { commandLineArgs = "--password-store=gnome-libsecret"; })
+```
+
+`gpg.nix`'s curses pinentry is unaffected: it runs inside WezTerm as it did
+on WSL.
+
+### niri and the two GPUs
+
+niri must render on the iGPU and **never open the dGPU**, even while the dGPU
+is [lent to the host](#lending-the-dgpu-to-the-host-on-demand). A compositor
+that holds a card's DRM node pins it, and the card cannot go back to vfio-pci
+until the compositor exits: in effect, starting the VM would mean logging out.
+When the dGPU is lent it appears as a new DRM device (hotplug), and niri opens
+new devices unless told not to:
+
+```kdl
+// hosts/desk/home/niri.kdl
+debug {
+    render-drm-device "/dev/dri/by-path/pci-0000:<IGPU_ADDR>-render"
+    ignore-drm-device "/dev/dri/by-path/pci-0000:<DGPU_ADDR>.0-render"
+}
+```
+
+Both are `debug` options, so check them against the niri wiki for the
+pinned version. If `ignore-drm-device` does not accept a `by-path` symlink,
+use the node the dGPU gets when lent (`/dev/dri/renderD129`-shaped) and add
+a udev rule that makes the name stable. Phase 8 proves that niri stays off
+the card, whichever form it takes.
+
+**The monitors hang off the motherboard's outputs** (the iGPU), which is also
+what Initial Display Output: IGD assumes. Games rendered on a lent dGPU reach
+them by PRIME render offload: rendered on the dGPU, copied to the iGPU for
+display. That copy costs a few percent, and it is the price of never having
+to log out to start the VM.
+
+### Idle: screens off, then suspend — if the Wi-Fi can wake it
+
+Decided: try suspend, with Wake-on-WLAN as the way back. If that proves
+unreliable, fall back to screens off and never suspend. The two jobs conflict
+most here: a sleeping desktop saves power, but a sleeping server is not a
+server.
+
+```nix
+# hosts/desk/home/desktop.nix
+services.swayidle = {
+  enable = true;
+  timeouts = [
+    { timeout = 600; command = "${pkgs.niri}/bin/niri msg action power-off-monitors"; }
+    # Delete this entry to fall back to "screens off, never suspend".
+    { timeout = 900; command = "${idleSuspend}";
+      resumeCommand = "${pkgs.procps}/bin/pkill -f desk-idle-suspend"; }
+  ];
+};
+```
+
+`idleSuspend` does not suspend blindly. It waits until nothing needs the
+machine awake, and the `resumeCommand` kills it the moment you touch a key,
+so it can never suspend under you:
+
+```sh
+# desk-idle-suspend, runs as n8. virsh, not a libvirt hook, so the
+# no-calling-libvirt-from-a-hook rule does not apply.
+busy() {
+  virsh -c qemu:///system domstate win 2>/dev/null | grep -qx running && return  # suspend + VFIO = no
+  fuser -s /dev/dri/by-path/pci-0000:<DGPU_ADDR>.0-* 2>/dev/null && return      # a game on the lent dGPU; gamepad input is not "activity"
+  systemctl is-active --quiet restic-backups-media.service && return
+  [ -n "$(lpstat -o)" ] && return                                               # queued print jobs
+  [ -n "$(ss -Htn state established '( sport = :445 or sport = :22 )')" ] && return  # SMB client, SSH / the Mac's mux session
+  return 1
+}
+while busy; do sleep 60; done
+systemctl suspend
+```
+
+The way back:
+
+```nix
+# hosts/desk/desktop.nix. Applies to every Wi-Fi connection, including the
+# hand-provisioned one.
+networking.networkmanager.settings.connection."wifi.wake-on-wlan" = "magic";
+```
+
+- **Magic packets come from the LAN only.** From the Mac on the same Wi-Fi:
+  `wakeonlan f0:a6:54:14:9b:0d`. Over the tailnet there is nothing to send
+  one: a sleeping `desk` is simply offline to Tailscale, Samba, CUPS and the
+  mux server until something on the LAN wakes it. This is the real cost of
+  suspending, and the reason the fallback exists.
+- **The nightly backup wakes the machine itself**: the restic timer has
+  `WakeSystem = true`, so the RTC wakes it, restic runs, and swayidle suspends
+  it again after 15 idle minutes.
+- **Firmware:** wake from PCIe devices on, ErP off — in the
+  [firmware checklist](#firmware-update).
+- **No Bluetooth wake.** The iPhone would wake the desk every time it got a
+  notification.
+
+**The bar for keeping suspend**, tested in Phase 8: 10 of 10 suspend/resume
+cycles come back clean (Wi-Fi reassociates, Tailscale reconnects, no amdgpu
+or mt7921e errors in `journalctl -k -b`), and 5 of 5 magic packets from the
+Mac wake it. Anything less, delete the second timeout and write down why here.
+Both the MT7922's WoWLAN and AM5's s2idle have mixed track records on
+Linux, so the bar is set to catch exactly those.
+
+### iPhone notifications over ANCS
+
+A use case today: iPhone notifications on the desktop.
+
+iOS does not let apps read other apps' notifications, so KDE Connect and its
+kin cannot forward them from an iPhone. The one route Apple allows is **ANCS**
+(Apple Notification Center Service), the Bluetooth LE service smartwatches
+use. The desktop pairs with the phone as an accessory, and the phone streams
+every notification to it: app, title, body, and the notification's
+positive/negative actions.
+
+**`ancs4linux`** implements the Linux side on top of BlueZ. It has three parts:
+an observer and an advertising service on the system bus (root, talking to
+BlueZ), and a desktop-integration user service that turns what the observer
+sees into ordinary `org.freedesktop.Notifications` calls. **swaync** is what
+draws those notifications. The other parts of this desktop never know the
+phone exists.
+
+```nix
+# hosts/desk/ancs.nix
+{ pkgs, ... }:
+let
+  ancs4linux = pkgs.callPackage ./pkgs/ancs4linux.nix { };  # buildPythonApplication, pinned rev + hash
+in
+{
+  hardware.bluetooth = { enable = true; powerOnBoot = true; };  # MT7922's BT half; firmware via enableRedistributableFirmware
+  services.blueman.enable = true;
+  services.dbus.packages = [ ancs4linux ];                       # its system-bus policy
+  environment.systemPackages = [ ancs4linux ];                   # ancs4linux-ctl, for pairing
+
+  systemd.services.ancs4linux-observer = {
+    wantedBy = [ "bluetooth.target" ];
+    after = [ "bluetooth.service" ];
+    serviceConfig.ExecStart = "${ancs4linux}/bin/ancs4linux-observer";
+  };
+  systemd.services.ancs4linux-advertising = {
+    wantedBy = [ "bluetooth.target" ];
+    after = [ "bluetooth.service" ];
+    serviceConfig.ExecStart = "${ancs4linux}/bin/ancs4linux-advertising";
+  };
+  systemd.user.services.ancs4linux-desktop-integration = {
+    wantedBy = [ "graphical-session.target" ];
+    partOf = [ "graphical-session.target" ];
+    serviceConfig.ExecStart = "${ancs4linux}/bin/ancs4linux-desktop-integration";
+  };
+}
+```
+
+Take the unit names and flags from upstream's autorun files at the pinned
+revision, not from this sketch. It is a small, lightly maintained project, so
+treat it as experimental. The package pins it by rev and hash, the same
+lesson as [WezTerm's Windows GUI pin](#wezterms-windows-gui-pin).
+
+**Pairing, once:** `ancs4linux-ctl enable-advertising` (with the adapter's
+address and the name `desk`). On the iPhone, open Settings → Bluetooth → `desk`,
+pair, and allow **Share System Notifications** when asked. Then disable
+advertising. The bond lives in `/var/lib/bluetooth`, so it is unmanaged state
+([Phase 9](#phase-9--retire-the-wsl-host)).
+
+What to expect:
+
+- **Range-bound.** BLE, roughly the room. When the phone leaves, nothing
+  arrives. When it comes back, the observer should reconnect by itself, and
+  Phase 8 checks that it does.
+- **Only while NixOS runs.** The Bluetooth adapter stays with the host, the
+  same rule as the printer ([Keep the printer on the host](#keep-the-printer-on-the-host)):
+  it is never redirected to the guest, so ANCS keeps working while `win` runs.
+  Bare-metal Windows has no ANCS. Phone Link can do it there, but that is out
+  of scope.
+- **Not while asleep.** No Bluetooth wake, by design (above).
+- **Actions.** ANCS lets the desktop answer a notification with its positive
+  or negative action, which in practice mostly means dismissing it on the phone. Whether
+  ancs4linux exposes them as notification actions is to be confirmed. swaync
+  draws whatever actions arrive.
+- **One-way otherwise.** Dismissing in swaync does not clear the phone unless
+  that action exists, and nothing flows desktop → phone. That is the
+  [ntfy follow-up](#optional-follow-ups), if it is ever wanted.
+
+### Desktop session checklist
+
+- [ ] Power on → niri on tty1 with no password; `loginctl` shows the
+      session on seat0; tty2 is a plain shell
+- [ ] `nix flake check` fails on a deliberately broken `niri.kdl`
+- [ ] Chrome: `chrome://version` shows `--password-store=gnome-libsecret`,
+      and a saved password survives a reboot after one keyring prompt
+- [ ] waybar tray shows Steam, Tailscale and blueman; fuzzel launches
+- [ ] `notify-send test` pops up in swaync and lands in its history
+- [ ] iPhone paired: a text message appears in swaync within seconds. Walk out
+      of range and back, and the next one still arrives without re-pairing
+- [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
+- [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
+      suspend bar in [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
+      met or suspend removed. Everything else is in Phase 8
+
+---
+
 ## Media storage
 
 Off the phase sequence deliberately. This needs Phases 1–2 (the box exists and
@@ -1581,6 +1874,7 @@ invocation, second repository — not a migration.
       OnCalendar = "daily";
       RandomizedDelaySec = "2h";
       Persistent = true;                                # catch up after downtime
+      WakeSystem = true;   # RTC-wake from suspend to run — see The desktop session's Idle
     };
   };
 
@@ -2078,6 +2372,105 @@ it.
 The remaining virtual devices (NIC, balloon) do want virtio drivers. Install
 them once from bare metal via `pkgs.virtio-win`'s ISO before the first guest
 boot, so the first boot has them rather than discovering it needs them.
+
+#### Lending the dGPU to the host, on demand
+
+Decided 2026-09-23. `vfio-pci.ids` above binds the RX 6600 XT to vfio-pci at
+boot, and as the plan first stood it stayed there, so the host-side Steam
+library ([`/srv/games`](#where-the-steam-library-lives)) would have run on the
+Raphael iGPU's 2 CUs. Instead, the card stays with vfio-pci **until you
+ask for it**. `sudo dgpu host` hands function 0 to amdgpu for native and
+Proton games. `dgpu vm`, or simply starting `win`, takes it back.
+
+**Does defaulting to the iGPU save power?** Yes, though the saving comes mostly
+from one place: **the desktop never runs on the dGPU.** An RDNA2 card driving
+a desktop, especially several monitors or a high refresh rate, often holds
+its memory clock at maximum and idles at tens of watts, while the iGPU idles
+at a few. The monitors are on the motherboard's outputs either way. The
+second question, whether an *unused* dGPU draws less parked on vfio-pci or
+idling under amdgpu, matters less: vfio-pci puts an unused device in
+D3hot, and amdgpu's runtime power management may or may not do as well on
+a desktop card. That difference is single-digit watts and unmeasured, so
+hand the card back after gaming (`dgpu vm`) and read the difference off a
+wall meter once, in Phase 8. It is not worth more thought than that.
+
+Only **function 0** (the GPU) is lent. The HDMI-audio function (`.1`) stays on
+vfio-pci for good: the host's sound goes out of the motherboard, and if
+PipeWire opened the card's audio it would pin the card just as a compositor
+does. The IOMMU group is still viable for the guest when it starts, because
+by then both functions are back on vfio-pci.
+
+```nix
+# hosts/desk/dgpu.nix
+{ pkgs, lib, ... }:
+let
+  dgpu = "0000:<DGPU_ADDR>.0";   # function 0 only, from Phase 0
+  dgpuSwitch = pkgs.writeShellScriptBin "dgpu" ''
+    set -eu
+    PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.psmisc pkgs.libvirt pkgs.gnugrep ]}
+    dev=/sys/bus/pci/devices/${dgpu}
+    current() { [ -e $dev/driver ] && basename "$(readlink $dev/driver)" || echo none; }
+    # Per-device, like the NVMe binding: driver_override, never an ID match.
+    rebind() {
+      [ -e $dev/driver ] && echo ${dgpu} > $dev/driver/unbind
+      echo "$1" > $dev/driver_override
+      echo ${dgpu} > /sys/bus/pci/drivers_probe
+      [ "$(current)" = "$1" ] || { echo "dgpu: $1 did not bind" >&2; exit 1; }
+    }
+    case "''${1:-status}" in
+      status) current ;;
+      host)
+        [ "$(current)" = amdgpu ] && exit 0
+        # Safe here: this branch never runs inside a libvirt hook.
+        if virsh -c qemu:///system domstate win 2>/dev/null | grep -qx running; then
+          echo "dgpu: win is running and owns the card" >&2; exit 1
+        fi
+        rebind amdgpu ;;
+      vm)
+        [ "$(current)" = vfio-pci ] && exit 0
+        # Unbinding amdgpu under an open DRM node is how the host crashes.
+        # Refuse, and say who is holding it.
+        nodes=$(ls /dev/dri/by-path/pci-${dgpu}-* 2>/dev/null || true)
+        if [ -n "$nodes" ] && fuser -s $nodes; then
+          echo "dgpu: in use; close these first:" >&2
+          fuser -v $nodes || true
+          exit 1
+        fi
+        rebind vfio-pci ;;
+      *) echo "usage: dgpu [status|host|vm]" >&2; exit 2 ;;
+    esac
+  '';
+in
+{
+  environment.systemPackages = [ dgpuSwitch ];
+
+  # Starting `win` takes the card back. Sorted before 10-win-perf, so a
+  # refusal stops the start before any cores are fenced off. Must not call
+  # virsh: a hook that calls back into libvirtd deadlocks it.
+  virtualisation.libvirtd.hooks.qemu."05-win-dgpu" = pkgs.writeShellScript "win-dgpu" ''
+    [ "$1" = win ] && [ "$2/''${3:-}" = prepare/begin ] || exit 0
+    exec ${dgpuSwitch}/bin/dgpu vm
+  '';
+
+  # Games pick the dGPU when it is lent and fall back to the iGPU when it is
+  # not. Mesa's DRI_PRIME covers GL, and Vulkan through the device-select layer.
+  programs.steam.package = pkgs.steam.override {
+    extraEnv.DRI_PRIME = "pci-0000_<DGPU_ADDR_UNDERSCORED>_0";
+  };
+}
+```
+
+The rule this buys, stated once: **quit Steam (and any other game) before
+starting the VM.** Anything that has opened the dGPU (a game, or Steam's
+own client if it picked the card) holds it, and the hook refuses the start with
+the list of holders rather than crashing the host. A refused start is the
+system working as designed.
+
+amdgpu hot-unbind is the least-trodden path in this plan. It has worked
+properly since roughly kernel 5.14, and RDNA2 resets cleanly, but it is still
+the least exercised. If Phase 8's round trips oops, the fallback is the plan
+as it stood: the dGPU stays on vfio-pci, and host-side titles play in the
+guest. Nothing else here depends on lending.
 
 ---
 
@@ -2620,6 +3013,30 @@ Nix proves the closure; it cannot prove any of this.
 tailnet, guest and bare metal each print, and the printer survives the guest
 starting.
 
+**Desktop session**: the [Desktop session checklist](#desktop-session-checklist),
+in full, and then the parts that only show up under load:
+
+- [ ] **Lending round trip, five times:** `sudo dgpu host` → `dgpu status` says
+      `amdgpu` → a Proton game runs, and `MESA_VK_DEVICE_SELECT=list vkcube` or
+      the game's own overlay names the 6600 XT → quit it → `sudo dgpu vm` →
+      `vfio-pci`. No amdgpu oops in `journalctl -k -b`. Then start `win`: the
+      dGPU works in the guest after having been lent
+- [ ] **niri never holds the card:** while it is lent,
+      `fuser -v /dev/dri/by-path/pci-0000:<DGPU_ADDR>.0-*` lists no `niri`
+- [ ] **A refused start is a clean refusal:** lend the card, leave a game
+      running, `virsh start win` → fails, naming the game. Host still fine,
+      no cores fenced off (`systemctl show user.slice -p AllowedCPUs` empty)
+- [ ] **Power, once, at the wall:** idle desktop with the dGPU on vfio-pci vs
+      lent and idle. Write both numbers here. They decide whether "hand it back
+      after gaming" is worth remembering
+- [ ] **The suspend bar**: 10/10 clean suspend/resume cycles, 5/5 magic-packet
+      wakes from the Mac, per
+      [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it). Plus:
+      no suspend while `win` runs, while restic runs, while the Mac has an SMB
+      mount or a mux pane open. Miss any, and suspend comes out
+- [ ] After an RTC wake for the nightly backup, the machine suspends again on
+      its own
+
 **Windows management**
 
 - [ ] `winget configure test` comes back clean after `Apply.ps1`
@@ -2656,7 +3073,9 @@ Only after Phase 8 passes.
       `/var/lib/sbctl` (backed up off-machine — [Phase 2b](#phase-2b--restore-secure-boot)),
       and the guest's TPM and firmware state —
       `/var/lib/libvirt/swtpm/<uuid>/` and `/var/lib/libvirt/qemu/nvram/win_VARS.fd`
-      ([Two TPMs, one install](#two-tpms-one-install))
+      ([Two TPMs, one install](#two-tpms-one-install)), the iPhone's Bluetooth
+      bond in `/var/lib/bluetooth` and the gnome-keyring contents in
+      `~/.local/share/keyrings` ([The desktop session](#the-desktop-session))
 - [x] Note in the README that `hosts/desk/windows/` configures a Windows install
       this repo does not otherwise own — *done in the PR that added this plan*
 
@@ -2750,6 +3169,19 @@ Only after Phase 8 passes.
     [BIOS tuning](#bios-tuning) validates before the media lands and the
     WHEA/MCE check in Phase 8 keeps watching; worth listing because it defeats
     every other integrity mechanism in this plan. If in doubt, EXPO alone.
+17. **A lent dGPU that will not come back.** amdgpu hot-unbind under an open
+    DRM node, or a niri that opened the card despite `ignore-drm-device`,
+    leaves the card stuck on the host or oopses the kernel. `dgpu vm` refuses
+    while anything holds the card, and Phase 8 runs the round trip five times.
+    The fallback is to never lend, which costs host-side game performance
+    and nothing else.
+18. **A sleeping `desk` that nobody can wake.** Suspend takes Samba, CUPS,
+    the mux server and Tailscale offline together, and only a magic packet
+    from the LAN brings them back. That cost is accepted, but it only stays
+    acceptable if the wake is reliable. The bar in
+    [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) is what
+    turns this from a slow annoyance into a decision. Below it, suspend comes
+    out.
 
 ## Deliberately not doing
 
@@ -2772,3 +3204,36 @@ Only after Phase 8 passes.
   desktop; now NixOS is. A winget build would be unpinned and could only
   mismatch the pinned mux server — [Phase 3](#wezterms-windows-gui-pin). If
   one is ever wanted, it comes from the mirror release by hash.
+- **A screen lock, or a display manager.** Decided 2026-09-23: the session
+  protects nothing that is not already behind its own encryption, so a lock
+  would be friction without a threat model. getty autologin replaces the
+  display manager, which is one less thing to configure or break.
+- **Bluetooth wake.** The paired iPhone would wake the desk on every
+  notification.
+
+## Optional follow-ups
+
+Not part of the cutover. Each is recorded so the reasoning isn't lost, and
+none is scheduled.
+
+### Push alerts to the phone (ntfy)
+
+The other direction from [ANCS](#iphone-notifications-over-ancs): `desk`
+telling the phone something, wherever the phone is. Not a use case today,
+which is why it is here and not in the plan. What it would fill is the
+`<FILL_ME_notify_unit>` in [Media storage](#step-2--backup-for-when-the-bulk-ssd-dies):
+a backup that fails while you are away from the desk is exactly the alert a
+desktop pop-up cannot deliver.
+
+- **Shape:** a templated `notify@.service` that `curl`s an ntfy topic (ntfy.sh,
+  or self-hosted) with `%i` as the failing unit's name, and
+  `OnFailure = "notify@%n.service"` on restic, `btrfs-scrub-*` and anything
+  else that should page. The ntfy iOS app shows it.
+- **State:** the topic name (and access token, if the server requires one) is a secret, so it joins
+  the unmanaged-state list alongside the restic credentials.
+- **Together with ANCS it is two one-way pipes, not a sync.** Dismissing on
+  one side does not clear the other. And there is an **echo loop** to close:
+  an ntfy alert posted on the iPhone is itself a notification, which ANCS
+  forwards straight back to the desk. Drop the ntfy app's notifications on the
+  Linux side by their ANCS app identifier (read it off the first forwarded
+  alert) in the desktop-integration step, or in a swaync rule.
