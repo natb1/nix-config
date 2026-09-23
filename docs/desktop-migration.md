@@ -76,8 +76,7 @@ plan gates it now — Phase 0 is the only go/no-go.
    steps 1–2; can run any time.
 4. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
-   `nixos-generate-config`, interface names from `ip link`, the USB
-   port-to-controller map.
+   `nixos-generate-config`, interface names from `ip link`.
 5. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
 6. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
@@ -339,9 +338,9 @@ lstopo-no-graphics --of txt   # pkgs.hwloc — shows CCD/L3 boundaries
 fio --name=r --rw=randread --bs=4k --iodepth=32 --numjobs=4 --size=2G \
     --runtime=30 --time_based --group_reporting --filename=/dev/<BULK>
 
-# 7. USB: which controller each port hangs off. Plug the printer in, note its
-#    bus in `lsusb`, then resolve each bus to a PCI address. Phase 7 must not
-#    pass the printer's controller to the guest — see Printer sharing.
+# 7. OPTIONAL: USB port -> controller map. Only needed if Phase 7 ever falls
+#    back to passing a whole USB controller, which must not be the printer's
+#    (see Printer sharing). Cheap to record while the live USB is up.
 lsusb -t
 for b in /sys/bus/usb/devices/usb*; do
   printf '%s -> %s\n' "${b##*/}" "$(basename "$(readlink -f "$b/..")")"
@@ -1633,7 +1632,7 @@ phase sequence: it needs Phases 1–2 and nothing else, and nothing depends on i
 | Model | **Brother HL-L2305** (USB-only mono laser), USB `04f9:0075`, serial `U66480F3N341782` | Stays plugged into the desktop; the desktop becomes the print server |
 | USB interface | One interface, class `07/01/02` (bidirectional printer). **No `07/01/04`** | No IPP-over-USB, so `ipp-usb` and driverless printing are out on the host side — it needs a real CUPS driver |
 | Windows queue | `Brother HL-L2305 series`, inbox *Brother Laser Type1 Class Driver*, port `USB001`, **not shared** | Nothing to undo: Windows was never the print server. The local queue keeps working bare metal |
-| Host controller | AMD `1022:15b7`, Windows PCI bus 18 fn 4 — one of the CPU's USB controllers | Matters for Phase 7's USB-controller passthrough — [below](#the-usb-controller-must-stay-with-the-host) |
+| Host controller | AMD `1022:15b7`, Windows PCI bus 18 fn 4 — one of the CPU's USB controllers | Only matters if Phase 7's controller-passthrough fallback is ever used — [below](#keep-the-printer-on-the-host) |
 | Region | en-US | `PageSize=Letter` |
 
 **Driver: `brlaser`.** The nixpkgs package tracks the maintained
@@ -1742,26 +1741,22 @@ Two consequences, both accepted:
    The local queue is not in the profile: Windows re-creates it by PnP whenever
    the device appears, with the inbox driver, so there is nothing to declare.
 
-### The USB controller must stay with the host
+### Keep the printer on the host
 
-[Phase 7](#phase-7--display-input-audio) says to pass a whole USB host
-controller to the guest if one sits in a clean IOMMU group. **Whichever
-controller the printer is on is not that controller** — pass it through and
-starting the guest silently yanks the printer out from under CUPS, and every
-job from the Mac sits queued until the guest stops. This box has four
-controllers (`1022:15b6`, `1022:15b7`, `1022:15b8` on the CPU; `1022:43f7` on
-the chipset), and the printer is on `15b7` today.
+[Phase 7](#phase-7--display-input-audio) gives the guest USB devices one at a
+time, so the printer stays with the host by construction: **never redirect
+`04f9:0075`**, by `<hostdev type='usb'>` or by SPICE. Handing it to the guest
+yanks it out from under CUPS, and every Mac job queues silently until the guest
+stops.
 
-So Phase 0 records a port map (step 7 of its script), and Phase 7 chooses
-with it.
-
-Either the guest gets a controller the printer isn't on, or the printer moves
-to a port on a controller the host keeps. The same goes for
-`spiceUSBRedirection` and `<hostdev type='usb'>`: never redirect `04f9:0075`.
+The one way to lose it by accident is Phase 7's fallback of passing a whole
+USB controller, which takes every port on it. If that fallback is ever used,
+it must not be the printer's controller — `1022:15b7` today, of four
+(`15b6`, `15b7`, `15b8` on the CPU; `43f7` on the chipset). Phase 0's optional
+port map (step 7) says which port is which; otherwise move the printer.
 
 ### Checklist
 
-- [ ] Phase 0: the USB port map ([step 7](#phase-0--inventory-and-the-gono-go-gate)), saved with the rest
 - [ ] After Phase 2: `lpinfo -v` shows the `usb://Brother/HL-L2305%20series?serial=…`
       URI exactly as in `printing.nix`; fix the string if the backend reports
       it differently
@@ -1772,8 +1767,8 @@ to a port on a controller the host keeps. The same goes for
       queue prints
 - [ ] From the guest: `Brother (desk)` prints
 - [ ] Bare metal: the local USB queue prints
-- [ ] Guest up with its USB controller passed through: `lsusb` on the host
-      **still** lists `04f9:0075`, and a Mac job prints while the guest runs
+- [ ] Guest up: `lsusb` on the host **still** lists `04f9:0075`, and a Mac
+      job prints while the guest runs
 
 ---
 
@@ -2338,13 +2333,26 @@ Note `cgroup_device_acl` — libvirt's default device ACL does not include
 `/dev/kvmfr0`, and leaving it out produces a permission error that reads like
 something else entirely.
 
-**Input.** Pass an entire USB host controller through VFIO if Phase 0 shows one
-in its own IOMMU group — **and it is not the one the printer is on**, which
-stays with the host so CUPS keeps it while the guest runs
-([Printer sharing](#the-usb-controller-must-stay-with-the-host)). Bind it by
-address, like the NVMe. That gives the guest real USB with no translation
-layer — best for controllers, high-polling-rate mice, and VR. Otherwise use
-libvirt's `<input type='evdev'>` with a both-Ctrl hotkey to toggle capture.
+**Input — device by device, no USB controller.**
+
+- **Keyboard and mouse:** Looking Glass forwards them from its window over
+  SPICE. When latency matters more than convenience, libvirt's
+  `<input type='evdev'>` hands the guest the host's devices, with a both-Ctrl
+  hotkey to toggle capture.
+- **A gamepad or other single device:** `<hostdev mode='subsystem' type='usb'>`
+  by vendor:product for one that always belongs to the guest, or SPICE USB
+  redirection (`spiceUSBRedirection`, already on in Phase 4) to lend one on
+  demand.
+- **Anything anti-cheat-sensitive** boots bare metal anyway, where Windows has
+  every port.
+
+**Fallback: a whole USB controller over VFIO**, only for a device that
+misbehaves when passed individually (VR headsets are the usual case). It
+needs the controller in a clean IOMMU group, binding by address like the NVMe,
+and a controller the printer is not on — passing one takes every port on it
+([Printer sharing](#keep-the-printer-on-the-host)). Not the default, because
+it gives up ports the host uses and adds a third IOMMU gate for a need that
+may never come up.
 
 **Audio.** libvirt has supported `<audio type='pipewire'/>` since 9.10. For a
 `qemu:///system` domain the QEMU process runs as a system user and cannot find
@@ -2573,11 +2581,6 @@ Only after Phase 8 passes.
     [Phase 6](#phase-6--managing-the-one-windows-install) recovers some of it;
     whatever else replaces them should land in the same PR as the deletion, or
     it never lands.
-16. **The printer goes to the guest with its USB controller.** Phase 7's
-    controller passthrough takes every port on that controller; if the printer
-    is on one, it vanishes from CUPS whenever the guest runs and Mac jobs queue
-    silently. Phase 0's port map and the Phase 8 check (`lsusb` on the host
-    with the guest up) exist for it.
 
 ## Deliberately not doing
 
