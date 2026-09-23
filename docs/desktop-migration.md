@@ -67,25 +67,27 @@ plan gates it now — Phase 0 is the only go/no-go.
   `ReAgent.xml` fix in
   [WinRE after moving the ESP](#winre-after-moving-the-esp): the plain
   `/disable; /enable` failed with error 2.
+- **Activation, from a boot off the new ESP** (2026-09-23) — *"Windows is
+  activated with a digital license linked to your Microsoft account."* The
+  new ESP is proven, so **the 1 TB drive's ESP is now disposable**; Phase 2
+  wipes it with the rest of that drive.
 
 ### Next, in order
 
-1. **Confirm activation** — Settings → System → Activation, from a boot off the
-   new ESP. The last check before the 1 TB drive's ESP is disposable.
-2. **Update the motherboard firmware** — see
-   [Firmware update](#firmware-update). After step 1, so a boot failure has one
-   cause, not two.
-3. **Tune the BIOS** — memory timings first, then the CPU — see
-   [BIOS tuning](#bios-tuning). After step 2, because the flash resets every
-   setting; **before step 7**, because a failed memory-training boot ends in a
+1. **Update the motherboard firmware** — see
+   [Firmware update](#firmware-update). Only now that the new ESP is proven,
+   so a boot failure has one cause, not two.
+2. **Tune the BIOS** — memory timings first, then the CPU — see
+   [BIOS tuning](#bios-tuning). After step 1, because the flash resets every
+   setting; **before step 6**, because a failed memory-training boot ends in a
    CMOS clear, which would also wipe the Secure Boot keys Phase 2b enrolls.
-4. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
-   steps 1–3; can run any time.
-5. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
+3. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
+   steps 1–2; can run any time.
+4. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
    `nixos-generate-config`, interface names from `ip link`.
-6. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
-7. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
+5. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
+6. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
 
 ### Decided 2026-09-21
@@ -140,7 +142,7 @@ the text was wrong about how the machine behaves.
 
 | Item | Where it bites | Notes |
 | --- | --- | --- |
-| Board revision on the PCB itself | Step 2 | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
+| Board revision on the PCB itself | [Firmware update](#firmware-update) | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
 | Wi-Fi interface name on NixOS | Samba, CUPS, firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
 | Total size of the media, across all five sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication — **together with the host-side Steam library**, which shares that volume. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
 | GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
