@@ -3320,7 +3320,14 @@ Checked before the switch: the printer is on USB `5-2` with serial
       the share sheet over Tailscale
 - [ ] ~~From the Mac on the LAN~~ — *dropped 2026-09-24, tailnet-only*
 - [ ] From the Mac over Tailscale, off the LAN: the `ipp://desk.<tailnet>.ts.net`
-      queue prints
+      queue prints — *2026-09-24: added, print not yet confirmed. **Add it from
+      Terminal, not the Add Printer window**:
+      `lpadmin -p desk_brother -D "Brother (desk)" -E -v ipp://100.121.40.74/printers/brother -m everywhere`.
+      The window's IP tab never offered *AirPrint* under Use, by name or by
+      IP, although `curl` got 200 and `ipptool get-printer-attributes` passed
+      from the same Mac, and a `tailscale0` capture showed its connections
+      arriving. `-m everywhere` is the same thing the AirPrint choice does:
+      it builds the queue from the printer's own IPP attributes*
 - [ ] From the guest: `Brother (desk)` prints
 - [ ] Bare metal: the local USB queue prints
 - [ ] Guest up: `lsusb` on the host **still** lists `04f9:0075`, and a Mac
