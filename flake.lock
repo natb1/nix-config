@@ -163,7 +163,8 @@
         "disko": "disko",
         "home-manager": "home-manager",
         "nixos-wsl": "nixos-wsl",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "tether": "tether"
       }
     },
     "systems": {
@@ -178,6 +179,27 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "tether": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790044706,
+        "narHash": "sha256-1HOfkNB5N0aBfJDOpZtrdPa+xpZN56LL0iNuj/qs4+c=",
+        "owner": "zackb",
+        "repo": "tether",
+        "rev": "779b8a4d970f3aa34f105fc9a84d06f186670ec1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "zackb",
+        "repo": "tether",
+        "rev": "779b8a4d970f3aa34f105fc9a84d06f186670ec1",
         "type": "github"
       }
     }

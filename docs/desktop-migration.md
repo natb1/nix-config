@@ -2546,6 +2546,37 @@ Linux, so the bar is set to catch exactly those.
 
 ### iPhone notifications over ANCS
 
+**Landed 2026-09-24 with [Tether](https://github.com/zackb/tether), not
+ancs4linux** — [`hosts/desk/iphone.nix`](../hosts/desk/iphone.nix). ancs4linux's
+README now says its author no longer uses it and points to Tether, which is
+actively developed, ships a NixOS module (a flake input, pinned by rev in the
+URL so the weekly bump leaves it alone), and does the same ANCS mirroring plus
+SMS/iMessage read and reply and contacts (MAP/PBAP). No iPhone app is needed for
+any of that; Tether's iOS app only does its Wi-Fi features (clipboard, files),
+which stay off because they would need a LAN port and mDNS. Notifications go
+through libnotify, so swaync draws them as planned.
+
+What Tether costs, all machine-wide:
+
+- `bluetoothd` runs with `Experimental = true` — BlueZ's bearer API, which ANCS
+  needs. It must be on **before** pairing: a bond made without it has no LE
+  half and never carries notifications. BlueZ here is 5.87 (≥ 5.86 required).
+- `desk` presents as Class of Device **Hands-Free** (`tether-btclass@hci0`),
+  the only class iOS offers the notification and contacts permissions to.
+- WirePlumber's `bluez5.roles` is cut to `a2dp_source bap_source hfp_ag`
+  (Tether's recommendation), so a bonded phone does **not** route its calls,
+  music or system sounds to `desk`. Headphones are unaffected.
+
+**Pairing, once, after the switch:** `tether --bt-status` should report full
+mode (MAP + PBAP + ANCS). Then pair from the GTK app (`tether-gtk`, Devices) or
+`tether --bt-pair <phone address>`; on the iPhone, allow **Show Notifications**
+and **Sync Contacts** when asked. `tether --bt-setup` prints anything still
+missing. The bond is in `/var/lib/bluetooth` and Tether's settings in
+`~/.config/tether`, both unmanaged state (README).
+
+*The ancs4linux design below is kept for the record; its expectations about
+range, sleep and one-way flow still hold.*
+
 A use case today: iPhone notifications on the desktop.
 
 iOS does not let apps read other apps' notifications, so KDE Connect and its
@@ -2655,7 +2686,10 @@ What to expect:
         as though nothing is running. `busctl --user list | grep -i notif`
         names the real owner.
 - [ ] iPhone paired: a text message appears in swaync within seconds. Walk out
-      of range and back, and the next one still arrives without re-pairing
+      of range and back, and the next one still arrives without re-pairing —
+      *Tether landed 2026-09-24 (`hosts/desk/iphone.nix`); pairing is next*
+- [ ] Tether: `tether --bt-status` shows full mode; a reply sent from the
+      desktop arrives on the other end; a call on the phone stays on the phone
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
       suspend bar in [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)

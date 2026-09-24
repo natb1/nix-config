@@ -34,6 +34,14 @@
       url = "https://flakehub.com/f/AshleyYakeley/NixVirt/*.tar.gz";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # iPhone notifications and messages on `desk` over Bluetooth — see
+    # hosts/desk/iphone.nix. Pinned to a rev in the URL, so the weekly
+    # `nix flake update` leaves it alone: it is a fast-moving beta that
+    # changes how bluetoothd runs, so a bump is a deliberate edit here.
+    tether = {
+      url = "github:zackb/tether/779b8a4d970f3aa34f105fc9a84d06f186670ec1";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, home-manager, claude-code-nix, darwin, nixos-wsl, ... }:
@@ -129,6 +137,7 @@
           # does not name disko — matching how the list above is written.
           inputs.disko.nixosModules.disko
           inputs.NixVirt.nixosModules.default
+          inputs.tether.nixosModules.tether
           ./hosts/desk
           home-manager.nixosModules.home-manager
           (home {

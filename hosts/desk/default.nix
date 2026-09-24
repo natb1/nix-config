@@ -21,6 +21,7 @@
     ./gdrive.nix
     ./media.nix
     ./printing.nix
+    ./iphone.nix
   ];
 
   # Simultaneously the Tailscale node name, what avahi publishes (desk.local),

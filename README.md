@@ -171,6 +171,9 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   Unix accounts; set it with `sudo smbpasswd -a n8`. On `mba` the same
   password sits in the login keychain, saved the first time
   `hosts/mba/desk.nix` mounts the share ("Remember this password").
+- `desk`'s Bluetooth bond with the iPhone (`/var/lib/bluetooth`) and Tether's
+  settings (`~/.config/tether`), from pairing once — see
+  `hosts/desk/iphone.nix`. Lost bond: unpair on the phone, pair again.
 
 ## Naming
 
