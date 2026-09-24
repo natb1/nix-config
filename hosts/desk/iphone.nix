@@ -24,6 +24,45 @@
 
 { lib, pkgs, inputs, ... }:
 
+let
+  # The iPhone can stop answering on LE while Classic stays up: texts (MAP)
+  # keep arriving, every other notification (ANCS) silently stops, and only
+  # turning Bluetooth off and on *on the phone* clears it — nothing on desk
+  # can (Tether's docs/BLUETOOTH.md, 2026-08-19; seen here 2026-09-24).
+  # That looks like "no notifications lately", so say it out loud: one
+  # swaync alert per episode, after five minutes of Classic up and
+  # notifications down. Genuinely away, Classic is down too, and it stays
+  # quiet.
+  ancsWatch = pkgs.writeShellApplication {
+    name = "tether-ancs-watch";
+    runtimeInputs = [
+      pkgs.tether
+      pkgs.libnotify
+      pkgs.coreutils
+      pkgs.gnugrep
+    ];
+    text = ''
+      down=0
+      alerted=0
+      while true; do
+        status=$(timeout 30 tether --bt-connection 2>/dev/null || true)
+        if grep -q '^BR/EDR: *yes' <<<"$status" &&
+          grep -q '^Notifications: *no' <<<"$status"; then
+          down=$((down + 1))
+        else
+          down=0
+          alerted=0
+        fi
+        if [ "$down" -ge 5 ] && [ "$alerted" -eq 0 ]; then
+          notify-send -a Tether -i phone "iPhone notifications are stuck" \
+            "Texts still arrive; other notifications do not. Turn Bluetooth off and on in the iPhone's Settings."
+          alerted=1
+        fi
+        sleep 60
+      done
+    '';
+  };
+in
 {
   # The flake's overlay rather than the module's default package: the default
   # calls package.nix without the npmConfigHook the flake itself passes.
@@ -78,6 +117,20 @@
         echo "org.bluez is not on the system bus after 60 s; starting without it" >&2
       '')
     ];
+  };
+
+  systemd.user.services.tether-ancs-watch = {
+    description = "Alert when the iPhone stops sending notifications to tetherd";
+    wantedBy = [ "graphical-session.target" ];
+    after = [
+      "graphical-session.target"
+      "tetherd.service"
+    ];
+    partOf = [ "graphical-session.target" ];
+    serviceConfig = {
+      ExecStart = lib.getExe ancsWatch;
+      Restart = "on-failure";
+    };
   };
 
   # tetherd's Wi-Fi half has no off switch: it always listens on 5134 and

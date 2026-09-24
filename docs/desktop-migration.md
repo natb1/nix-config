@@ -2729,7 +2729,10 @@ What to expect:
       wedge, likely provoked by a burst of connect attempts, with the same
       and only remedy — nothing on desk can clear it. Open question: does a
       clean absence (phone well out of range) recover by itself? If the wedge
-      recurs every time, report it upstream with `tetherd.log`
+      recurs every time, report it upstream with `tetherd.log`. *Alert added
+      the same day:* the `tether-ancs-watch` user service (in `iphone.nix`)
+      polls `tether --bt-connection` each minute and posts one swaync alert
+      after five minutes of BR/EDR up with Notifications down
 
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
