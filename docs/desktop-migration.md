@@ -2902,6 +2902,15 @@ address; `smb://desk/media` works too if MagicDNS resolves in Files), as
 most media; VLC or Infuse browse the same SMB share if Files' player is not
 enough.
 
+- [x] **Mac mounts the share itself** — *2026-09-24, from
+      [`hosts/mba/desk.nix`](../hosts/mba/desk.nix)*: a launchd agent mounts
+      `smb://n8@desk/media` at login and every five minutes if it has dropped,
+      using the password in the login keychain. It mounted on the first
+      `darwin-rebuild switch` (`smbstatus` here showed the Mac on `media`).
+      Not finding it at first was a Finder setting, not a failure: with no mDNS,
+      `desk` never appears under Network, only under Locations when *Settings →
+      Sidebar → Connected servers* is on, or at `/Volumes/media`
+
 - [x] **`hosts allow` does not cover IPv6** — *resolved 2026-09-24 by going
       tailnet-only (above) and `hosts deny = ALL`.* Its entries are all IPv4, and
       `hosts deny = 0.0.0.0/0` matches only IPv4, so an IPv6 client is let
