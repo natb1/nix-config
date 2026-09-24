@@ -2715,7 +2715,10 @@ What to expect:
       `tether-gtk --thread=…` from tetherd's PATH, where it was missing. Fixed,
       and tetherd now starts with graphical-session.target so what it launches
       has WAYLAND_DISPLAY. Reply opens the thread in tether-gtk, not an inline
-      field in swaync*
+      field in swaync — **confirmed working after the switch.** Reconnect is
+      automatic: the bond is in `/var/lib/bluetooth`, `bluetooth.json` names
+      the phone with `enabled`, and tetherd re-supervised it by itself after a
+      restart. Still to try: out of range and back, and a reboot*
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
       suspend bar in [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
