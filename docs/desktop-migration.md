@@ -92,130 +92,59 @@ boot.
 
 ### Bootstrapping the live USB
 
-**The problem, stated honestly after doing it by hand twice:** a live USB keeps
-everything in RAM, so every boot repeats the same six steps, two of which are
-browser login flows. Three separate costs hide in that, and they have
-different fixes.
+**Scoped down 2026-09-24, once Phase 2's shape became clear.** A live USB keeps
+everything in RAM, so every boot repeated the same six steps. Two ideas for
+fixing that properly — a custom ISO built from this flake, and an encrypted
+persistence partition on the stick — were explored and then **dropped**: after
+Phase 2 this machine boots NixOS from its own drive, and the stick becomes a
+recovery tool used rarely. Neither is worth carrying as a commitment for that.
 
-| Cost | Fix |
-| --- | --- |
-| Getting the repo | **Already free.** This repo is public, so `git clone https://github.com/natb1/nix-config.git` needs no credentials at all. The `gh` device flow was never required for the clone — only to *push* |
-| Getting the tools | Tier 2: bake them into a custom ISO |
-| Credentials — Claude's session, a push credential, the Wi-Fi PSK | Tier 3: a persistence partition. None of these can live in a public repo |
+What is kept is the cheap part, which removes most of the pain anyway:
 
-#### Tier 1 — `scripts/live-bootstrap.sh`
-
-One command replaces the six:
+**`scripts/live-bootstrap.sh`** — one command replaces the six:
 
 ```sh
 curl -sL https://raw.githubusercontent.com/natb1/nix-config/main/scripts/live-bootstrap.sh | sh
 ```
 
-Clones anonymously, switches to the working branch, sets the git identity,
-picks up credentials from the persistence partition if one exists, and execs
-into a `nix-shell` carrying git/gh, the Phase 0 inventory set and claude-code.
-Idempotent — it fetches rather than re-clones — so it is also the "I rebooted
-again" command. Works on the stock ISO; no rewriting of the stick.
+Clones anonymously, switches to the working branch, sets the git identity, and
+execs into a `nix-shell` carrying git/gh, the Phase 0 inventory set and
+claude-code. Idempotent, so it doubles as the "I rebooted again" command.
 
-Its one deliberate omission is `gh auth login`. Dropping that from the critical
-path is most of the point: the clone does not need it, and pushes go over SSH
-with a key from Tier 3 instead.
+The single biggest saving needed no tooling at all: **the `gh` device flow was
+never required.** This repo is public, so `git clone` needs no credentials.
+`gh auth login` is only for pushing, and only then over HTTPS.
 
-#### Tier 2 — make the live USB a host in this flake
+#### Two findings worth keeping, even though the work was dropped
 
-The Nix-native answer, and the one that fits the rest of the repo:
+**A partition of the booted stick cannot be formatted.** Creating one works;
+formatting it fails with `Cannot use device /dev/sda3 which is in use (already
+mapped or mounted)`. Nothing holds the partition — no holders, no
+device-mapper entries, plain reads fine. The cause is that an isohybrid image
+puts its ISO9660 filesystem on the **raw device**, so `/proc/mounts` carries
+`/dev/sda /iso iso9660` for the *whole disk*. The kernel then refuses any
+exclusive (`O_EXCL`) open of a partition of that disk, and `cryptsetup` needs
+`O_EXCL`. **No flag overrides it** — it is the kernel's claim model, not a
+safety check. `sfdisk --append` is unaffected, which is why one half succeeds
+and the other cannot. Anything like this has to be done from a machine not
+booted off the stick, or from a `copytoram` boot (this ISO supports it).
 
-```nix
-nixosConfigurations.live = nixpkgs.lib.nixosSystem {
-  modules = [
-    "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-gnome.nix"
-    ./hosts/live      # tools, sshd + the pubkeys, git identity, bootstrap on PATH
-  ];
-};
-```
-
-`nix build .#live-iso`, write it once. Every boot then has git, gh,
-claude-code and the whole Phase 0 tool set already in the store — no
-downloads — the repo baked in via `isoImage.contents` for offline recovery,
-and **sshd with the keys already in `modules/home/default.nix`**, so the
-machine can be driven from the Mac rather than typed at.
-
-**Build it on `desk` after Phase 2, not on the live USB.** Not because the live
-USB lacks memory, but because of where its store lives:
-
-```
-/nix/store = overlay   lower: squashfs on the stick (ro)
-                       upper: /nix/.rw-store — tmpfs      ← RAM, and swap is 0
-```
-
-Every byte Nix writes lands in RAM. An ISO build means a multi-GB closure plus
-a ~3–4 GB output, all into tmpfs. That is removable — `swapon` a file on the
-bulk drive, which Phase 2 wipes anyway — but on `desk` there is a real root
-filesystem and the problem does not arise.
-
-#### Tier 3 — an encrypted persistence partition
-
-For the three things a public repo cannot carry: `~/.claude`, an SSH deploy key
-for pushes, and the NetworkManager connection holding the Wi-Fi PSK. The stick
-has room — the ISO uses 3.6 GB of 29.3 GiB, leaving **25.7 GB unpartitioned**.
-
-**LUKS, not plain.** It would hold a GitHub push credential and a Claude
-session token on a stick that lives in a drawer.
-
-**The hazard is the partition table, not the space.** `sfdisk -l /dev/sda`
-reports the isohybrid layout:
+**There is now a spare 25.7 GiB partition on the live USB** — `/dev/sda3`,
+start 7596032, created before the above was understood. It is **unformatted
+and harmless**, and the stick boots fine with it there: verified afterwards
+that the `iso9660` signature, the `EFIBOOT` vfat, `/iso` and the squashfs were
+all intact, and that `sda1` still reads `start=0` with its boot flag. Left in
+place rather than removed, because removing it means another partition-table
+write for no gain. If a future session wonders what it is, that is what it is.
+The original table, should it ever need rebuilding:
 
 ```
-/dev/sda1  Boot  Start 0  End 7594751  Id 00  Empty
+label: dos
+label-id: 0x9fb6382f
+/dev/sda1 : start=0,   size=7594752, type=0,  bootable
+/dev/sda2 : start=284, size=6144,    type=ef
 ```
 
-Partition 1 starts at **sector 0**, overlapping the MBR itself. Tools that
-normalise a partition table will "fix" that, and the fix breaks bootability.
-So: **`sfdisk --append` only**, which adds an entry without rewriting the
-existing ones, then `partx -a` rather than a full re-read of a device that is
-currently mounted. A second stick avoids the risk entirely and costs nothing.
-
-One more interaction worth knowing: `cryptsetup luksFormat` defaults to
-argon2id, which sizes its memory cost against available RAM. On a live USB
-running anything large — a `stressapptest` pass, say — cap it with
-`--pbkdf-memory` or wait, or it will either fail or evict what is running.
-
-##### Tier 3 cannot be finished from the stick it is on
-
-**Found the hard way, 2026-09-24.** The partition gets created fine. The
-format then fails:
-
-```
-Cannot use device /dev/sda3 which is in use (already mapped or mounted).
-```
-
-Nothing holds `sda3` — it has no holders, no device-mapper entries, and plain
-reads work. The cause is one line in `/proc/mounts`:
-
-```
-/dev/sda /iso iso9660 ro,...
-```
-
-An isohybrid image puts its ISO9660 filesystem on the **raw device**, so the
-*whole disk* is what gets mounted, not a partition of it. The kernel then
-refuses any exclusive (`O_EXCL`) open of a partition of that disk, and
-`cryptsetup` needs `O_EXCL`. **No flag gets around this** — it is the kernel's
-claim model, not a safety check to override. `sfdisk --append` is unaffected,
-which is why the partition table half succeeds and the format half cannot.
-
-So the normal outcome of attempting Tier 3 from the live USB is a stick with a
-correctly-sized, unformatted partition on it — harmless, and ready to be
-finished from somewhere else. Three places qualify:
-
-| Where | Cost |
-| --- | --- |
-| **From `desk`, after [Phase 2](#phase-2--install-nixos-on-the-bulk-drive)**, with the stick plugged in as an ordinary data device | **Free.** No extra reboot, and it is the same sitting where [Tier 2](#tier-2--make-the-live-usb-a-host-in-this-flake)'s ISO is best built |
-| From a live USB booted with **`copytoram`** on the kernel command line — the image is copied into RAM and the device released, so `/iso` can be unmounted. This ISO supports it (the string is in both initrds) | A reboot, and ~3.6 GB of RAM held for the session |
-| Onto a **second stick** — boot this one, `DEV=/dev/sdb` for the other | A spare stick |
-
-`scripts/live-persist-setup.sh` now checks `/proc/mounts` for the parent
-device during pre-flight and refuses with this explanation, rather than
-failing after the passphrase has been typed twice.
 
 ### Booting the live USB again (Phase 2, or any re-measurement)
 
