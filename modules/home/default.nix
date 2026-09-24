@@ -32,6 +32,7 @@
     ./gpg.nix
     ./neovim.nix
     ./nix.nix
+    ./rebuild.nix
     ./ssh.nix
     ./ssh-authorized-keys.nix
     ./ssh-keygen.nix
