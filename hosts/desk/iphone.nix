@@ -49,6 +49,9 @@
   systemd.packages = [ pkgs.tether ];
   systemd.user.services.tetherd = {
     wantedBy = [ "default.target" ];
+    # btmgmt, which tetherd runs from PATH for a read-only `btmgmt info` —
+    # the secure-connections line in `tether --bt-status`.
+    path = [ pkgs.bluez ];
     # tetherd looks for BlueZ once, at start, and if org.bluez is not on the
     # system bus it disables messages and notifications until restarted. A
     # user unit cannot order itself after bluetooth.service, and on the first

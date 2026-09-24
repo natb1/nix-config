@@ -2704,7 +2704,14 @@ What to expect:
       of range and back, and the next one still arrives without re-pairing —
       *Tether landed 2026-09-24 (`hosts/desk/iphone.nix`); pairing is next*
 - [ ] Tether: `tether --bt-status` shows full mode; a reply sent from the
-      desktop arrives on the other end; a call on the phone stays on the phone
+      desktop arrives on the other end; a call on the phone stays on the phone —
+      *paired 2026-09-24: full mode, Bearer API confirmed, bond BR/EDR + LE;
+      `--bt-connection` shows Messages (MAP), Contacts (PBAP, 146 pulled) and
+      Notifications all yes, mirroring active. The MAP/PBAP "forbidden" errors
+      in the log were from before the phone's permissions were granted.
+      Calls (HFP) reads no — not a goal. `tetherd` also wanted `btmgmt` on
+      PATH for its secure-connections probe; added. Text round trip not yet
+      tried*
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
       suspend bar in [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
