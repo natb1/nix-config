@@ -56,10 +56,31 @@
   # in practice. `d` adjusts the owner of a directory that already exists.
   systemd.tmpfiles.rules = [ "d /srv/media 0755 n8 users -" ];
 
-  # Discovery: WS-Discovery for Windows. mDNS for Finder is already on —
-  # modules/nixos/default.nix enables avahi with publishing for every Linux
-  # host.
+  # Discovery: WS-Discovery for Windows, mDNS for Finder.
   services.samba-wsdd.enable = true;
+
+  # avahi itself is on for every Linux host (modules/nixos/default.nix), but
+  # smbd cannot register with it: nixpkgs builds samba with enableMDNS = false,
+  # so `multicast dns register = yes` is silently a no-op and only
+  # _workstation gets published (seen 2026-09-24). A static service file does
+  # the same job without rebuilding samba from source. _device-info is only
+  # the Finder sidebar icon.
+  services.avahi.extraServiceFiles.smb = ''
+    <?xml version="1.0" standalone='no'?>
+    <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+    <service-group>
+      <name replace-wildcards="yes">%h</name>
+      <service>
+        <type>_smb._tcp</type>
+        <port>445</port>
+      </service>
+      <service>
+        <type>_device-info._tcp</type>
+        <port>0</port>
+        <txt-record>model=RackMac</txt-record>
+      </service>
+    </service-group>
+  '';
 
   # tailscale0 is a trusted interface in modules/nixos/tailscale.nix, so the
   # tailnet needs no rule here. Wi-Fi and the guest's NAT bridge do.

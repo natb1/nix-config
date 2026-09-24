@@ -2761,6 +2761,16 @@ smbclient -L localhost -U n8              # lists `media`
 Then from the Mac: Finder → Go → Connect to Server → `smb://desk.local/media`,
 and again as `smb://desk/media` over the tailnet.
 
+*Verified 2026-09-24 after the switch:* `samba-smbd`, `samba-wsdd` and
+`srv-media.mount` active; `/srv/media` is `n8:users`; smbd on 445 and wsdd on
+5357; `btrfs-scrub@srv-media.timer` first fires 2026-10-01; the `media` share
+lists from both `localhost` and the Wi-Fi address; nothing failed. **One gap
+found:** nixpkgs builds samba with `enableMDNS = false`, so smbd never
+registered `_smb._tcp` with avahi and Finder's sidebar would not show `desk`
+(`multicast dns register = Yes` is a silent no-op). Fixed with a static
+`services.avahi.extraServiceFiles.smb`; `avahi-browse -rt _smb._tcp` confirms
+it after the next switch. `smb://desk.local/media` by address worked either way.
+
 ### Step 2 — backup, for when the bulk SSD dies
 
 **`restic` → a Hetzner Storage Box.**
