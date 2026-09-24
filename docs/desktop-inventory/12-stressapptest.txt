@@ -317,3 +317,12 @@ copying path '/nix/store/xpr738ai0b26f1z1gqz33nsbriwgi077-stressapptest-1.0.11' 
 2026/09/24-02:06:16(UTC) Log: Seconds remaining: 630
 2026/09/24-02:06:26(UTC) Log: Seconds remaining: 620
 2026/09/24-02:06:36(UTC) Log: Seconds remaining: 610
+2026/09/24-02:06:46(UTC) Log: Seconds remaining: 600
+2026/09/24-02:06:46(UTC) Log: Pausing worker threads in preparation for power spike (600 seconds remaining)
+2026/09/24-02:06:56(UTC) Log: Seconds remaining: 590
+2026/09/24-02:07:01(UTC) Log: Resuming worker threads to cause a power spike (585 seconds remaining)
+2026/09/24-02:07:06(UTC) Log: Seconds remaining: 580
+2026/09/24-02:07:16(UTC) Log: Seconds remaining: 570
+2026/09/24-02:07:26(UTC) Log: Seconds remaining: 560
+2026/09/24-02:07:36(UTC) Log: Seconds remaining: 550
+2026/09/24-02:07:46(UTC) Log: Seconds remaining: 540

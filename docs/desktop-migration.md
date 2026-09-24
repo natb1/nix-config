@@ -90,6 +90,96 @@ should read `nvme-SHPP41-1000GM_SJB8N565511208H0I` — the **1000**GM, 931.5 GB,
 the one carrying the old Linux install. Expect a TTY, not a desktop, on first
 boot.
 
+### Bootstrapping the live USB
+
+**The problem, stated honestly after doing it by hand twice:** a live USB keeps
+everything in RAM, so every boot repeats the same six steps, two of which are
+browser login flows. Three separate costs hide in that, and they have
+different fixes.
+
+| Cost | Fix |
+| --- | --- |
+| Getting the repo | **Already free.** This repo is public, so `git clone https://github.com/natb1/nix-config.git` needs no credentials at all. The `gh` device flow was never required for the clone — only to *push* |
+| Getting the tools | Tier 2: bake them into a custom ISO |
+| Credentials — Claude's session, a push credential, the Wi-Fi PSK | Tier 3: a persistence partition. None of these can live in a public repo |
+
+#### Tier 1 — `scripts/live-bootstrap.sh`
+
+One command replaces the six:
+
+```sh
+curl -sL https://raw.githubusercontent.com/natb1/nix-config/main/scripts/live-bootstrap.sh | sh
+```
+
+Clones anonymously, switches to the working branch, sets the git identity,
+picks up credentials from the persistence partition if one exists, and execs
+into a `nix-shell` carrying git/gh, the Phase 0 inventory set and claude-code.
+Idempotent — it fetches rather than re-clones — so it is also the "I rebooted
+again" command. Works on the stock ISO; no rewriting of the stick.
+
+Its one deliberate omission is `gh auth login`. Dropping that from the critical
+path is most of the point: the clone does not need it, and pushes go over SSH
+with a key from Tier 3 instead.
+
+#### Tier 2 — make the live USB a host in this flake
+
+The Nix-native answer, and the one that fits the rest of the repo:
+
+```nix
+nixosConfigurations.live = nixpkgs.lib.nixosSystem {
+  modules = [
+    "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-gnome.nix"
+    ./hosts/live      # tools, sshd + the pubkeys, git identity, bootstrap on PATH
+  ];
+};
+```
+
+`nix build .#live-iso`, write it once. Every boot then has git, gh,
+claude-code and the whole Phase 0 tool set already in the store — no
+downloads — the repo baked in via `isoImage.contents` for offline recovery,
+and **sshd with the keys already in `modules/home/default.nix`**, so the
+machine can be driven from the Mac rather than typed at.
+
+**Build it on `desk` after Phase 2, not on the live USB.** Not because the live
+USB lacks memory, but because of where its store lives:
+
+```
+/nix/store = overlay   lower: squashfs on the stick (ro)
+                       upper: /nix/.rw-store — tmpfs      ← RAM, and swap is 0
+```
+
+Every byte Nix writes lands in RAM. An ISO build means a multi-GB closure plus
+a ~3–4 GB output, all into tmpfs. That is removable — `swapon` a file on the
+bulk drive, which Phase 2 wipes anyway — but on `desk` there is a real root
+filesystem and the problem does not arise.
+
+#### Tier 3 — an encrypted persistence partition
+
+For the three things a public repo cannot carry: `~/.claude`, an SSH deploy key
+for pushes, and the NetworkManager connection holding the Wi-Fi PSK. The stick
+has room — the ISO uses 3.6 GB of 29.3 GiB, leaving **25.7 GB unpartitioned**.
+
+**LUKS, not plain.** It would hold a GitHub push credential and a Claude
+session token on a stick that lives in a drawer.
+
+**The hazard is the partition table, not the space.** `sfdisk -l /dev/sda`
+reports the isohybrid layout:
+
+```
+/dev/sda1  Boot  Start 0  End 7594751  Id 00  Empty
+```
+
+Partition 1 starts at **sector 0**, overlapping the MBR itself. Tools that
+normalise a partition table will "fix" that, and the fix breaks bootability.
+So: **`sfdisk --append` only**, which adds an entry without rewriting the
+existing ones, then `partx -a` rather than a full re-read of a device that is
+currently mounted. A second stick avoids the risk entirely and costs nothing.
+
+One more interaction worth knowing: `cryptsetup luksFormat` defaults to
+argon2id, which sizes its memory cost against available RAM. On a live USB
+running anything large — a `stressapptest` pass, say — cap it with
+`--pbkdf-memory` or wait, or it will either fail or evict what is running.
+
 ### Booting the live USB again (Phase 2, or any re-measurement)
 
 Everything lives in RAM, so all of this repeats on every boot.
@@ -100,24 +190,37 @@ Everything lives in RAM, so all of this repeats on every boot.
 2. **Network.** Wi-Fi is the only link (the Ethernet port is not cabled, and
    `enp13s0` confirms NO-CARRIER). Use the desktop's network menu or `nmtui`.
    `sudo` on the live user is passwordless.
-3. **Start a session on the live USB**, so it can run the commands itself:
+3. **Start a session on the live USB**, so it can run the commands itself.
+   One command — see [Bootstrapping the live USB](#bootstrapping-the-live-usb)
+   for what it does and why it does not log into `gh`:
    ```sh
-   nix-shell -p git gh
-   gh auth login                        # browser device flow
-   gh repo clone natb1/nix-config && cd nix-config
-   git switch claude/sweet-hypatia-03wf7f
-   git config user.name 'Nathan Buesgens'; git config user.email nathan@natb1.com
-   NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features 'nix-command flakes' \
-     run --impure nixpkgs#claude-code
+   curl -sL https://raw.githubusercontent.com/natb1/nix-config/main/scripts/live-bootstrap.sh | sh
    ```
    Then tell it what to continue with. If a session on the live USB is not
    wanted, run the commands by hand, save the output into the repo checkout,
    push, and continue from WSL.
-4. **Two things the live image lacks** that cost time to rediscover: there is
-   no `python3`, and `dmesg` needs `sudo` (`kernel.dmesg_restrict`). Inventory
-   tools come from
+
+   The long way round, if the script is unavailable or being debugged:
+   ```sh
+   nix-shell -p git gh
+   git clone https://github.com/natb1/nix-config.git && cd nix-config   # public: no auth
+   git switch claude/sweet-hypatia-03wf7f
+   git config user.name 'Nathan Buesgens'; git config user.email nathan@natb1.com
+   gh auth login                        # only if you intend to push over HTTPS
+   NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features 'nix-command flakes' \
+     run --impure nixpkgs#claude-code
+   ```
+4. **Things the live image lacks** that cost time to rediscover: there is no
+   `python3`, `dmesg` needs `sudo` (`kernel.dmesg_restrict`), and there is no
+   clipboard tool, so `gh`'s device flow cannot copy its own code. `sudo` is
+   passwordless. Inventory tools come from
    `nix-shell -p pciutils usbutils hwloc fio smartmontools dmidecode iw lm_sensors nvme-cli stressapptest`;
    `lspci`, `lsusb`, `smartctl` and `nvme` are already on `PATH`.
+5. **Never put backticks in a `git commit -m` message here.** Obvious in
+   hindsight, wasted a couple of minutes on 2026-09-24: the shell runs them as
+   command substitution, and a message quoting `` `gh auth login` `` *ran*
+   `gh auth login`, which blocked on a device-code prompt. Use `git commit -F`
+   with a heredoc for anything with backticks in it.
 
 Cloud sessions can still evaluate the flake: install Nix from
 `releases.nixos.org`'s tarball (single-user, with `build-users-group =` in
