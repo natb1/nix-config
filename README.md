@@ -154,6 +154,17 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   (`modules/home/default.nix`).
 - The Windows-side WezTerm GUI install, and the `G:` Google Drive volume that
   `hosts/wsl/mounts.nix` mounts — both depend on Windows-side software running.
+- `desk`'s Google Drive credentials, which `hosts/desk/gdrive.nix` mounts at
+  `/mnt/g`. Two pieces, and each is useless without the other:
+  `~/.config/rclone/rclone.conf` (mode 600, **encrypted**: the `gdrive`
+  remote, its OAuth client, and a refresh token with full access to Drive),
+  and its random password, which lives in gnome-keyring under
+  `service=rclone`. Neither is backed up, on purpose: both can be recreated
+  in a minute, and a copy elsewhere would only be a second place to leak the
+  token from. The OAuth client comes from Google Cloud project
+  `nix-config-509614`. To recreate, follow the comment at the top of
+  `hosts/desk/gdrive.nix`; if only the token has expired,
+  `rclone config reconnect gdrive:`.
 
 ## Naming
 

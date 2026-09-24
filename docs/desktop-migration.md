@@ -2238,6 +2238,16 @@ condition, not failed. After that, a broken remote fails it visibly.
       Platform → Audience → Publish app). A personal app needs no
       verification for that, only the "unverified app" click-through. If it
       has already expired, `rclone config reconnect gdrive:` fixes it.
+- [x] **`rclone.conf` encrypted, password in gnome-keyring** — *2026-09-24.*
+      The refresh token gives full access to Drive, and this host has no disk
+      encryption and no screen lock, so, like Chrome's passwords, it sits
+      behind the keyring. A random 43-character password is stored under
+      `service=rclone`, and the unit and interactive shells get it through
+      `RCLONE_PASSWORD_COMMAND` (`secret-tool lookup`). The unit now starts
+      with the graphical session, because a locked keyring can only be
+      unlocked through its prompt. Verified: rclone reads Drive with the
+      command and refuses the config without it. Recorded on the README's
+      unmanaged-state list; deliberately not backed up
       The original task, for reference: rclone
       warns on every call that the remote uses its *shared* Google Drive
       client ID, which "is being retired and will stop working during 2026".
@@ -3998,7 +4008,8 @@ Only after Phase 8 passes.
       install and the `G:` volume are gone; new entries are the Microsoft
       account the digital license hangs off (no product key — see
       [Secrets](#secrets)), everything on Windows' own drive, rclone
-      credentials, the Wi-Fi PSK, the Samba password database (`smbpasswd`),
+      credentials (*already listed, 2026-09-24: the encrypted `rclone.conf`
+      and its keyring password*), the Wi-Fi PSK, the Samba password database (`smbpasswd`),
       `/etc/restic/{media.password,id_ed25519}`, the Secure Boot keys in
       `/var/lib/sbctl` (backed up off-machine — [Phase 2b](#phase-2b--restore-secure-boot)),
       and the guest's TPM and firmware state —
