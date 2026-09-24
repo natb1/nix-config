@@ -1,0 +1,60 @@
+## lsblk
+NAME          SIZE FSTYPE   LABEL                        PARTLABEL                    MODEL         SERIAL
+loop0         3.5G squashfs                                                                         
+sda          29.3G iso9660  nixos-graphical-26.05-x86_64                              USB           B0000492
+├─sda1        3.6G iso9660  nixos-graphical-26.05-x86_64                                            
+└─sda2          3M vfat     EFIBOOT                                                                 
+nvme1n1       1.8T                                                                    SHPP41-2000GM ADC8N56931060986L
+├─nvme1n1p1    16M                                       Microsoft reserved partition               
+├─nvme1n1p2   1.8T ntfs                                  Basic data partition                       
+├─nvme1n1p3   300M vfat     SYSTEM                       EFI system partition                       
+└─nvme1n1p4   909M ntfs                                                                             
+nvme0n1     931.5G                                                                    SHPP41-1000GM SJB8N565511208H0I
+├─nvme0n1p1  1001M vfat     boot                                                                    
+├─nvme0n1p2  31.3G ext4     root                         root                                       
+├─nvme0n1p3 244.1G ext4     home                         home                                       
+├─nvme0n1p4   585G ext4                                                                             
+├─nvme0n1p6  38.9G btrfs    fedora_localhost-live                                                   
+└─nvme0n1p7  31.3G ext4                                                                             
+
+## /dev/disk/by-id
+total 0
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 nvme-eui.ace42e00262f25332ee4ac0000000001 -> ../../nvme0n1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e00262f25332ee4ac0000000001-part1 -> ../../nvme0n1p1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e00262f25332ee4ac0000000001-part2 -> ../../nvme0n1p2
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e00262f25332ee4ac0000000001-part3 -> ../../nvme0n1p3
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e00262f25332ee4ac0000000001-part4 -> ../../nvme0n1p4
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e00262f25332ee4ac0000000001-part6 -> ../../nvme0n1p6
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e00262f25332ee4ac0000000001-part7 -> ../../nvme0n1p7
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 nvme-eui.ace42e0035d6e1892ee4ac0000000001 -> ../../nvme1n1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e0035d6e1892ee4ac0000000001-part1 -> ../../nvme1n1p1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e0035d6e1892ee4ac0000000001-part2 -> ../../nvme1n1p2
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e0035d6e1892ee4ac0000000001-part3 -> ../../nvme1n1p3
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-eui.ace42e0035d6e1892ee4ac0000000001-part4 -> ../../nvme1n1p4
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I -> ../../nvme0n1
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I_1 -> ../../nvme0n1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I_1-part1 -> ../../nvme0n1p1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I_1-part2 -> ../../nvme0n1p2
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I_1-part3 -> ../../nvme0n1p3
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I_1-part4 -> ../../nvme0n1p4
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I_1-part6 -> ../../nvme0n1p6
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I_1-part7 -> ../../nvme0n1p7
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I-part1 -> ../../nvme0n1p1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I-part2 -> ../../nvme0n1p2
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I-part3 -> ../../nvme0n1p3
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I-part4 -> ../../nvme0n1p4
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I-part6 -> ../../nvme0n1p6
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-1000GM_SJB8N565511208H0I-part7 -> ../../nvme0n1p7
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L -> ../../nvme1n1
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L_1 -> ../../nvme1n1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L_1-part1 -> ../../nvme1n1p1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L_1-part2 -> ../../nvme1n1p2
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L_1-part3 -> ../../nvme1n1p3
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L_1-part4 -> ../../nvme1n1p4
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L-part1 -> ../../nvme1n1p1
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L-part2 -> ../../nvme1n1p2
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L-part3 -> ../../nvme1n1p3
+lrwxrwxrwx 1 root root 15 Sep 24 00:54 nvme-SHPP41-2000GM_ADC8N56931060986L-part4 -> ../../nvme1n1p4
+lrwxrwxrwx 1 root root  9 Sep 24 00:54 usb-ASolid_USB_B0000492-0:0 -> ../../sda
+lrwxrwxrwx 1 root root 10 Sep 24 00:54 usb-ASolid_USB_B0000492-0:0-part1 -> ../../sda1
+lrwxrwxrwx 1 root root 10 Sep 24 00:54 usb-ASolid_USB_B0000492-0:0-part2 -> ../../sda2

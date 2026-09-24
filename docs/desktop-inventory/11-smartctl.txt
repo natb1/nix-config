@@ -1,0 +1,140 @@
+########## /dev/nvme0n1
+smartctl 7.5 (build date Jan  1 1980) [x86_64-linux-6.18.53] (local build)
+Copyright (C) 2002-25, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Model Number:                       SHPP41-1000GM
+Serial Number:                      SJB8N565511208H0I
+Firmware Version:                   51060A20
+PCI Vendor/Subsystem ID:            0x1c5c
+IEEE OUI Identifier:                0xace42e
+Controller ID:                      0
+NVMe Version:                       1.4
+Number of Namespaces:               1
+Namespace 1 Size/Capacity:          1,000,204,886,016 [1.00 TB]
+Namespace 1 Formatted LBA Size:     512
+Namespace 1 IEEE EUI-64:            ace42e 00262f2533
+Local Time is:                      Thu Sep 24 01:14:51 2026 UTC
+Firmware Updates (0x16):            3 Slots, no Reset required
+Optional Admin Commands (0x0017):   Security Format Frmw_DL Self_Test
+Optional NVM Commands (0x00df):     Comp Wr_Unc DS_Mngmt Wr_Zero Sav/Sel_Feat Timestmp Verify
+Log Page Attributes (0x1e):         Cmd_Eff_Lg Ext_Get_Lg Telmtry_Lg Pers_Ev_Lg
+Maximum Data Transfer Size:         64 Pages
+Warning  Comp. Temp. Threshold:     86 Celsius
+Critical Comp. Temp. Threshold:     87 Celsius
+
+Supported Power States
+St Op     Max   Active     Idle   RL RT WL WT  Ent_Lat  Ex_Lat
+ 0 +     7.50W       -        -    0  0  0  0        5     305
+ 1 +   3.9000W       -        -    1  1  1  1       30     330
+ 2 +   1.5000W       -        -    2  2  2  2      100     400
+ 3 -   0.0500W       -        -    3  3  3  3      500    1500
+ 4 -   0.0050W       -        -    4  4  4  4     1000    9000
+
+Supported LBA Sizes (NSID 0x1)
+Id Fmt  Data  Metadt  Rel_Perf
+ 0 +     512       0         0
+ 1 -    4096       0         0
+
+=== START OF SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED
+
+SMART/Health Information (NVMe Log 0x02, NSID 0xffffffff)
+Critical Warning:                   0x00
+Temperature:                        55 Celsius
+Available Spare:                    100%
+Available Spare Threshold:          10%
+Percentage Used:                    1%
+Data Units Read:                    13,068,336 [6.69 TB]
+Data Units Written:                 28,147,229 [14.4 TB]
+Host Read Commands:                 99,362,253
+Host Write Commands:                557,993,247
+Controller Busy Time:               27,661
+Power Cycles:                       3,259
+Power On Hours:                     12,670
+Unsafe Shutdowns:                   63
+Media and Data Integrity Errors:    0
+Error Information Log Entries:      0
+Warning  Comp. Temperature Time:    0
+Critical Comp. Temperature Time:    0
+Temperature Sensor 1:               49 Celsius
+Temperature Sensor 2:               54 Celsius
+
+Error Information (NVMe Log 0x01, 16 of 256 entries)
+No Errors Logged
+
+Self-test Log (NVMe Log 0x06, NSID 0xffffffff)
+Self-test status: No self-test in progress
+No Self-tests Logged
+
+
+########## /dev/nvme1n1
+smartctl 7.5 (build date Jan  1 1980) [x86_64-linux-6.18.53] (local build)
+Copyright (C) 2002-25, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Model Number:                       SHPP41-2000GM
+Serial Number:                      ADC8N56931060986L
+Firmware Version:                   51060A20
+PCI Vendor/Subsystem ID:            0x1c5c
+IEEE OUI Identifier:                0xace42e
+Controller ID:                      0
+NVMe Version:                       1.4
+Number of Namespaces:               1
+Namespace 1 Size/Capacity:          2,000,398,934,016 [2.00 TB]
+Namespace 1 Formatted LBA Size:     512
+Namespace 1 IEEE EUI-64:            ace42e 0035d6e189
+Local Time is:                      Thu Sep 24 01:14:51 2026 UTC
+Firmware Updates (0x16):            3 Slots, no Reset required
+Optional Admin Commands (0x0017):   Security Format Frmw_DL Self_Test
+Optional NVM Commands (0x00df):     Comp Wr_Unc DS_Mngmt Wr_Zero Sav/Sel_Feat Timestmp Verify
+Log Page Attributes (0x1e):         Cmd_Eff_Lg Ext_Get_Lg Telmtry_Lg Pers_Ev_Lg
+Maximum Data Transfer Size:         64 Pages
+Warning  Comp. Temp. Threshold:     86 Celsius
+Critical Comp. Temp. Threshold:     87 Celsius
+
+Supported Power States
+St Op     Max   Active     Idle   RL RT WL WT  Ent_Lat  Ex_Lat
+ 0 +     7.50W       -        -    0  0  0  0        5     305
+ 1 +   3.9000W       -        -    1  1  1  1       30     330
+ 2 +   1.5000W       -        -    2  2  2  2      100     400
+ 3 -   0.0500W       -        -    3  3  3  3      500    1500
+ 4 -   0.0050W       -        -    4  4  4  4     1000    9000
+
+Supported LBA Sizes (NSID 0x1)
+Id Fmt  Data  Metadt  Rel_Perf
+ 0 +     512       0         0
+ 1 -    4096       0         0
+
+=== START OF SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED
+
+SMART/Health Information (NVMe Log 0x02, NSID 0xffffffff)
+Critical Warning:                   0x00
+Temperature:                        51 Celsius
+Available Spare:                    100%
+Available Spare Threshold:          10%
+Percentage Used:                    1%
+Data Units Read:                    73,272,590 [37.5 TB]
+Data Units Written:                 54,299,832 [27.8 TB]
+Host Read Commands:                 1,785,751,744
+Host Write Commands:                727,919,805
+Controller Busy Time:               3,872
+Power Cycles:                       266,892
+Power On Hours:                     9,352
+Unsafe Shutdowns:                   264,034
+Media and Data Integrity Errors:    0
+Error Information Log Entries:      0
+Warning  Comp. Temperature Time:    0
+Critical Comp. Temperature Time:    0
+Temperature Sensor 1:               45 Celsius
+Temperature Sensor 2:               49 Celsius
+
+Error Information (NVMe Log 0x01, 16 of 256 entries)
+No Errors Logged
+
+Self-test Log (NVMe Log 0x06, NSID 0xffffffff)
+Self-test status: No self-test in progress
+No Self-tests Logged
+
+

@@ -1,0 +1,22 @@
+03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 23 [Radeon RX 6600/6600 XT/6600M] [1002:73ff] (rev c1)
+	Subsystem: ASRock Incorporation Device [1849:5216]
+	Kernel driver in use: amdgpu
+	Kernel modules: amdgpu
+03:00.1 Audio device [0403]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 21/23 HDMI/DP Audio Controller [1002:ab28]
+	Subsystem: Advanced Micro Devices, Inc. [AMD/ATI] Navi 21/23 HDMI/DP Audio Controller [1002:ab28]
+	Kernel driver in use: snd_hda_intel
+	Kernel modules: snd_hda_intel
+--
+12:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Raphael [1002:164e] (rev c7)
+	Subsystem: Gigabyte Technology Co., Ltd Device [1458:d000]
+	Kernel driver in use: amdgpu
+	Kernel modules: amdgpu
+12:00.1 Audio device [0403]: Advanced Micro Devices, Inc. [AMD/ATI] Radeon High Definition Audio Controller [1002:1640]
+	Subsystem: Advanced Micro Devices, Inc. [AMD/ATI] Radeon High Definition Audio Controller [1002:1640]
+	Kernel driver in use: snd_hda_intel
+	Kernel modules: snd_hda_intel
+--
+12:00.6 Audio device [0403]: Advanced Micro Devices, Inc. [AMD] Ryzen HD Audio Controller [1022:15e3]
+	DeviceName: Realtek ALC1220
+	Subsystem: Gigabyte Technology Co., Ltd Device [1458:a0c3]
+	Kernel driver in use: snd_hda_intel
