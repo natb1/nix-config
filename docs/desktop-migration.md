@@ -2769,7 +2769,20 @@ found:** nixpkgs builds samba with `enableMDNS = false`, so smbd never
 registered `_smb._tcp` with avahi and Finder's sidebar would not show `desk`
 (`multicast dns register = Yes` is a silent no-op). Fixed with a static
 `services.avahi.extraServiceFiles.smb`; `avahi-browse -rt _smb._tcp` confirms
-it after the next switch. `smb://desk.local/media` by address worked either way.
+it after the next switch — *confirmed 2026-09-24:* `desk` publishes
+`_smb._tcp` on 445 over Wi-Fi (IPv4 and IPv6).
+
+- [ ] **`hosts allow` does not cover IPv6.** Its entries are all IPv4, and
+      `hosts deny = 0.0.0.0/0` matches only IPv4, so an IPv6 client is let
+      through: `smbclient -L` against the Wi-Fi's global `2607:…` address
+      lists shares. The wlp14s0 firewall rule opens 445 on IPv6 too. What
+      stands in the way today is the gateway (if it drops unsolicited inbound
+      IPv6, unverified) and the Samba password. The tempting fix — allow only
+      `::1 fe80::/10 fd7a:115c:a1e0::/48` (link-local plus the tailnet) — may
+      lock the Mac out if Finder reaches `desk.local` over the global
+      address, whose prefix is ISP-assigned and changes. Decide after the Mac
+      test shows which address it uses (`smbutil statshares -a` on the Mac,
+      or `smbstatus` here)
 
 ### Step 2 — backup, for when the bulk SSD dies
 
