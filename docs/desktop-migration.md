@@ -3286,7 +3286,12 @@ following the media share's tailnet-only decision:
   `::ffff:a.b.c.d`, which CUPS does not match against IPv4 `Allow` ranges:
   the tailnet's IPv4 got **403** while its IPv6 and localhost got 200, so the
   Mac's printer probe failed and *Use* offered no AirPrint. 403s are not
-  logged at the default level, so the journal showed nothing.
+  logged at the default level, so the journal showed nothing. The switch
+  alone did not fix it: cupsd kept running on the inherited socket until
+  `sudo systemctl restart cups`. After that it holds its own `0.0.0.0:631` and
+  `[::]:631`, tailnet IPv4 returns 200, and `ipptool get-printer-attributes`
+  over IPv4 shows `urf-supported` and `application/pdf` — what macOS needs to
+  offer *AirPrint*.
 - **`cups-browsed` off.** It defaults on wherever avahi is, discovers *other*
   machines' printers, and is the daemon the 2024 CUPS RCE chain ran through.
 
