@@ -3222,8 +3222,8 @@ also holding the other four sources un-de-duplicated.
       `/srv/media/takeout/takeout-20260924T222726Z-1-001.tgz`, 8.16 GB,
       `tar -tzf` clean; 3,012 entries, of which 1,306 are originals under
       `Photos from 2012` … `2022` (no `-edited`, no `.json`) plus 124 under
-      `Archive`. The library ends in 2022 — worth confirming against
-      photos.google.com that nothing newer is missing*
+      `Archive`. The library ends in 2022, and photos.google.com agrees —
+      confirmed the same evening, so the archive is the whole library*
 - [ ] [BIOS tuning](#bios-tuning) validated — memory proven stable before
       irreplaceable data passes through it
 - [ ] Ingest from Drive, Photos, GCS, the MacBook and Flickr into separate
