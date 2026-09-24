@@ -29,6 +29,24 @@
 # If this still makes you nervous: put persistence on a SECOND USB stick
 # instead. Same script, DEV=/dev/sdb, and zero risk to the thing that boots.
 # --------------------------------------------------------------------------
+#
+# THE ORIGINAL TABLE, recorded here because it is the only durable copy.
+#
+# The script backs sector 0 up with dd before writing, but on a live USB that
+# backup lands in tmpfs and is gone on the next boot — i.e. gone exactly when
+# a broken stick would make you want it. These four lines are enough to
+# rebuild the table from scratch, and they live in git:
+#
+#   label: dos
+#   label-id: 0x9fb6382f
+#   /dev/sda1 : start=0,   size=7594752, type=0,  bootable
+#   /dev/sda2 : start=284, size=6144,    type=ef
+#
+# Measured 2026-09-24 from the 32 GB ASolid stick carrying
+# nixos-graphical-26.05.10478.1bc55b9def81-x86_64-linux.iso. Restore with
+# `sfdisk /dev/sda` fed that text — note that rewriting the whole table is
+# only correct as a REPAIR, never as a way to add a partition.
+# --------------------------------------------------------------------------
 
 set -euo pipefail
 
@@ -129,9 +147,19 @@ say "  sudo dd if=$MBR_BAK of=$DEV bs=512 count=1"
 # device and offers to wipe it; wiping it would destroy the live image. The
 # default for an existing label is not to wipe, but this is far too important
 # to leave to a default.
-say "Appending partition (sfdisk --append --wipe never)"
+# --no-reread, because we are booted from this disk. sfdisk's "checking that
+# no-one is using this disk" test fails outright on the live stick, and the
+# check it is really guarding is the BLKRRPART re-read afterwards, which
+# cannot succeed while /iso is mounted. We do not want that re-read: `partx -a`
+# below tells the kernel about exactly the one new partition instead.
+#
+# Deliberately NOT --force. sfdisk suggests it, and it would work, but it
+# overrules *all* checks including the overlap tests that are the main thing
+# standing between this script and the ISO. --no-reread disables one check;
+# --force disables the ones worth keeping.
+say "Appending partition (sfdisk --append --wipe never --no-reread)"
 printf 'start=%s, size=%s, type=83\n' "$START" "$SIZE" \
-  | sfdisk --append --wipe never "$DEV"
+  | sfdisk --append --wipe never --no-reread "$DEV"
 
 say "Telling the kernel about it (partx -a; the device is mounted, so no full re-read)"
 partx -a "$DEV" || true
