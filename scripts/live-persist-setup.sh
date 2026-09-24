@@ -126,9 +126,28 @@ sfdisk -d "$DEV" | awk -v ns="$START" -v ne="$((START + SIZE - 1))" '
 
 say "Last used sector: $LAST_END"
 say "New partition:    start $START, size $SIZE sectors ($((SIZE / 2 / 1024 / 1024)) GiB)"
-echo
-read -rp "Append this partition to $DEV? [type YES] " ok
-[ "$ok" = "YES" ] || die "aborted"
+
+# Resumable. If a partition already starts exactly where we were going to put
+# one, a previous run got this far; reuse it rather than appending a second.
+# Without this, re-running after a failure in a later step (LUKS, mkfs) eats
+# another 25 GiB and leaves an orphan.
+EXISTING=$(sfdisk -d "$DEV" | awk -v want="$START" '
+  /^\/dev\// {
+    line = $0
+    if (match(line, /start=[ \t]*[0-9]+/)) { s = substr(line, RSTART, RLENGTH); sub(/start=[ \t]*/, "", s) }
+    if (s + 0 == want + 0) { print $1; exit }
+  }')
+
+if [ -n "$EXISTING" ]; then
+  say "A partition already starts at $START ($EXISTING) — a previous run made it."
+  say "Skipping the append and continuing from there."
+  SKIP_APPEND=1
+else
+  SKIP_APPEND=0
+  echo
+  read -rp "Append this partition to $DEV? [type YES] " ok
+  [ "$ok" = "YES" ] || die "aborted"
+fi
 
 # ------------------------------------------------------------- the partition
 # Back up sector 0 before touching it. This is what makes the whole operation
@@ -157,12 +176,18 @@ say "  sudo dd if=$MBR_BAK of=$DEV bs=512 count=1"
 # overrules *all* checks including the overlap tests that are the main thing
 # standing between this script and the ISO. --no-reread disables one check;
 # --force disables the ones worth keeping.
-say "Appending partition (sfdisk --append --wipe never --no-reread)"
-printf 'start=%s, size=%s, type=83\n' "$START" "$SIZE" \
-  | sfdisk --append --wipe never --no-reread "$DEV"
+if [ "$SKIP_APPEND" = "0" ]; then
+  say "Appending partition (sfdisk --append --wipe never --no-reread)"
+  printf 'start=%s, size=%s, type=83\n' "$START" "$SIZE" \
+    | sfdisk --append --wipe never --no-reread "$DEV"
 
-say "Telling the kernel about it (partx -a; the device is mounted, so no full re-read)"
-partx -a "$DEV" || true
+  # partx -a re-scans the whole device and complains about the partitions it
+  # already knows ("error adding partitions 1-2"). That is noise: the only one
+  # it needs to add is the new one, and it does. The check that matters is
+  # /sys/block/*/start below, not partx's exit status.
+  say "Telling the kernel about it (partx -a; the device is mounted, so no full re-read)"
+  partx -a "$DEV" || true
+fi
 
 # Identify what we just made by MATCHING ITS START SECTOR, not by taking the
 # highest-numbered or last-listed partition. Those are assumptions about
@@ -179,8 +204,15 @@ PART=$(sfdisk -d "$DEV" | awk -v want="$START" '
 
 # Last check before the first destructive command: whatever we are about to
 # format must be empty. If it has a filesystem, we got the wrong partition.
-if blkid "$PART" >/dev/null 2>&1; then
-  die "$PART already holds a filesystem ($(blkid -o value -s TYPE "$PART")). Refusing to format."
+#
+# Test the TYPE field, NOT blkid's exit status. blkid exits 0 whenever it can
+# say anything at all about a device, and for a freshly created partition it
+# reports PARTUUID from the partition table — no filesystem involved. Using
+# the exit status made this abort on a blank partition, with an empty
+# filesystem type in the message, which is what gave the bug away.
+EXISTING_FS=$(blkid -o value -s TYPE "$PART" 2>/dev/null || true)
+if [ -n "$EXISTING_FS" ]; then
+  die "$PART already holds a '$EXISTING_FS' filesystem. Refusing to format."
 fi
 
 say "New partition is $PART (start $START) — empty, as expected"
