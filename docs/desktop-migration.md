@@ -46,7 +46,8 @@ read 1 on the iGPU, so niri's GPU pinning is enabled and is now confirmed at
 runtime; the first switch passed after the `~/.config` ownership fix; `desk` is
 on the tailnet; and after two fatal session bugs were fixed, autologin brings
 niri up on tty1 on its own. 1 and 4 remain, and both need you at the physical
-console — they are the only things standing between here and Phase 3.** Work
+console — they are the last verification left before
+[Phase 2b](#phase-2b--restore-secure-boot), the next block of real work.** Work
 through this list on the first boot into `desk`. Items 1–4 are verification and
 take minutes; 5 onward is ordinary work.
 
