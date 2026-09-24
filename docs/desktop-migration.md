@@ -2220,8 +2220,22 @@ ls /mnt/g && touch /mnt/g/.desk-write-test && rm /mnt/g/.desk-write-test
 Until `~/.config/rclone/rclone.conf` exists the unit is *skipped* by a
 condition, not failed. After that, a broken remote fails it visibly.
 
-- [ ] `rclone config` done; `systemctl --user status gdrive` active; `/mnt/g`
-      lists Drive and takes a write
+- [x] `rclone config` done; `systemctl --user status gdrive` active; `/mnt/g`
+      lists Drive and takes a write — *2026-09-24. Configured with
+      `rclone config create gdrive drive scope=drive`, which does the OAuth
+      without the menus. The mount lists Drive; a file written under `/mnt/g`
+      showed up on `rclone lsf gdrive:` within seconds, and deleting it removed
+      it there too*
+- [ ] **Own OAuth client ID for the `gdrive` remote — do this soon.** rclone
+      warns on every call that the remote uses its *shared* Google Drive
+      client ID, which "is being retired and will stop working during 2026".
+      When it goes, the mount stops. Create a client ID in a Google Cloud
+      project ([rclone's steps](https://rclone.org/drive/#making-your-own-client-id)),
+      then `rclone config update gdrive client_id=… client_secret=…` and
+      re-authorise with `rclone config reconnect gdrive:`. The ID and secret
+      are credentials: `rclone.conf` only, never this repo. The same remote
+      feeds [Media storage Step 3](#step-3--bring-the-media-in), so fix it
+      before that pull starts
 
 Do **not** put Drive in the Windows VM. The VM is not always on, and making a
 file sync depend on a guest being booted rebuilds the exact coupling this
