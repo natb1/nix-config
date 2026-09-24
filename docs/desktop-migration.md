@@ -45,9 +45,9 @@ up. Items 2, 3, 5–8 are done and 9 is mostly done (2026-09-24): `boot_vga`
 read 1 on the iGPU, so niri's GPU pinning is enabled and is now confirmed at
 runtime; the first switch passed after the `~/.config` ownership fix; `desk` is
 on the tailnet; and after two fatal session bugs were fixed, autologin brings
-niri up on tty1 on its own. 1 and 4 remain, and both need you at the physical
-console — they are the last verification left before
-[Phase 2b](#phase-2b--restore-secure-boot), the next block of real work.** Work
+niri up on tty1 on its own. POST is visible (item 1). Only 4 remains —
+Windows bare metal, deferred — and it gates
+[Phase 2b](#phase-2b--restore-secure-boot).** Work
 through this list on the first boot into `desk`. Items 1–4 are verification and
 take minutes; 5 onward is ordinary work.
 
@@ -62,11 +62,13 @@ gate; the first is guarded twice over.
 The install was seeded ([Seed the install](#seed-the-install-before-rebooting)),
 so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
 
-- [ ] **1. Did it boot, and was POST visible?** Two separate questions. If the
+- [x] **1. Did it boot, and was POST visible?** Two separate questions. If the
       screen was blank until the desktop appeared, the firmware is still
       posting on the dGPU and you were blind at the systemd-boot menu — which
       is how you choose Windows. Not fatal, and the fix is either firmware
       (*Initial Display Output: IGD*) or moving the cable back to the card.
+      *2026-09-24: yes to both. POST and the systemd-boot menu are visible on
+      the iGPU output, and the menu lists Windows.*
 - [x] **2. `cat /sys/bus/pci/devices/0000:12:00.0/boot_vga`** → must be **`1`**
       (and `0000:03:00.0` must be `0`). **This is the Phase 4 gate.** The cable
       was moved on 2026-09-24 and the DRM connectors confirmed it, but
@@ -102,7 +104,12 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
 - [x] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
       `sudo systemctl restart NetworkManager`, and check the profile at
       `/etc/NetworkManager/system-connections/` is 600 and root-owned.
-- [ ] **4. Windows still boots bare metal, and is still activated.** Pick it
+- [ ] **4. Windows still boots bare metal, and is still activated.** *Deferred
+      2026-09-24 — not yet tried. The systemd-boot menu does list a Windows
+      entry, which says the entry exists, not that it boots. Do this before
+      Phase 2b: enrolling Secure Boot keys is the step most able to break
+      Windows' boot, and a failure after it is only diagnosable if this
+      baseline passed first.* Pick it
       from the firmware boot menu (**F12**). *Settings → System → Activation*
       should still say the digital licence is linked. Nothing touched its
       drive, so this is confirming rather than fixing — but confirm it before
@@ -223,25 +230,21 @@ niri's own log confirms it renders on `renderD129` and *ignores* the dGPU's
 node entirely. That is the property Phase 4 depends on: `03:00.0` is free to go
 to a guest without ending the session.
 
-**Next: finish [the after-the-reboot list](#after-the-reboot--do-these-in-order)
-— items 1 and 4, then the hands-on half of 9.** All three need you at the
-physical console, and none takes long:
+**POST is visible** on the iGPU (item 1, 2026-09-24), so the systemd-boot menu
+— where Windows is chosen — can be seen.
 
-1. **Was POST visible?** (item 1) You have just rebooted, so you know the
-   answer: was the screen live at the systemd-boot menu, or black until the
-   desktop appeared? If it was black, the firmware is still posting on the dGPU
-   and you are blind at the menu where Windows is chosen. Record the answer in
-   item 1 either way — it is the difference between Phase 2b/Phase 4 being
-   routine and being done half-blind.
-2. **Windows still boots bare metal and is still activated** (item 4). **F12**
-   at POST. Nothing touched its drive, so this confirms rather than fixes, but
-   it is the last point where a surprise is cheap. Check the clocks agree
-   afterwards.
-3. **The hands-on half of item 9** — `Mod+Return`, `Mod+D`, `notify-send`, the
-   waybar tray, Chrome's password-store flag.
+**Next:**
 
-**Then Phase 2b — [Restore Secure Boot](#phase-2b--restore-secure-boot)** is the
-next block of real work, and Phase 4 is unblocked whenever you want it.
+1. **Windows bare metal** (item 4), when convenient: pick it from the menu,
+   confirm activation, check the clocks agree afterwards. Deferred, not
+   skipped — it gates Phase 2b.
+2. **The hands-on half of item 9** — `Mod+Return`, `Mod+D`, a notification
+   drawing on screen, the waybar tray, Chrome's password-store flag.
+3. **[Phase 2b](#phase-2b--restore-secure-boot) waits** on its own rule — NixOS
+   booting reliably *for a few days* first (it first booted 2026-09-24) — and
+   on item 4. Nothing in [Phase 3](#phase-3--re-home-what-wsl-was-doing)
+   depends on 2b, so Phase 3 is the work to do while it soaks. 2b must still
+   land before Phase 4.
 
 ### Bootstrapping the live USB
 
