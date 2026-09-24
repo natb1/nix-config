@@ -180,6 +180,43 @@ argon2id, which sizes its memory cost against available RAM. On a live USB
 running anything large — a `stressapptest` pass, say — cap it with
 `--pbkdf-memory` or wait, or it will either fail or evict what is running.
 
+##### Tier 3 cannot be finished from the stick it is on
+
+**Found the hard way, 2026-09-24.** The partition gets created fine. The
+format then fails:
+
+```
+Cannot use device /dev/sda3 which is in use (already mapped or mounted).
+```
+
+Nothing holds `sda3` — it has no holders, no device-mapper entries, and plain
+reads work. The cause is one line in `/proc/mounts`:
+
+```
+/dev/sda /iso iso9660 ro,...
+```
+
+An isohybrid image puts its ISO9660 filesystem on the **raw device**, so the
+*whole disk* is what gets mounted, not a partition of it. The kernel then
+refuses any exclusive (`O_EXCL`) open of a partition of that disk, and
+`cryptsetup` needs `O_EXCL`. **No flag gets around this** — it is the kernel's
+claim model, not a safety check to override. `sfdisk --append` is unaffected,
+which is why the partition table half succeeds and the format half cannot.
+
+So the normal outcome of attempting Tier 3 from the live USB is a stick with a
+correctly-sized, unformatted partition on it — harmless, and ready to be
+finished from somewhere else. Three places qualify:
+
+| Where | Cost |
+| --- | --- |
+| **From `desk`, after [Phase 2](#phase-2--install-nixos-on-the-bulk-drive)**, with the stick plugged in as an ordinary data device | **Free.** No extra reboot, and it is the same sitting where [Tier 2](#tier-2--make-the-live-usb-a-host-in-this-flake)'s ISO is best built |
+| From a live USB booted with **`copytoram`** on the kernel command line — the image is copied into RAM and the device released, so `/iso` can be unmounted. This ISO supports it (the string is in both initrds) | A reboot, and ~3.6 GB of RAM held for the session |
+| Onto a **second stick** — boot this one, `DEV=/dev/sdb` for the other | A spare stick |
+
+`scripts/live-persist-setup.sh` now checks `/proc/mounts` for the parent
+device during pre-flight and refuses with this explanation, rather than
+failing after the passphrase has been typed twice.
+
 ### Booting the live USB again (Phase 2, or any re-measurement)
 
 Everything lives in RAM, so all of this repeats on every boot.

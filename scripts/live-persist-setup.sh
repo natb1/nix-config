@@ -78,6 +78,37 @@ if [ ! "$(lsblk -ndo TRAN "$DEV")" = "usb" ]; then
   die "$DEV is not a USB device. Refusing. (Both NVMe drives are off limits.)"
 fi
 
+# You cannot format a partition of the disk you booted from. Checked here, up
+# front, because the failure otherwise lands after you have typed a LUKS
+# passphrase twice:
+#
+#   Cannot use device /dev/sda3 which is in use (already mapped or mounted).
+#
+# The cause is not sda3 — nothing holds it, and plain reads work. It is that
+# an isohybrid image puts its ISO9660 filesystem on the RAW DEVICE, so
+# /proc/mounts carries "/dev/sda /iso iso9660" for the WHOLE DISK. The kernel
+# then refuses any exclusive (O_EXCL) open of a partition of that disk, and
+# cryptsetup needs O_EXCL. No cryptsetup flag gets around it; it is the
+# kernel's claim model, not a safety check to be overridden.
+#
+# Appending the partition still works while mounted (sfdisk --no-reread), so
+# a half-finished stick with an unformatted partition is the normal outcome of
+# trying this from the live USB. Finish it from somewhere else:
+#
+#   * From the installed host, with the stick plugged in as a data device.
+#     Free, and the obvious moment is just after Phase 2.
+#   * From a live USB booted with `copytoram` on the kernel command line. The
+#     image is copied into RAM and the device released, so /iso can be
+#     unmounted. This ISO supports it.
+#   * Onto a SECOND stick: boot off this one, DEV=/dev/sdb for the other.
+if grep -q "^$DEV " /proc/mounts; then
+  die "$DEV itself is mounted ($(awk -v d="$DEV" '$1==d {print $2}' /proc/mounts)).
+  A partition of the booted disk cannot be formatted — see the comment above
+  this check. The partition table work is safe to do from here; the LUKS and
+  mkfs steps are not. Finish from the installed host, from a copytoram boot,
+  or use a second stick with DEV=/dev/sdb."
+fi
+
 # ------------------------------------------------------- resume, or start?
 # THIS CHECK MUST COME FIRST, before any free-space arithmetic. A stock NixOS
 # ISO has exactly two partitions, so a third one is necessarily ours from an
