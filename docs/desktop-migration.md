@@ -2785,6 +2785,15 @@ the guest's `virbr0`, and `hosts allow` is exactly loopback,
 `smb://desk/media`) and bare-metal Windows without Tailscale — install
 Tailscale there rather than reopening Wi-Fi.
 
+*Verified after the switch, 2026-09-24:* new connections from the Wi-Fi's
+IPv4 and global IPv6 addresses are refused by smbd
+(`NT_STATUS_INVALID_NETWORK_RESPONSE`; the IPv6 one listed shares before),
+while `100.121.40.74` and localhost list `media`. Those probes come in over
+loopback, so they test `hosts allow`/`deny` alone; separately, `iptables -S`
+and `ip6tables -S` show no `wlp14s0` rule — only `tailscale0` (trusted) and
+`virbr0` (445, 5357, 3702). Two layers, each closed on its own. Open SMB
+sessions survived the switch: smbd reloads config without dropping them.
+
 **iPhone:** the Tailscale app, signed into the same tailnet, then Files →
 ⋯ → *Connect to Server* → `smb://100.121.40.74/media` (desk's tailnet
 address; `smb://desk/media` works too if MagicDNS resolves in Files), as
