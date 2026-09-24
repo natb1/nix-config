@@ -3210,7 +3210,13 @@ also holding the other four sources un-de-duplicated.
       Google One quota first: the archive lands in Drive against the same
       quota Photos already fills, so it needs free space equal to the library.
       No headroom → download-link delivery, pulled inside the window, or a
-      month of extra storage
+      month of extra storage — *2026-09-24: ready, delivered as an emailed
+      download link instead (7.6 GB, so one `.tgz` part), which **expires
+      2026-10-01**. The link needs a signed-in Google session, so it is a
+      browser download into `/srv/media/takeout/`, then `tar -tzf` on the
+      part. Downloading is not gated on BIOS tuning (a corrupt copy fails the
+      gzip CRC and Google still holds the original); unpacking and the
+      sidecar merge are*
 - [ ] [BIOS tuning](#bios-tuning) validated — memory proven stable before
       irreplaceable data passes through it
 - [ ] Ingest from Drive, Photos, GCS, the MacBook and Flickr into separate
