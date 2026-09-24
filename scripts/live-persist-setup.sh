@@ -113,10 +113,25 @@ read -rp "Append this partition to $DEV? [type YES] " ok
 [ "$ok" = "YES" ] || die "aborted"
 
 # ------------------------------------------------------------- the partition
+# Back up sector 0 before touching it. This is what makes the whole operation
+# reversible: the only write to existing data is 16 bytes of partition-table
+# entry, and `dd if=$MBR_BAK of=$DEV bs=512 count=1` puts it back exactly.
+MBR_BAK="${MBR_BAK:-/tmp/$(basename "$DEV")-mbr-$(date +%Y%m%d%H%M%S).bak}"
+dd if="$DEV" of="$MBR_BAK" bs=512 count=1 status=none
+say "Sector 0 backed up to $MBR_BAK — restore with:"
+say "  sudo dd if=$MBR_BAK of=$DEV bs=512 count=1"
+
 # --append is the whole safety argument: it adds an entry and leaves the
-# sector-0 partition 1 exactly as it is.
-say "Appending partition (sfdisk --append)"
-printf 'start=%s, size=%s, type=83\n' "$START" "$SIZE" | sfdisk --append "$DEV"
+# sector-0 partition 1 exactly as it is. Verified with --no-act on
+# 2026-09-24: sda1 came back as "start 0, bootable" unchanged.
+#
+# --wipe never is NOT optional. sfdisk notices the iso9660 signature on the
+# device and offers to wipe it; wiping it would destroy the live image. The
+# default for an existing label is not to wipe, but this is far too important
+# to leave to a default.
+say "Appending partition (sfdisk --append --wipe never)"
+printf 'start=%s, size=%s, type=83\n' "$START" "$SIZE" \
+  | sfdisk --append --wipe never "$DEV"
 
 say "Telling the kernel about it (partx -a; the device is mounted, so no full re-read)"
 partx -a "$DEV" || true
