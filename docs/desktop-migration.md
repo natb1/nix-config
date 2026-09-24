@@ -79,29 +79,40 @@ plan gates it now — Phase 0 is the only go/no-go.
   `Confirm-SecureBootUEFI` → False, and Windows still boots from the 2 TB
   ESP (`Get-Partition | ? IsSystem` → disk 1, partition 3). SVM and the
   IOMMU are on: Windows lists DMA protection among its available security
-  properties, which needs the IOMMU. Memory runs at **JEDEC 4800** (EXPO
-  off) until BIOS tuning. The plan's *PME Event Wake Up* item turned out not
-  to exist on this board; see the corrected wake item in the
+  properties, which needs the IOMMU. The plan's *PME Event Wake Up* item
+  turned out not to exist on this board; see the corrected wake item in the
   [post-flash checklist](#firmware-update).
+- **Post-flash checklist closed** (2026-09-23) — confirmed in firmware setup:
+  Initial Display Output IGD, IOMMU Enabled (not Auto), ErP Disabled. Memory
+  stays at the **JEDEC 4800** default for now. The kit is XMP-only (no EXPO),
+  and [BIOS tuning](#bios-tuning) is deferred.
 
 ### Next, in order
 
-1. **Close out the post-flash checklist** — confirm, from firmware setup,
-   Initial Display Output = IGD, IOMMU = Enabled (not Auto), and ErP =
-   Disabled — see [Firmware update](#firmware-update). Fold it into the first
-   step-2 visit.
-2. **Tune the BIOS** — memory timings first, then the CPU — see
-   [BIOS tuning](#bios-tuning). After the flash, because it resets every
-   setting; **before step 6**, because a failed memory-training boot ends in a
-   CMOS clear, which would also wipe the Secure Boot keys Phase 2b enrolls.
-3. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
-   steps 1–2; can run any time.
-4. **Phase 0, Linux side** — live USB: IOMMU groups (**the go/no-go gate**),
+1. **Phase 0, Linux side** — live USB (NixOS 26.05 graphical, written over
+   the Q-Flash stick): IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
-   `nixos-generate-config`, interface names from `ip link`.
-5. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
-6. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
+   `nixos-generate-config`, interface names from `ip link`, and the fan
+   sensors ([Fan control](#fan-control)).
+2. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
+   step 1; can run any time.
+3. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
+4. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
+
+Independent of the list above, in firmware setup, any time:
+
+- **[Fan control](#fan-control)** — the fans run at or near full speed most of
+  the time. Firmware-only, and none of the tuning risk, so it need not wait.
+
+Later, unscheduled:
+
+- **[BIOS tuning](#bios-tuning)** — memory (the kit's XMP rating, then
+  timings), then the CPU, then fast boot. Deferred 2026-09-23: the JEDEC
+  defaults are the safe state, so nothing above waits on it. Done after
+  Phase 2b, a failed memory-training boot that ends in a CMOS clear also costs
+  a Secure Boot key re-enrolment — see
+  [Why the ordering matters](#why-the-ordering-matters-here).
 
 ### Decided 2026-09-21
 
@@ -197,7 +208,7 @@ the text was wrong about how the machine behaves.
 | dGPU's Linux PCI address | [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) | `<DGPU_ADDR>` — Windows reports bus 3, but Linux numbers buses independently; take it from `lspci -nn -d 1002:73ff` on the live USB |
 | Wake-on-WLAN on the MT7922 | [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) | `iw phy` on the live USB must list `WoWLAN support` with `wake up on magic packet`. If it does not, suspend is off before it is tried |
 | ancs4linux: pinned revision and hash | [iPhone notifications](#iphone-notifications-over-ancs) | Not in nixpkgs; packaged in this repo, pinned by rev and hash like every other out-of-tree artifact here |
-| Memory kit's DRAM IC | [BIOS tuning](#bios-tuning) | Kit: 2 × 16 GB Corsair Vengeance **`CMK32GX5M2D6000C36`** — rated EXPO DDR5-6000 CL36; running JEDEC 4800 after the flash. The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
+| Memory kit's DRAM IC | [BIOS tuning](#bios-tuning) | Kit: 2 × 16 GB Corsair Vengeance **`CMK32GX5M2D6000C36`** — **XMP only, no EXPO**: DDR5-6000 36-36-36-76 at 1.35 V; running JEDEC 4800 after the flash. The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
 
 ### Firmware update
 
@@ -251,9 +262,10 @@ A firmware update resets settings to defaults. Afterwards, re-check:
 - [x] Boot order — Windows Boot Manager on the **2 TB** drive first (until
       NixOS exists) — *2026-09-23: `Get-Partition | ? IsSystem` → disk 1,
       partition 3*
-- [ ] XMP/EXPO memory profile, if it was on before — *after the flash:
-      4800 MT/s, so off. Whether it was on under F9d went unrecorded; either
-      way it is [BIOS tuning](#bios-tuning)'s first step now* — and after
+- [x] XMP/EXPO memory profile, if it was on before — *after the flash:
+      4800 MT/s, so off, and left off (2026-09-23). Whether it was on under
+      F9d went unrecorded. It is [BIOS tuning](#bios-tuning)'s first step,
+      deferred* — and after
       [BIOS tuning](#bios-tuning), every setting in its table: reload the saved
       profile, then check it against the table, since a profile saved on one
       BIOS version is not guaranteed to load on the next
@@ -278,9 +290,12 @@ A firmware update resets settings to defaults. Afterwards, re-check:
 
 ### BIOS tuning
 
-**After the [firmware update](#firmware-update), before [Phase 2b](#phase-2b--restore-secure-boot),
-and validated before any media is ingested
-([Step 3](#step-3--bring-the-media-in)).** The firmware defaults run this
+**Deferred 2026-09-23 — later, unscheduled.** The machine runs the F43c
+defaults meanwhile, and those are the safe state: nothing in this plan waits
+on tuning. Whenever it happens, each change is validated before the machine
+runs with the media on board ([Step 3](#step-3--bring-the-media-in)). If it
+happens after [Phase 2b](#phase-2b--restore-secure-boot), see the key cost
+below. The firmware defaults run this
 machine safely and slowly: on AM5 that mostly means JEDEC memory (DDR5-4800,
 loose timings) and stock boost behaviour. Both are worth tuning on a box that
 spends its time compiling and gaming. The tuning itself is ordinary; what this
@@ -296,8 +311,13 @@ plan adds is *when*, *how it is proven*, and *where it is written down*.
 - **A failed memory-training boot ends in a CMOS clear**, and a CMOS clear
   resets the Secure Boot key databases to factory ([Risk 14](#risks-ranked)).
   Tuning before Phase 2b means the trial-and-error happens while there are no
-  keys to lose. Tuning *after* it means re-enrolling keys every time a timing
-  is one step too tight.
+  keys to lose. Tuning *after* it, now the likely order since tuning is
+  deferred, means re-enrolling keys every time a timing is one step too tight.
+  That costs a few minutes, and nothing is at risk. Windows still boots on
+  factory keys; for NixOS, turn Secure Boot off, boot, reset to Setup Mode,
+  `sbctl enroll-keys --microsoft`, and turn it back on
+  ([Recovery](#recovery-and-the-firmware-update-trap)). So batch the tuning
+  into a few sittings rather than spreading it out.
 - **The firmware update resets everything.** Tune once, on the firmware you
   will run, not on F9d.
 
@@ -309,15 +329,23 @@ two changes later cannot be attributed.
 1. **Baseline.** Record what the kit is and what it runs at now (the residual
    above). Run the validation set below at defaults, so a later failure has a
    known-good point to fall back to.
-2. **EXPO profile.** The kit's rated profile. On a 7600X the target is
-   DDR5-6000 with **FCLK 2000 MHz** and **UCLK = MEMCLK (1:1)** — check the
-   firmware did not drop UCLK to 1:2, which silently costs more than the EXPO
-   gain. Validate. For many kits this is where to stop, and that is fine.
-3. **Memory timings, only if EXPO validated cleanly.** In order of payoff for
+2. **The kit's rated profile — XMP, not EXPO.** `CMK32GX5M2D6000C36` carries
+   an XMP profile only: DDR5-6000, 36-36-36-76, 1.35 V. That is fine on this
+   board: Gigabyte's *Tweaker* → *XMP/EXPO Profile* reads either kind of SPD
+   profile, so select the kit's XMP profile there. If it is not offered, or
+   will not train, enter the same values by hand (DRAM frequency 6000;
+   tCL/tRCD/tRP/tRAS 36/36/36/76; DDR_VDD and DDR_VDDQ 1.35 V; everything else
+   Auto). An XMP profile is written for Intel memory controllers, so the
+   firmware picks the secondary timings, and those are loose. That is where
+   step 3's gains come from. On a 7600X the target is DDR5-6000 with
+   **FCLK 2000 MHz** and **UCLK = MEMCLK (1:1)** — check the firmware did not
+   drop UCLK to 1:2, which silently costs more than the profile gains.
+   Validate. For many kits this is where to stop, and that is fine.
+3. **Memory timings, only if the rated profile validated cleanly.** In order of payoff for
    DDR5 on AM5: **tRFC** (by far the largest, and very IC-dependent — Hynix
    A/M-die goes much lower than the profile), then **tREFI** raised (large gain,
    but temperature-sensitive — see below), then tRRD/tFAW/tWR, then primaries.
-   Leave voltages at the EXPO values unless a specific timing needs them; VSOC
+   Leave voltages at the rated values unless a specific timing needs them; VSOC
    stays **at or below 1.30 V** — AM5's hard limit, and the one setting in this
    list that can kill the CPU.
 4. **Memory Context Restore.** AM5 retrains memory on every boot unless this is
@@ -331,8 +359,27 @@ two changes later cannot be attributed.
    The payoff on a 7600X is lower temperatures and a little clock; the cost of
    getting it wrong is a compile that segfaults once a week. If the per-core
    test is too tedious, skip it: stock is a perfectly good answer here.
-6. **Fan curves** — last, because the tune changes the heat. On mini-ITX the
-   DIMMs sit in the GPU's exhaust; see temperature below.
+6. **Fan curves, re-checked** — the tune changes the heat. The curves
+   themselves are set earlier, in [Fan control](#fan-control); here they are
+   re-checked against the tuned machine's hot run. On mini-ITX the DIMMs sit
+   in the GPU's exhaust; see temperature below.
+7. **Fast Boot** — last of all, and only once NixOS is installed, because it
+   hides the USB devices every step above relies on. *Boot* → *Fast Boot*:
+   Disabled / Enabled / Ultra Fast. On AM5, Memory Context Restore (step 4)
+   is most of the boot-time win; Fast Boot trims device enumeration on top.
+   Use **Enabled, with *USB Support* = Full Initial — never Ultra Fast.**
+   Ultra Fast leaves USB off until the OS loads. That kills the keyboard at
+   the systemd-boot menu, which is how this machine chooses between NixOS and
+   Windows, and it stops the machine booting a USB stick. That rules out the
+   live USB, Q-Flash, and MemTest86+. Keep *NVMe Support* on (both drives
+   boot), and leave *SATA Support* alone (there are no SATA drives). Entering
+   setup without the keyboard at POST: `systemctl reboot --firmware-setup`
+   from NixOS, or *Settings* → *System* → *Recovery* → *Advanced startup* →
+   *UEFI Firmware Settings* from Windows. Verify: the systemd-boot menu takes
+   keys, F12 still lists a USB stick, and cold-boot time is measurably lower
+   (`systemd-analyze` reports the firmware time). Windows' own **Fast
+   Startup** is a different thing (a hibernated kernel) and stays off either
+   way: the NTFS is shared with the guest.
 
 Leave alone, and re-check after each change since some firmware menus move
 them: **SVM**, **IOMMU Enabled**, **Initial Display Output: IGD**, CSM off, and
@@ -378,15 +425,93 @@ BIOS settings are not declarative, so the record is the declaration:
 #### BIOS tuning checklist
 
 - [ ] Baseline recorded; validation set passes at defaults
-- [ ] EXPO on, FCLK 2000, UCLK = MEMCLK; validated
-- [ ] Timings tightened (or explicitly stopped at EXPO); VSOC ≤ 1.30 V; validated
+- [ ] XMP profile on (or its values by hand), FCLK 2000, UCLK = MEMCLK; validated
+- [ ] Timings tightened (or explicitly stopped at the rated profile); VSOC ≤ 1.30 V; validated
 - [ ] Memory Context Restore + Power Down Enable on; re-validated; cold boot
       is fast and warm reboots do not retrain
 - [ ] Curve Optimizer validated per-core (or explicitly skipped)
-- [ ] Fan curves set; hot run clean, DIMMs under ~55 °C
+- [ ] Fan curves re-checked; hot run clean, DIMMs under ~55 °C
+- [ ] Fast Boot Enabled (USB Full Initial); systemd-boot menu and F12 USB boot still work
 - [ ] SVM, IOMMU, IGD, Above 4G, CSM, ReBAR re-checked
 - [ ] `hosts/desk/bios.md` committed; profile saved to USB
-- [ ] **Before Phase 2b and before media Step 3**, all of the above done
+- [ ] Each step validated before it runs with the media on board; after
+      Phase 2b, Secure Boot keys re-enrolled if a CMOS clear dropped them
+
+### Fan control
+
+Added 2026-09-23: the fans run at or near full speed most of the time. On the
+F43c defaults that is a configuration problem until shown otherwise, and one
+that can be fixed any time. Nothing here carries the tuning risk above.
+
+**In the firmware, not in an OS.** This machine boots two operating systems,
+and a curve set in one runs only while that one is up: CoolerControl on NixOS
+does nothing for a bare-metal Windows session, and FanControl on Windows does
+nothing for NixOS. Smart Fan 6 runs on the board's Super I/O chip, under
+either OS, and even while a failed boot sits at the firmware. An OS-side
+controller is only worth adding for what the firmware cannot see (below).
+
+**Diagnose first** — *Smart Fan 6* (F6 in setup) shows every header's live
+RPM and the temperature driving it:
+
+1. **Which fan is loud.** CPU_FAN, SYS_FAN*n* and the pump/OPT header each
+   show an RPM. The RX 6600 XT's fans are on no header; the card controls
+   them itself, and so does the PSU. If every header reads slow and the noise
+   stays, it is one of those.
+2. **Control mode per header.** **PWM** for a 4-pin fan, **Voltage** for a
+   3-pin one. A 3-pin fan on a header in PWM mode gets full voltage and runs
+   flat out whatever the curve says. That is the commonest cause of "always
+   full speed". *Auto* usually detects it, but not always.
+3. **Fan Speed Control** — if a header says *Full Speed*, that is the answer.
+4. **The input temperature.** The CPU fan follows CPU. Case fans following
+   CPU too is the usual default, which is what makes them chase it.
+
+**Why a stock curve howls on a 7600X.** Zen 4 reports temperature in spikes:
+opening a browser tab takes it from 45 to 70 °C for a second. A curve that
+follows it exactly revs constantly. Raise **Temperature Interval** (the
+hysteresis: how far the temperature must move before the speed changes), and
+keep the curve flat up to ~60–65 °C. And the 7600X boosts until it reaches
+95 °C by design, so a curve that hits 100 % at 70 °C is at 100 % whenever
+anything compiles. A starting point, *Slope* mode, CPU input: ~30–40 % up to
+60 °C, ~70 % at 80 °C, 100 % at 90 °C. Case fans lower, with a larger
+interval. Leave *FAN Stop* off on the CPU fan.
+
+**Less heat beats any curve.** A mini-ITX cooler has little headroom. **Eco
+Mode** (65 W: PPT 142 W → 88 W, offered in the PBO / AMD Overclocking menus)
+costs a few percent of all-core throughput, meaning compiles, costs nothing
+measurable in games, and cuts load temperatures sharply. It is the biggest
+single lever on noise here. Curve Optimizer ([BIOS tuning](#bios-tuning)
+step 5) is the same lever at smaller scale. Try Eco Mode before settling on a
+louder curve.
+
+**What the firmware cannot see:**
+
+- **The DIMMs.** They sit in the GPU's exhaust, and BIOS tuning wants them
+  under ~55 °C. No header curve can follow the `spd5118` sensors. If the hot
+  run shows warm DIMMs, raise the case fans' floor, or add an OS-side curve
+  on NixOS (`programs.coolercontrol.enable`) for that fan alone.
+- **The dGPU while it is bound to vfio-pci with no guest running.** No driver
+  manages its fans then. Most cards fall back to a quiet firmware default,
+  but some sit at a fixed high speed until a driver loads. Check it in
+  [Phase 4](#phase-4--vfio-and-the-libvirt-host). If it is loud, that is a
+  host-side fix (let amdgpu hold it idle, as
+  [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) already allows),
+  not a firmware one.
+- **Linux visibility.** On the live USB (Phase 0), `sensors` should list the
+  fans. If it does not, the board's ITE Super I/O needs a newer `it87` than
+  mainline ships. That only matters if an OS-side curve is ever wanted.
+
+**Written down** with the rest: the curve points and each header's mode go in
+`hosts/desk/bios.md`, plus Smart Fan 6's own *Save Fan Profile* (F3) to USB,
+since the next firmware update resets them too.
+
+#### Fan control checklist
+
+- [ ] Loud source identified: which header, or the GPU / PSU
+- [ ] Each header's mode matches its fan (PWM for 4-pin, Voltage for 3-pin)
+- [ ] Curves set, Temperature Interval raised; quiet at idle and browsing
+- [ ] Eco Mode tried; kept or rejected on compile time vs noise
+- [ ] Recorded in `hosts/desk/bios.md`; fan profile saved to USB
+- [ ] Phase 0: fans visible in `sensors`; Phase 4: dGPU fan sane under vfio-pci
 
 ---
 
@@ -3202,7 +3327,7 @@ Only after Phase 8 passes.
     restic and Hetzner all preserve the damage faithfully. Ranked low because
     [BIOS tuning](#bios-tuning) validates before the media lands and the
     WHEA/MCE check in Phase 8 keeps watching; worth listing because it defeats
-    every other integrity mechanism in this plan. If in doubt, EXPO alone.
+    every other integrity mechanism in this plan. If in doubt, the rated profile alone, or none.
 17. **A lent dGPU that will not come back.** amdgpu hot-unbind under an open
     DRM node, or a niri that opened the card despite `ignore-drm-device`,
     leaves the card stuck on the host or oopses the kernel. `dgpu vm` refuses
