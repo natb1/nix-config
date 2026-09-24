@@ -165,6 +165,9 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   `nix-config-509614`. To recreate, follow the comment at the top of
   `hosts/desk/gdrive.nix`; if only the token has expired,
   `rclone config reconnect gdrive:`.
+- `desk`'s Samba password for n8, which the `media` share in
+  `hosts/desk/media.nix` checks. Samba keeps its own database, separate from
+  Unix accounts; set it with `sudo smbpasswd -a n8`.
 
 ## Naming
 

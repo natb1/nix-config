@@ -2231,13 +2231,11 @@ condition, not failed. After that, a broken remote fails it visibly.
       with `rclone config update gdrive client_id=… client_secret=…` and
       re-authorised with `rclone config reconnect gdrive: --auto-confirm`. The
       shared-client warning is gone, and a write and a delete through `/mnt/g`
-      both reached Drive again.* **One caveat to check:** if the project's
-      consent screen is external and its publishing status is still
-      **Testing**, Google expires the refresh token after **7 days** and the
-      mount dies with `invalid_grant`. Set it to *In production* (Google Auth
-      Platform → Audience → Publish app). A personal app needs no
-      verification for that, only the "unverified app" click-through. If it
-      has already expired, `rclone config reconnect gdrive:` fixes it.
+      both reached Drive again. The app is **published** (In production), so
+      the refresh token does not hit Testing mode's 7-day expiry, and the
+      downloaded `client_secret_*.json` has been deleted — `rclone.conf` is
+      the only copy of the secret outside Google Cloud.* If the token ever
+      does expire (`invalid_grant`), `rclone config reconnect gdrive:`.
 - [x] **`rclone.conf` encrypted, password in gnome-keyring** — *2026-09-24.*
       The refresh token gives full access to Drive, and this host has no disk
       encryption and no screen lock, so, like Chrome's passwords, it sits
@@ -2744,6 +2742,25 @@ from Unix accounts, so `smbpasswd -a n8` is hand-provisioned state. Add it to
 the README's "State this repo does not manage" list (Phase 9 already touches
 that list).
 
+*Landed 2026-09-24 as [`hosts/desk/media.nix`](../hosts/desk/media.nix)*, as
+above plus three things the draft missed: a tmpfiles rule handing `/srv/media`
+to n8 (disko created it `root:root`, and with `force user = n8` the share would
+have refused every write), `nmbd` and `winbindd` switched off (both default on;
+NetBIOS and domain membership serve nothing here), and a note that the one
+`autoScrub` entry covers `/srv/games` too, since both are subvolumes of one
+filesystem. The build is checked; the switch and the Samba password are yours:
+
+```sh
+sudo nixos-rebuild switch --flake ~/nix-config#desk
+sudo smbpasswd -a n8                      # its own password, not a Unix one
+systemctl status samba-smbd samba-wsdd    # both active
+stat -c '%U' /srv/media                   # n8
+smbclient -L localhost -U n8              # lists `media`
+```
+
+Then from the Mac: Finder → Go → Connect to Server → `smb://desk.local/media`,
+and again as `smb://desk/media` over the tailnet.
+
 ### Step 2 — backup, for when the bulk SSD dies
 
 **`restic` → a Hetzner Storage Box.**
@@ -2977,7 +2994,7 @@ also holding the other four sources un-de-duplicated.
 #### Checklist
 
 - [ ] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled
-- [ ] `hosts/desk/media.nix`, imported from `hosts/desk/default.nix`
+- [x] `hosts/desk/media.nix`, imported from `hosts/desk/default.nix` — *2026-09-24*
 - [ ] `smbpasswd -a n8`; mount from the Mac over both LAN and tailnet
 - [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
       ed25519 key for it

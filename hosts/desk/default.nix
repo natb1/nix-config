@@ -19,6 +19,7 @@
     ./disko.nix
     ./desktop.nix
     ./gdrive.nix
+    ./media.nix
   ];
 
   # Simultaneously the Tailscale node name, what avahi publishes (desk.local),
