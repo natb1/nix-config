@@ -52,9 +52,16 @@
         direnvSkipTestsOverlay
       ];
 
-      # claude-code is unfree; allow it by name rather than blanket-allowing.
+      # Unfree packages, allowed by name rather than blanket-allowing.
+      # google-chrome is desk's browser (hosts/desk/desktop.nix). Naming it
+      # here rather than in that host is not a choice: nixpkgs.config is set
+      # once by the `home` helper below, so a second definition in a host
+      # module conflicts with it instead of extending it.
       unfreePredicate =
-        pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "claude-code" ];
+        pkg: builtins.elem (nixpkgs.lib.getName pkg) [
+          "claude-code"
+          "google-chrome"
+        ];
 
       # Home-manager wiring shared by every host. hostPlatform in-module is the
       # current idiom (the legacy `system` arg to nixosSystem/darwinSystem is

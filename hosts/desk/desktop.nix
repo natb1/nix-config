@@ -50,7 +50,7 @@
     enableDefaultPackages = true;
     packages = with pkgs; [
       noto-fonts
-      noto-fonts-emoji
+      noto-fonts-color-emoji
       nerd-fonts.jetbrains-mono
     ];
   };
@@ -72,8 +72,8 @@
     })
   ];
 
-  # google-chrome is unfree. The flake's allowUnfreePredicate is by-name
-  # rather than blanket, so it has to be named here too.
-  nixpkgs.config.allowUnfreePredicate =
-    pkg: builtins.elem (pkgs.lib.getName pkg) [ "claude-code" "google-chrome" ];
+  # google-chrome is unfree, and it is allowed by name in flake.nix's
+  # unfreePredicate — not here. nixpkgs.config is defined once, by the flake's
+  # `home` helper, so a second definition in this file conflicts with that one
+  # rather than adding to it.
 }
