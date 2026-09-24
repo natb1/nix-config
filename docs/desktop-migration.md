@@ -3281,6 +3281,12 @@ following the media share's tailnet-only decision:
 - **No advertisement:** `browsing = false`. mDNS would announce on Wi-Fi a
   queue Wi-Fi cannot reach. The Mac adds the queue by address; the guest's
   is declared by address already.
+- **Not socket-activated** (`startWhenNeeded = false`, fixed after the first
+  switch). systemd's single dual-stack socket delivers IPv4 clients as
+  `::ffff:a.b.c.d`, which CUPS does not match against IPv4 `Allow` ranges:
+  the tailnet's IPv4 got **403** while its IPv6 and localhost got 200, so the
+  Mac's printer probe failed and *Use* offered no AirPrint. 403s are not
+  logged at the default level, so the journal showed nothing.
 - **`cups-browsed` off.** It defaults on wherever avahi is, discovers *other*
   machines' printers, and is the daemon the 2024 CUPS RCE chain ran through.
 

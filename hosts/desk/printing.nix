@@ -28,6 +28,13 @@
     # firewall below, the split media.nix uses and for the same reason:
     # tailscale0 and virbr0 both appear after boot.
     listenAddresses = [ "*:631" ];
+    # Not socket-activated. systemd hands cupsd one dual-stack [::]:631
+    # socket, IPv4 clients arrive on it as ::ffff:a.b.c.d, and CUPS does not
+    # match those against the IPv4 ranges below: every tailnet-IPv4 and
+    # virbr0 client got 403 while IPv6 and localhost worked (2026-09-24). On
+    # its own, cupsd binds IPv4 and IPv6 separately. The cost is a daemon
+    # that stays up rather than starting on first use.
+    startWhenNeeded = false;
     # CUPS writes `Order allow,deny` around these — anything unlisted is
     # denied, IPv6 included, unlike Samba's `hosts allow`. Loopback, libvirt's
     # default NAT network, and the tailnet's IPv4 and IPv6 ranges.
