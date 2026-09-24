@@ -2567,6 +2567,21 @@ What Tether costs, all machine-wide:
   (Tether's recommendation), so a bonded phone does **not** route its calls,
   music or system sounds to `desk`. Headphones are unaffected.
 
+Two surprises from the first switch, both fixed in `iphone.nix`:
+
+- **`tetherd` lost a race with `bluetoothd`.** It checks for `org.bluez` once at
+  start. The switch restarted `bluetoothd` a second later, and Tether sat with
+  *"Bluetooth unavailable; messages and notifications are disabled"* until
+  restarted. A user unit cannot order after a system one, so `tetherd` now
+  waits (up to 60 s) for the bus name before starting.
+- **Its Wi-Fi half has no off switch.** `programs.tether.wifi` only configures
+  avahi and the firewall; `tetherd` itself always listens on `[::]:5134` and
+  publishes `_tether._tcp` over mDNS. It was reachable from the whole tailnet
+  (tailscale0 is trusted) and advertised on Wi-Fi. Now fenced from outside:
+  avahi's `publish.userServices` is off on `desk` (only Tether used it —
+  `desk.local` still resolves), and 5134 is dropped on `tailscale0` ahead of
+  the trusted-interface accept.
+
 **Pairing, once, after the switch:** `tether --bt-status` should report full
 mode (MAP + PBAP + ANCS). Then pair from the GTK app (`tether-gtk`, Devices) or
 `tether --bt-pair <phone address>`; on the iPhone, allow **Show Notifications**
