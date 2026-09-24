@@ -43,15 +43,26 @@
   services.blueman.enable = true;
   home-manager.users.n8.services.blueman-applet.enable = true;
 
-  # tetherd, the daemon. The package ships the user unit; this enables it for
-  # every login. It is deliberately not tied to the graphical session —
-  # it runs without Wayland and only skips clipboard sync.
+  # tetherd, the daemon. The package ships the user unit; this starts it with
+  # the graphical session. Upstream deliberately leaves it untied (it runs
+  # headless, only skipping clipboard sync), but on desk it has to launch a
+  # GUI: a notification's Reply button runs `tether-gtk --thread=…`, which
+  # inherits tetherd's environment. Started from default.target, tetherd can
+  # come up before niri exports WAYLAND_DISPLAY, and Reply would then have no
+  # display to open on.
   systemd.packages = [ pkgs.tether ];
   systemd.user.services.tetherd = {
-    wantedBy = [ "default.target" ];
-    # btmgmt, which tetherd runs from PATH for a read-only `btmgmt info` —
-    # the secure-connections line in `tether --bt-status`.
-    path = [ pkgs.bluez ];
+    wantedBy = [ "graphical-session.target" ];
+    after = [ "graphical-session.target" ];
+    partOf = [ "graphical-session.target" ];
+    # Both are run from PATH, which a user unit keeps minimal: tether-gtk for
+    # Reply (it failed with "No such file or directory", 2026-09-24), and
+    # btmgmt for a read-only `btmgmt info` — the secure-connections line in
+    # `tether --bt-status`.
+    path = [
+      pkgs.tether
+      pkgs.bluez
+    ];
     # tetherd looks for BlueZ once, at start, and if org.bluez is not on the
     # system bus it disables messages and notifications until restarted. A
     # user unit cannot order itself after bluetooth.service, and on the first

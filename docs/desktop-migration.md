@@ -2710,8 +2710,12 @@ What to expect:
       Notifications all yes, mirroring active. The MAP/PBAP "forbidden" errors
       in the log were from before the phone's permissions were granted.
       Calls (HFP) reads no — not a goal. `tetherd` also wanted `btmgmt` on
-      PATH for its secure-connections probe; added. Text round trip not yet
-      tried*
+      PATH for its secure-connections probe; added. A text arrived in swaync;
+      its **Reply** button only dismissed it, because Reply runs
+      `tether-gtk --thread=…` from tetherd's PATH, where it was missing. Fixed,
+      and tetherd now starts with graphical-session.target so what it launches
+      has WAYLAND_DISPLAY. Reply opens the thread in tether-gtk, not an inline
+      field in swaync*
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
       suspend bar in [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
