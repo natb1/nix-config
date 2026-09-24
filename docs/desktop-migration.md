@@ -57,6 +57,16 @@ with **NixOS 26.05 graphical**
 before the write; the stick is read back and hash-checked against it
 before the first boot.
 
+A cloud session on 2026-09-24 did the one Phase 1 step that needs no hardware
+data (the tailscale watcher move, as its own commit). Everything below needs
+the machine itself, so it runs from the live USB. Cloud sessions can still
+evaluate the flake: install Nix from `releases.nixos.org`'s tarball
+(single-user, with `build-users-group =` in `/etc/nix/nix.conf`), then pass
+`--override-input <name> 'git+https://github.com/<owner>/<repo>?rev=<locked rev>&shallow=1'`
+for each locked input, because the proxy serves git clones of GitHub but not
+tarballs. In that container `nix flake check`'s wezterm tests fail the same
+way with or without the change, so compare against the base commit there.
+
 **Next: boot the live USB and do [Phase 0](#phase-0--inventory-and-the-gono-go-gate)'s
 Linux pass.** Nothing is written to either drive in this step.
 
@@ -164,6 +174,10 @@ Linux pass.** Nothing is written to either drive in this step.
   [BIOS tuning](#bios-tuning) is deferred. The validation set runs before
   media [Step 3](#step-3--bring-the-media-in); until then an unexplained
   crash means dropping back to JEDEC first.
+
+- **Phase 1 prep: the WSL-only tailscale watcher moved into `hosts/wsl/`**
+  (2026-09-24) — [the one landmine](#the-one-landmine-in-the-shared-modules).
+  A pure refactor: `.#wsl` evaluates to the same derivation before and after.
 
 ### Next, in order
 
@@ -1115,9 +1129,11 @@ never match and would sit idle, but it is still a WSL artifact shipped to a
 non-WSL host, and it is a live footgun if anything ever names an interface
 `eth0`.
 
-- [ ] Move `tailscaled-wsl-rebind` out of `modules/nixos/tailscale.nix` and into
+- [x] Move `tailscaled-wsl-rebind` out of `modules/nixos/tailscale.nix` and into
       `hosts/wsl/`. Do it as its own commit, before adding `desk`, so the diff
-      that adds the host is not also a refactor.
+      that adds the host is not also a refactor. — *done 2026-09-24:
+      `hosts/wsl/tailscale-rebind.nix`; `.#wsl`'s toplevel drvPath is
+      unchanged by the move*
 
 Also host-scoped, because the groups do not exist on WSL and a nonexistent
 group is, at best, a warning on every switch there. The same file carries the
