@@ -31,8 +31,9 @@ sudo nixos-rebuild switch --flake .#desk
 ```
 
 The checkout is `~/nix-config`, not `~/natb1/nix-config`: it was seeded there by
-[`scripts/seed-install.sh`](scripts/seed-install.sh). Replaces `wsl` as the
-desktop's Linux; see [`docs/desktop-migration.md`](docs/desktop-migration.md).
+[`scripts/seed-install.sh`](scripts/seed-install.sh). The desktop's Linux
+when NixOS is booted; `wsl` stays for Linux on bare-metal Windows. See
+[`docs/desktop-migration.md`](docs/desktop-migration.md).
 
 ### `mba` — Apple Silicon MacBook Air
 
@@ -134,8 +135,8 @@ The concrete case — the desktop gaining a native NixOS install on its second
 SSD, with its existing Windows kept intact on the first and startable as a
 GPU-passthrough guest — is planned in
 [docs/desktop-migration.md](docs/desktop-migration.md). That plan supersedes this
-paragraph once it starts; it also retires several WSL-only modules, so read it
-before extending anything under `hosts/wsl/`.
+paragraph once it starts. The WSL host stays alongside it, for Linux on
+bare-metal Windows.
 
 Note that it brings **Windows configuration into this repo** under
 `hosts/desk/windows/`: a Nix-rendered WinGet DSC profile that Windows pulls and

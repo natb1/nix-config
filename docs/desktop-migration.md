@@ -160,12 +160,11 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
         all, so item 9's own audio/notification check and the
         [Desktop session checklist](#desktop-session-checklist) line that names
         it were unrunnable. `libnotify` is now in the package list.
-      - *Still needs your hands, at the console:* `Mod+Return`, `Mod+D`
-        (fuzzel), that a notification actually **draws on screen** (delivery is
-        proven, the pop-up is not), the waybar tray showing
-        Steam/Tailscale/blueman, and Chrome's `chrome://version` showing the
-        flag. These are the
-        [Desktop session checklist](#desktop-session-checklist) items.
+      - *At the console, 2026-09-24:* `Mod+Return` and `Mod+D` (fuzzel)
+        work, notifications draw on screen and stay in the `Mod+N` panel,
+        tty2 is a plain shell, and `chrome://version` shows the flag. **Only
+        the waybar tray (Steam/Tailscale/blueman) is still unchecked** — see
+        the [Desktop session checklist](#desktop-session-checklist).
 
 Known-good state at install time, for comparison if something looks wrong:
 
@@ -241,8 +240,10 @@ to a guest without ending the session.
 2. **The hands-on half of item 9** — `Mod+Return`, `Mod+D`, a notification
    drawing on screen, the waybar tray, Chrome's password-store flag.
 3. **[Phase 2b](#phase-2b--restore-secure-boot) waits** on its own rule — NixOS
-   booting reliably *for a few days* first (it first booted 2026-09-24) — and
-   on item 4. Nothing in [Phase 3](#phase-3--re-home-what-wsl-was-doing)
+   booting reliably *for a few days* first (it first booted 2026-09-24) — on
+   item 4, and **on [BIOS memory tuning](#bios-tuning)** (decided 2026-09-24),
+   so that a failed memory-training boot ending in a CMOS clear cannot also
+   cost a Secure Boot key re-enrolment. Nothing in [Phase 3](#phase-3--re-home-what-wsl-was-doing)
    depends on 2b, so Phase 3 is the work to do while it soaks. 2b must still
    land before Phase 4.
 
@@ -474,9 +475,9 @@ Independent of the list above, in firmware setup, any time:
 Later, unscheduled:
 
 - **[BIOS tuning](#bios-tuning)** — validate the XMP profile already on,
-  then timings, then the CPU, then fast boot. Deferred 2026-09-23: nothing
-  above waits on it, **except that the XMP profile is validated before media
-  Step 3**. Done after
+  then timings, then the CPU, then fast boot. Deferred 2026-09-23. **Its
+  memory steps now gate [Phase 2b](#phase-2b--restore-secure-boot)**
+  (2026-09-24), and the XMP validation gates media Step 3. Done after
   Phase 2b, a failed memory-training boot that ends in a CMOS clear also costs
   a Secure Boot key re-enrolment — see
   [Why the ordering matters](#why-the-ordering-matters-here).
@@ -897,7 +898,26 @@ louder curve.
   host-side fix (let amdgpu hold it idle, as
   [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) already allows),
   not a firmware one.
-- **Linux visibility — answered 2026-09-24, and the answer is no.** `sensors`
+- **Linux visibility — corrected later on 2026-09-24: yes, with the
+  out-of-tree driver.** The paragraph below was right about *mainline* and
+  wrong about the conclusion. nixpkgs packages the fork as
+  `boot.kernelPackages.it87`; built for 6.18.52 and loaded by hand, it reports
+  *Found IT8689E chip at 0xa40, revision 2*, then refuses with *ACPI: OSL:
+  Resource conflict* — the firmware's own ACPI claims the same ports. With
+  `ignore_resource_conflict=1` it binds and reads five PWM channels (all
+  `pwm_enable=2`, the firmware's curves), **fan1 1308 RPM at PWM 66/255,
+  fan3 7417 RPM at PWM 63/255**, fan2 and fan5 at 0, and six temperatures.
+  Switching a channel to manual (`pwm1_enable=1`) took effect; whether a
+  written duty cycle actually moves the fan is **unproven** — the write test
+  was stopped there, the channel put back to `2`, and the module unloaded.
+  (The fork's README warns that some newer Gigabyte boards route fan
+  control through a separate chip, where speeds read but writes do nothing.)
+  Two reasons it is not in the config: `ignore_resource_conflict` means
+  the driver and ACPI share the chip's index/data ports with no locking, and
+  the firmware-first reasoning above stands anyway. **What it buys now is
+  diagnosis:** fan3 at ~7400 RPM on a 25 % duty is the prime suspect for the
+  noise — a small fast fan, or a 3-pin fan on a header in PWM mode.
+  *The original finding:* `sensors`
   on the live USB lists **no fan at all** from the board. `sensors-detect`
   finds the ITE chip but reports *"Found unknown chip with ID 0x8689"*, and
   `modprobe it87` fails with `No such device`: mainline's `it87` does not claim
@@ -920,12 +940,14 @@ since the next firmware update resets them too.
 
 #### Fan control checklist
 
-- [ ] Loud source identified: which header, or the GPU / PSU
+- [ ] Loud source identified: which header, or the GPU / PSU — *suspect: fan3,
+      ~7400 RPM at 25 % duty (read via the out-of-tree `it87`, 2026-09-24).
+      Match it to a header in Smart Fan 6*
 - [ ] Each header's mode matches its fan (PWM for 4-pin, Voltage for 3-pin)
 - [ ] Curves set, Temperature Interval raised; quiet at idle and browsing
 - [ ] Eco Mode tried; kept or rejected on compile time vs noise
 - [ ] Recorded in `hosts/desk/bios.md`; fan profile saved to USB
-- [x] Phase 0: fans visible in `sensors` — *no: ITE `0x8689`, unclaimed by mainline `it87` (2026-09-24). Firmware-only confirmed*; [ ] Phase 4: dGPU fan sane under vfio-pci
+- [x] Phase 0: fans visible in `sensors` — *not with mainline `it87` (ITE `0x8689` unclaimed); yes with the out-of-tree fork plus `ignore_resource_conflict=1`, read-only in practice (2026-09-24). Curves stay in firmware*; [ ] Phase 4: dGPU fan sane under vfio-pci
 
 ---
 
@@ -1119,6 +1141,11 @@ All three were answered on the live USB. Raw output under
 ---
 
 ## What this buys the repo
+
+*Superseded 2026-09-24: WSL stays, for Linux on bare-metal Windows
+([Phase 9](#phase-9--keep-the-wsl-host-for-bare-metal-windows)), so none of
+the deletions below happen. The table is kept as the record of what the WSL
+host costs to keep.*
 
 Not just a new host — it deletes a whole category of complexity. Four of this
 repo's gnarliest modules exist *only* because NixOS is a guest under Windows:
@@ -1435,7 +1462,7 @@ Three ways to live with it, in order of preference:
 The swtpm state (`/var/lib/libvirt/swtpm/<domain uuid>/`) and the guest's OVMF
 variables (`/var/lib/libvirt/qemu/nvram/win_VARS.fd`) are the guest half of this
 identity. Losing either is another "new hardware" event from inside the guest,
-so they go on the unmanaged-state list in [Phase 9](#phase-9--retire-the-wsl-host)
+so they go on the unmanaged-state list in [Phase 9](#phase-9--keep-the-wsl-host-for-bare-metal-windows)
 and are never regenerated casually — which also means a NixVirt redefinition
 must keep the domain's `uuid` fixed.
 
@@ -2075,6 +2102,12 @@ permanently, for both operating systems. Do it once NixOS has booted reliably
 for a few days — and before the VFIO work, so the passthrough phases are
 debugged on the final boot chain rather than changing it underneath them.
 
+**Blocked on [BIOS tuning](#bios-tuning)'s memory steps** (decided
+2026-09-24), as well as on [item 4](#after-the-reboot--do-these-in-order).
+Memory tuning is the step most likely to end in a CMOS clear, and a CMOS clear
+after 2b wipes the enrolled keys too — see
+[Why the ordering matters](#why-the-ordering-matters-here).
+
 ### Why bother
 
 - **Kernel anti-cheat.** The whole reason bare-metal Windows is kept is games
@@ -2275,16 +2308,16 @@ so it gets a plain GUI app with no further module work.
 
 - `default_prog = { 'wsl.exe', ... }`, `default_gui_startup_args` and
   `home.activation.copyWeztermToWindows` — already scoped to the `wsl` host;
-  they never reach `desk`, and go when `hosts/wsl/` does
-  ([Phase 9](#phase-9--retire-the-wsl-host)).
+  they never reach `desk`, and stay with `hosts/wsl/`
+  ([Phase 9](#phase-9--keep-the-wsl-host-for-bare-metal-windows)).
 - `wezterm-mux-server` — **keep**. It is still how the Mac gets a persistent
   remote session into this box, and its `stdenv.hostPlatform.isLinux` guard is
   now correct by design.
 - The Tailscale `ssh_domains` auto-discovery — **keep**, unchanged. It picks up
   `desk` for free.
 - The Windows branches of the shared Lua (`wsl.exe` tailscale invocation,
-  `//wsl$/NixOS/...` identity-file paths) — **delete** in Phase 9, once no
-  Windows WezTerm reads this config.
+  `//wsl$/NixOS/...` identity-file paths) — **keep**: WSL stays
+  (Phase 9, decided 2026-09-24), and its Windows WezTerm reads this config.
 
 `tests/wezterm.test.nix` already evaluates the shared module alone (the native
 NixOS case) and with the WSL overlay. `tests/wezterm_test.sh` exercises only the
@@ -2303,7 +2336,9 @@ host the normal way. **Delete the module**; do not port it.
 ### WezTerm's Windows GUI pin
 
 `hosts/wsl/home/wezterm-windows.nix` and the Windows half of
-`modules/home/wezterm-pin.nix` go away with the WSL host. So does the mirroring
+`modules/home/wezterm-pin.nix` stay with the WSL host, which stays (Phase 9,
+decided 2026-09-24) — the rest of this section was written when they were
+going away. So does the mirroring
 step `main` added for them (f89ef8a): upstream overwrites its Windows nightly
 zip in place, so `scripts/sync-wezterm.sh` uploads each pinned zip to an
 immutable `wezterm-<version>` release on this repo. With no Windows GUI to
@@ -2566,7 +2601,7 @@ lesson as [WezTerm's Windows GUI pin](#wezterms-windows-gui-pin).
 address and the name `desk`). On the iPhone, open Settings → Bluetooth → `desk`,
 pair, and allow **Share System Notifications** when asked. Then disable
 advertising. The bond lives in `/var/lib/bluetooth`, so it is unmanaged state
-([Phase 9](#phase-9--retire-the-wsl-host)).
+([Phase 9](#phase-9--keep-the-wsl-host-for-bare-metal-windows)).
 
 What to expect:
 
@@ -2592,14 +2627,17 @@ What to expect:
 - [x] Power on → niri on tty1 with no password; `loginctl` shows the
       session on seat0; tty2 is a plain shell — *2026-09-24: autologin opens
       the session with no password and `niri.service` comes up on its own;
-      `loginctl` shows it on seat0 on tty1. tty2 not yet tried*
+      `loginctl` shows it on seat0 on tty1. tty2 is a plain shell (seen at the
+      console the same day)*
 - [x] `nix flake check` fails on a deliberately broken `niri.kdl` — *2026-09-24.
       The check did not exist until `249427c`, which is why the
       `focus-follows-mouse off` parse error reached a switch. It was verified
       both ways: it passes on the fixed config and fails on the original typo*
-- [ ] Chrome: `chrome://version` shows `--password-store=gnome-libsecret`,
-      and a saved password survives a reboot after one keyring prompt
-- [ ] waybar tray shows Steam, Tailscale and blueman; fuzzel launches
+- [x] Chrome: `chrome://version` shows `--password-store=gnome-libsecret`,
+      and a saved password survives a reboot after one keyring prompt —
+      *2026-09-24, flag confirmed at the console*
+- [x] fuzzel launches (`Mod+D`), and `Mod+Return` gives WezTerm — *2026-09-24*
+- [ ] waybar tray shows Steam, Tailscale and blueman
 - [x] `notify-send test` pops up in swaync and lands in its history —
       *2026-09-24, with two fixes on the way. swaync was started twice, by
       niri's `spawn-at-startup` and by the unit `services.swaync.enable`
@@ -2608,8 +2646,8 @@ What to expect:
       was never packaged, so this check could not be run as written —
       `libnotify` is now in `hosts/desk/desktop.nix`. Proved end to end by
       calling `Notify` over the bus: swaync returned an id and
-      `swaync-client --count` went to 1. The pop-up appearing on screen is the
-      one part still unseen from here*
+      `swaync-client --count` went to 1. The pop-ups were then seen on screen,
+      and they stay in the `Mod+N` panel*
       - Useful detail if this recurs: swaync's "An instance of
         SwayNotificationCenter is already running!" is a **bus-name** check,
         not a process check, and the process is named `.swaync-wrapped` — so
@@ -3231,14 +3269,35 @@ it must not be the printer's controller — `1022:15b7` today, of four
 (`15b6`, `15b7`, `15b8` on the CPU; `43f7` on the chipset). Phase 0's optional
 port map (step 7) says which port is which; otherwise move the printer.
 
+### What landed — 2026-09-24
+
+`hosts/desk/printing.nix`, with three deviations from the sketch above, all
+following the media share's tailnet-only decision:
+
+- **No Wi-Fi.** No `wlp14s0` firewall rule, and `allowFrom` is loopback,
+  `virbr0`, and the tailnet's IPv4 **and IPv6** ranges (the sketch's
+  `192.168.0.0/16` also left IPv6 out). CUPS's `Order allow,deny` denies
+  anything unlisted, so there is no IPv6 hole like Samba's.
+- **No advertisement:** `browsing = false`. mDNS would announce on Wi-Fi a
+  queue Wi-Fi cannot reach. The Mac adds the queue by address; the guest's
+  is declared by address already.
+- **`cups-browsed` off.** It defaults on wherever avahi is, discovers *other*
+  machines' printers, and is the daemon the 2024 CUPS RCE chain ran through.
+
+The cost: **the iPhone cannot print**, because iOS adds printers only by
+discovery. Opening Wi-Fi is a firewall rule, a LAN range in `allowFrom`, and
+`browsing = true`.
+
+Checked before the switch: the printer is on USB `5-2` with serial
+`U66480F3N341782`, and brlaser 6.2.8 has `brl2305.ppd` for `HL-L2305 series`.
+
 ### Checklist
 
 - [ ] After Phase 2: `lpinfo -v` shows the `usb://Brother/HL-L2305%20series?serial=…`
       URI exactly as in `printing.nix`; fix the string if the backend reports
       it differently
 - [ ] `lpstat -t` → `brother` enabled, accepting, default; `lp -d brother /etc/os-release` prints
-- [ ] From the Mac on the LAN: *desk*'s Brother appears under **Add Printer**
-      with *AirPrint* as the driver, and prints
+- [ ] ~~From the Mac on the LAN~~ — *dropped 2026-09-24, tailnet-only*
 - [ ] From the Mac over Tailscale, off the LAN: the `ipp://desk.<tailnet>.ts.net`
       queue prints
 - [ ] From the guest: `Brother (desk)` prints
@@ -3859,7 +3918,7 @@ in git is still the source of truth.
 placeholder and is not used at all now that there is no unattended install; the
 local account already exists; there is no provisioner credential.
 
-What *is* unmanaged state is listed in [Phase 9](#phase-9--retire-the-wsl-host):
+What *is* unmanaged state is listed in [Phase 9](#phase-9--keep-the-wsl-host-for-bare-metal-windows):
 the Microsoft account the license hangs off, and the machine's own BitLocker
 recovery key if it is ever re-enabled. Neither belongs in git, and neither is
 something this repo generates.
@@ -4074,25 +4133,46 @@ in full, and then the parts that only show up under load:
 ---
 
 
-## Phase 9 — Retire the WSL host
+## Phase 9 — Keep the WSL host, for bare-metal Windows
 
-Only after Phase 8 passes.
+**Decided 2026-09-24: WSL is not retired.** It stays as Linux for bare-metal
+Windows — the anti-cheat boot mode, when `desk` is not running. This phase used
+to delete `hosts/wsl/` once Phase 8 passed; what is left of it is the
+housekeeping that still applies.
 
-- [ ] Delete `hosts/wsl/` and the `nixosConfigurations.wsl` output
-- [ ] Delete `modules/home/wezterm-pin.nix`'s Windows half, the Windows-zip
-      mirroring in `scripts/sync-wezterm.sh`, and the Windows branches of the
-      shared WezTerm Lua. The `wezterm-<version>` releases can stay as history
-- [ ] Remove the `wsl` node from the Tailscale admin panel
-- [ ] Mac: drop `wsl` from `~/.ssh/known_hosts` and any config pointing at it
-- [ ] Replace the `n8@wsl` key in `modules/home/default.nix` with `desk`'s own
-      key (or, if the key moves to `desk`, rename its comment `n8@desk`)
+What stays, unchanged:
+
+- `hosts/wsl/` and the `nixosConfigurations.wsl` output, including the
+  modules [What this buys the repo](#what-this-buys-the-repo) once marked for
+  deletion: `mounts.nix`, the WezTerm Windows GUI install and its
+  copy-to-Windows config, and `claude-in-chrome.nix`.
+- `modules/home/wezterm-pin.nix`'s Windows half, the Windows-zip mirroring in
+  `scripts/sync-wezterm.sh`, and the Windows branches of the shared WezTerm
+  Lua — the Windows WezTerm GUI is still WSL's front end.
+- The `wsl` Tailscale node, its `known_hosts` entry on the Mac, and the
+  `n8@wsl` key in `modules/home/default.nix`. `desk` gets its own key added
+  alongside when it needs one, rather than taking `wsl`'s.
+- The WSL-specific wezterm checks, so
+  [Risk 15](#risks-ranked) no longer applies.
+
+Two hosts, one machine: `wsl` and `desk` are never up at the same time, and
+each pulls and switches from `main` when it is the one running. They share
+`flake.lock`, and the weekly bump already evaluates both.
+
+WSL is a bare-metal tool here. In the guest it needs nested virtualization,
+which nothing in Phase 4 sets up for it — do not plan on it there.
+
+Still to do, after Phase 8:
+
 - [ ] README: replace the "A future native NixOS host" section with the real one
-- [ ] Update the "State this repo does not manage" list: the Windows-side WezTerm
-      install and the `G:` volume are gone; new entries are the Microsoft
+- [ ] Update the "State this repo does not manage" list. The Windows-side
+      WezTerm install and the `G:` volume **stay** (WSL still uses them). New
+      entries are the Microsoft
       account the digital license hangs off (no product key — see
       [Secrets](#secrets)), everything on Windows' own drive, rclone
       credentials (*already listed, 2026-09-24: the encrypted `rclone.conf`
-      and its keyring password*), the Wi-Fi PSK, the Samba password database (`smbpasswd`),
+      and its keyring password*), the Wi-Fi PSK, the Samba password database
+      (*already listed, 2026-09-24*),
       `/etc/restic/{media.password,id_ed25519}`, the Secure Boot keys in
       `/var/lib/sbctl` (backed up off-machine — [Phase 2b](#phase-2b--restore-secure-boot)),
       and the guest's TPM and firmware state —
@@ -4180,7 +4260,7 @@ Only after Phase 8 passes.
     `/var/lib/sbctl` is still there or backed up. And enrolling *without*
     `--microsoft` is the self-inflicted version: no Windows, no dGPU option
     ROM.
-15. **`nix flake check` coverage drops.** Deleting the WSL host takes the
+15. *No longer applies — WSL stays (2026-09-24).* **`nix flake check` coverage drops.** Deleting the WSL host takes the
     WSL-specific half of the sixteen wezterm checks with it — the
     activation-script suite and the `wslHost = true` cases — while the
     native-Linux and macOS cases stay. The stale-`rendered/` check in
@@ -4224,8 +4304,9 @@ Only after Phase 8 passes.
   Loading times over a network share are not worth discussing.
 - **Nix on Windows.** The Windows side needs git and winget. Adding a third
   thing to install before the machine can configure itself defeats the point.
-- **WezTerm on Windows.** The Windows GUI existed because Windows was the only
-  desktop; now NixOS is. A winget build would be unpinned and could only
+- **WezTerm on Windows from winget.** WSL's own Windows GUI install stays
+  with the WSL host ([Phase 9](#phase-9--keep-the-wsl-host-for-bare-metal-windows));
+  the Windows *profile* adds none. A winget build would be unpinned and could only
   mismatch the pinned mux server — [Phase 3](#wezterms-windows-gui-pin). If
   one is ever wanted, it comes from the mirror release by hash.
 - **A screen lock, or a display manager.** Decided 2026-09-23: the session
