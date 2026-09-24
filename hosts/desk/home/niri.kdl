@@ -19,9 +19,22 @@
 // in the boot menu).
 //
 // Both are `debug` options — check them against the niri wiki for the pinned
-// version. If `ignore-drm-device` will not take a by-path symlink, use the
-// node the dGPU gets when lent (/dev/dri/renderD129-shaped) plus a udev rule
-// to make the name stable.
+// version.
+//
+// Verified at runtime on the 2026-09-24 reboot, and this is the Phase 4 gate:
+//
+//     attempting to use render node from config: ".../pci-0000:12:00.0-render"
+//     using as the render node: "/dev/dri/renderD129"
+//     adding device: 57858 "/dev/dri/card2"   <- this is the primary node
+//     adding device: 57857 "/dev/dri/card1"
+//     node is ignored, skipping               <- the dGPU, never opened
+//
+// and niri's only DRM file descriptors were card2. So `ignore-drm-device`
+// *does* accept a by-path symlink, and no udev rule is needed — an earlier
+// note here guessed one might be. Key any future rule off the PCI address
+// anyway, not the node number: the numbering is the reverse of what this
+// comment first assumed. dGPU 03:00.0 is renderD128 and iGPU 12:00.0 is
+// renderD129, not the other way round.
 debug {
     render-drm-device "/dev/dri/by-path/pci-0000:12:00.0-render"
     ignore-drm-device "/dev/dri/by-path/pci-0000:03:00.0-render"
@@ -72,7 +85,15 @@ layout {
 }
 
 spawn-at-startup "waybar"
-spawn-at-startup "swaync"
+
+// swaync is deliberately NOT spawned here. `services.swaync.enable` in
+// home/desktop.nix already generates a user unit that is WantedBy
+// graphical-session.target, which niri raises — so a spawn-at-startup line
+// makes two launchers race. On 2026-09-24 the spawned copy won and the unit
+// failed five restarts with "An instance of SwayNotificationCenter is already
+// running!", leaving notifications working but swaync.service red. The unit is
+// the better owner: Type=dbus, BusName, and Restart=on-failure. waybar has no
+// such unit (`programs.waybar` without `systemd.enable`), so it stays here.
 
 // niri has no built-in Xwayland; this starts it on demand. Steam needs it.
 spawn-at-startup "xwayland-satellite"

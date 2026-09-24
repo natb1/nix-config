@@ -40,12 +40,23 @@ plan gates it now — Phase 0 is the only go/no-go.
 
 ## After the reboot — do these, in order
 
-**NixOS is installed on the 1 TB drive as of 2026-09-24, and has booted.
-Items 2, 3 and 5–8 are done (2026-09-24): `boot_vga` read 1 on the iGPU, so
-niri's GPU pinning is now enabled; the first switch passed after the
-`~/.config` ownership fix; `desk` is on the tailnet. 1, 4 and 9 remain.** Work through this list on the
-first boot into `desk`. Items 1–4 are verification and take minutes; 5 onward
-is ordinary work.
+**NixOS is installed on the 1 TB drive as of 2026-09-24, and the desktop is
+up. Items 2, 3, 5–8 are done and 9 is mostly done (2026-09-24): `boot_vga`
+read 1 on the iGPU, so niri's GPU pinning is enabled and is now confirmed at
+runtime; the first switch passed after the `~/.config` ownership fix; `desk` is
+on the tailnet; and after two fatal session bugs were fixed, autologin brings
+niri up on tty1 on its own. 1 and 4 remain, and both need you at the physical
+console — they are the only things standing between here and Phase 3.** Work
+through this list on the first boot into `desk`. Items 1–4 are verification and
+take minutes; 5 onward is ordinary work.
+
+**Two bugs made the first desktop boot fail, both fixed in `249427c`.** Worth
+reading if the session ever misbehaves again, because neither announced itself
+usefully: `exec niri-session` without `-l`
+[looped forever](#the-desktop-session) without ever starting `niri.service`,
+and `focus-follows-mouse off` was a KDL parse error that would have killed niri
+the moment the loop was broken. The second is now caught by a `nix flake check`
+gate; the first is guarded twice over.
 
 The install was seeded ([Seed the install](#seed-the-install-before-rebooting)),
 so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
@@ -71,6 +82,22 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
       - *Measured 2026-09-24 on first boot:* `boot_vga` 1 on `12:00.0`, 0 on
         `03:00.0`; `card2-HDMI-A-2` (iGPU, `12:00.0`) **connected**,
         `card1-HDMI-A-1` (dGPU, `03:00.0`) disconnected. Pinning enabled.
+      - *And confirmed at runtime the same day, which closes this gate.* niri's
+        own log: render node `/dev/dri/renderD129` from the `12:00.0` by-path
+        symlink, `card2` as the primary node, and for `card1` — the dGPU —
+        `node is ignored, skipping`. Its only DRM file descriptors were `card2`.
+        So niri renders on the iGPU and never opens the dGPU, which is exactly
+        what Phase 4 needs in order to lend `03:00.0` to a guest without
+        logging out. Two details worth carrying forward: `ignore-drm-device`
+        accepts a by-path symlink, so the udev rule the config comment once
+        contemplated is unnecessary; and the render-node numbering is the
+        reverse of the original guess — dGPU `03:00.0` is `renderD128`, iGPU
+        `12:00.0` is `renderD129`. Key anything later off the PCI address.
+      - The audio side agrees: the active PipeWire sink is the **Radeon HD
+        Audio Controller** HDMI output to the DELL U3415W, i.e. the iGPU's.
+        The dGPU's *Navi 21/23 HDMI/DP Audio* device is present and idle,
+        which is the right state for a card whose audio function (`03:00.1`,
+        alone in IOMMU group 15) is passed to the guest whole.
 - [x] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
       `sudo systemctl restart NetworkManager`, and check the profile at
       `/etc/NetworkManager/system-connections/` is 600 and root-owned.
@@ -102,6 +129,27 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
       (`wpctl status`), and Chrome opens with
       `--password-store=gnome-libsecret` honoured (gnome-keyring will ask for
       its own password on first use — that is intended, not a fault).
+      - *Verified without hands 2026-09-24, after the `249427c` fixes:* getty
+        autologin opened the session with no password, `niri.service` is
+        `active (running)`, `loginctl` shows the session on **seat0** on tty1,
+        waybar and `xwayland-satellite` are up, gnome-keyring started from PAM,
+        and `wpctl status` lists a working sink. WezTerm is running — this note
+        was written from it.
+      - *One fault found and fixed:* `swaync.service` was **failed
+        (start-limit-hit)**. Notifications worked, because niri's
+        `spawn-at-startup "swaync"` had already started one, but that is a
+        second launcher racing the user unit `services.swaync.enable` creates,
+        and the unit lost five restarts in a row to `An instance of
+        SwayNotificationCenter is already running!`. The `spawn-at-startup`
+        line is gone; the unit owns swaync now, which is what gives it
+        `Restart=on-failure` and dbus activation. waybar keeps its
+        `spawn-at-startup` because `programs.waybar` without `systemd.enable`
+        generates no unit to collide with.
+      - *Still needs your hands, at the console:* `Mod+Return`, `Mod+D`
+        (fuzzel), `notify-send test` landing in swaync's history, the waybar
+        tray showing Steam/Tailscale/blueman, and Chrome's
+        `chrome://version` showing the flag. These are the
+        [Desktop session checklist](#desktop-session-checklist) items.
 
 Known-good state at install time, for comparison if something looks wrong:
 
@@ -134,38 +182,57 @@ with **NixOS 26.05 graphical**
 before the write; the stick is read back and hash-checked against it
 before the first boot.
 
-**Phase 0 is finished and the gate passed.** The Linux pass ran from the live
-USB on 2026-09-24: raw output is committed under
+**Phases 0, 1 and 2 are done. The machine now boots NixOS into a working niri
+desktop, and this plan is being edited from it.**
+
+**Phase 0's gate passed.** The Linux pass ran from the live USB on 2026-09-24:
+raw output is committed under
 [`docs/desktop-inventory/`](./desktop-inventory/), read off in the
 [Linux-side table](#phase-0-linux-side--measured-2026-09-24), and the verdict is
 [here](#the-gate--passed-2026-09-24) — **dGPU `03:00.0` alone in IOMMU group 14,
 its audio `03:00.1` alone in 15, the 2 TB NVMe controller `11:00.0` alone in
-28.** Every hardware placeholder in this plan's config blocks now holds a real
-value, so the Phase 1–4 code below can be read as final rather than as a
-template. **Nothing has been written to either drive yet.** The 1 TB drive still
-carries the old Linux install; Phase 2 is the first destructive step.
+28.** Every hardware placeholder in this plan's config blocks holds a real
+value, so the Phase 1–4 code below reads as final rather than as a template.
 
-**The cable is moved (2026-09-24), but `boot_vga` is not yet verified:**
-[the monitor was cabled to the dGPU](#the-monitor-is-plugged-into-the-wrong-gpu);
-the DRM connectors now show it on the iGPU, but whether the firmware posts
-there is only decided at POST. Re-check `boot_vga` on the next boot. It
-blocks Phase 4, not Phase 2.
-
-**[Phase 1](#phase-1--land-hostsdesk-in-the-flake) is also done** (2026-09-24,
-from this same live USB). `hosts/desk` is in the flake and `.#desk` evaluates
-to `nixos-system-desk-26.11.20260920.44a9189.drv`; `.#wsl` is undisturbed. What
-landed, and what was deliberately left for later phases:
+**[Phase 1](#phase-1--land-hostsdesk-in-the-flake) is done** (2026-09-24, from
+the live USB). `hosts/desk` is in the flake and `.#desk` evaluates; `.#wsl` is
+undisturbed. What landed, and what was deliberately left for later phases:
 [here](#what-phase-1-actually-landed--2026-09-24).
 
-**Next: [Phase 2](#phase-2--install-nixos-on-the-bulk-drive) — the install, and
-the first destructive step in this plan.** It runs from this same stick, and it
-wipes the 1 TB drive. Before starting it, re-read the by-id name in
-`hosts/desk/disko.nix` against `ls -l /dev/disk/by-id/` on the booted machine:
-both drives are the same P41 family and both controllers report `1c5c:1959`, so
-that one line is what stands between the install and the Windows disk. It
-should read `nvme-SHPP41-1000GM_SJB8N565511208H0I` — the **1000**GM, 931.5 GB,
-the one carrying the old Linux install. Expect a TTY, not a desktop, on first
-boot.
+**[Phase 2](#phase-2--install-nixos-on-the-bulk-drive) is done and booted**
+(2026-09-24). The 1 TB drive was wiped and installed per `hosts/desk/disko.nix`;
+the 2 TB Windows drive was not touched. `nixos-rebuild switch --flake .#desk`
+runs from the installed system. Two bugs kept the first desktop boot on a login
+prompt and were fixed in `249427c` — see the
+[after-the-reboot list](#after-the-reboot--do-these-in-order), which is the
+live status board for this stretch.
+
+**`boot_vga` is verified, so the Phase 4 GPU gate is closed.** The monitor cable
+[was on the wrong GPU](#the-monitor-is-plugged-into-the-wrong-gpu); it moved on
+2026-09-24, the firmware posts on the iGPU (`boot_vga` 1 on `12:00.0`), and
+niri's own log confirms it renders on `renderD129` and *ignores* the dGPU's
+node entirely. That is the property Phase 4 depends on: `03:00.0` is free to go
+to a guest without ending the session.
+
+**Next: finish [the after-the-reboot list](#after-the-reboot--do-these-in-order)
+— items 1 and 4, then the hands-on half of 9.** All three need you at the
+physical console, and none takes long:
+
+1. **Was POST visible?** (item 1) You have just rebooted, so you know the
+   answer: was the screen live at the systemd-boot menu, or black until the
+   desktop appeared? If it was black, the firmware is still posting on the dGPU
+   and you are blind at the menu where Windows is chosen. Record the answer in
+   item 1 either way — it is the difference between Phase 2b/Phase 4 being
+   routine and being done half-blind.
+2. **Windows still boots bare metal and is still activated** (item 4). **F12**
+   at POST. Nothing touched its drive, so this confirms rather than fixes, but
+   it is the last point where a surprise is cheap. Check the clocks agree
+   afterwards.
+3. **The hands-on half of item 9** — `Mod+Return`, `Mod+D`, `notify-send`, the
+   waybar tray, Chrome's password-store flag.
+
+**Then Phase 2b — [Restore Secure Boot](#phase-2b--restore-secure-boot)** is the
+next block of real work, and Phase 4 is unblocked whenever you want it.
 
 ### Bootstrapping the live USB
 
@@ -1962,7 +2029,9 @@ USB and a chroot.
 Then reboot and **verify both boot paths before going further**, while the live
 USB is still plugged in:
 
-- [ ] NixOS boots from the bulk drive — *installed 2026-09-24, not yet booted*
+- [x] NixOS boots from the bulk drive — *booted 2026-09-24. The first boot
+      reached only a login prompt (two session bugs, fixed in `249427c`); the
+      reboot after that came up in niri on its own*
 - [ ] Windows still boots bare metal from the firmware boot menu, and is still
       activated (Settings → System → Activation). Nothing should have changed —
       confirming that is the point
@@ -1977,7 +2046,8 @@ Then `sudo tailscale up`, `git clone` the repo to `~/natb1/nix-config`, and from
 there it is the same `nixos-rebuild switch --flake .#desk` loop as every other
 host.
 
-- [ ] Add a `desk` row to the README's host table with its rebuild command
+- [x] Add a `desk` row to the README's host table with its rebuild command —
+      *done 2026-09-24, same as item 8 of the after-the-reboot list*
 
 **Windows updates will sometimes reassert themselves as the default boot
 entry.** Normal, not a failure: `efibootmgr -o` puts systemd-boot back in front.
@@ -2453,13 +2523,22 @@ What to expect:
 
 ### Desktop session checklist
 
-- [ ] Power on → niri on tty1 with no password; `loginctl` shows the
-      session on seat0; tty2 is a plain shell
-- [ ] `nix flake check` fails on a deliberately broken `niri.kdl`
+- [x] Power on → niri on tty1 with no password; `loginctl` shows the
+      session on seat0; tty2 is a plain shell — *2026-09-24: autologin opens
+      the session with no password and `niri.service` comes up on its own;
+      `loginctl` shows it on seat0 on tty1. tty2 not yet tried*
+- [x] `nix flake check` fails on a deliberately broken `niri.kdl` — *2026-09-24.
+      The check did not exist until `249427c`, which is why the
+      `focus-follows-mouse off` parse error reached a switch. It was verified
+      both ways: it passes on the fixed config and fails on the original typo*
 - [ ] Chrome: `chrome://version` shows `--password-store=gnome-libsecret`,
       and a saved password survives a reboot after one keyring prompt
 - [ ] waybar tray shows Steam, Tailscale and blueman; fuzzel launches
-- [ ] `notify-send test` pops up in swaync and lands in its history
+- [ ] `notify-send test` pops up in swaync and lands in its history — *swaync
+      runs, but until 2026-09-24 it ran from niri's `spawn-at-startup` while
+      `swaync.service` sat failed on a start-limit, the two having raced. The
+      duplicate launcher is gone and the unit owns it; this line still wants a
+      real notification through it*
 - [ ] iPhone paired: a text message appears in swaync within seconds. Walk out
       of range and back, and the next one still arrives without re-pairing
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
