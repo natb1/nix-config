@@ -68,11 +68,11 @@ value, so the Phase 1–4 code below can be read as final rather than as a
 template. **Nothing has been written to either drive yet.** The 1 TB drive still
 carries the old Linux install; Phase 2 is the first destructive step.
 
-**One action came out of the pass, and it is physical:
-[the monitor is cabled to the dGPU](#the-monitor-is-plugged-into-the-wrong-gpu),
-so the firmware posts on it and simpledrm holds the card Phase 4 wants to give
-away.** Move the display cable to the motherboard and re-check `boot_vga` from
-the live USB. It blocks Phase 4, not Phase 1 or Phase 2.
+**The cable is moved (2026-09-24), but `boot_vga` is not yet verified:**
+[the monitor was cabled to the dGPU](#the-monitor-is-plugged-into-the-wrong-gpu);
+the DRM connectors now show it on the iGPU, but whether the firmware posts
+there is only decided at POST. Re-check `boot_vga` on the next boot. It
+blocks Phase 4, not Phase 2.
 
 **[Phase 1](#phase-1--land-hostsdesk-in-the-flake) is also done** (2026-09-24,
 from this same live USB). `hosts/desk` is in the flake and `.#desk` evaluates
@@ -289,17 +289,21 @@ way with or without the change, so compare against the base commit there.
 
 ### Next, in order
 
-1. **Move the display cable** from the graphics card to the motherboard, and
-   re-check `boot_vga` from the live USB. Physical, two minutes, no software.
-   Does not block Phase 2; **does block
+1. **Verify `boot_vga` after a reboot.** The cable was moved 2026-09-24 and the
+   DRM connectors confirm it (iGPU `connected`, dGPU `disconnected`), but
+   `boot_vga` is set at POST and still reads 1 on the dGPU. Does not block Phase 2; **does block
    [Phase 4](#phase-4--vfio-and-the-libvirt-host)**, whose vfio-pci bind fails
    with `BAR 0: can't reserve` while simpledrm holds the dGPU.
 2. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off. **The first
    destructive step in this plan.** Boots this same stick again. Note the
    [stale NVRAM entry](#residuals--open-not-blocking-the-next-step) for the
    1 TB drive's old ESP, which disko's wipe orphans. The installed machine
-   comes up on a TTY, not a desktop — that is expected, see
-   [What Phase 1 actually landed](#what-phase-1-actually-landed--2026-09-24).
+   autologins into **niri** — `desktop.nix` landed with Phase 1 — and comes up
+   with **no network**, because the Wi-Fi PSK is deliberately not in a public
+   repo. Connect with `nmtui` from WezTerm (`Mod+Return`); `n8` is in the
+   `networkmanager` group, so that needs no sudo. The repo is not on the
+   installed system either — `nixos-install` copies the store closure, not the
+   checkout — so `git clone` it once the network is up.
 3. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
 
@@ -900,6 +904,25 @@ conjure a monitor onto an empty port.
    Display Output IGD* was confirmed in firmware setup on 2026-09-23, and that
    is still what the setting says. The machine posts on the dGPU regardless.
    The setting was never the whole requirement; the cable is.
+
+> **Cable moved 2026-09-24. Half-verified; `boot_vga` still pending.**
+> The DRM connector state flipped as soon as the cable moved, and that part
+> needs no reboot: `card1-HDMI-A-1` on the dGPU went `connected` →
+> **`disconnected`**, and `card2-HDMI-A-2` on the iGPU went `disconnected` →
+> **`connected`**. So the monitor is now on the motherboard.
+>
+> **What is still unverified is the thing that actually matters**, because it
+> is only decided at POST: `boot_vga` still reads `1` on `0000:03:00.0` for
+> *this* boot, and whether the firmware now posts on the iGPU can only be
+> answered after a reboot. Until that check passes, treat
+> [Phase 4](#phase-4--vfio-and-the-libvirt-host) as still gated and leave
+> niri's GPU pinning commented out.
+>
+> One oddity to re-check at the same time: `card2-HDMI-A-2` reports
+> `connected` but its `edid` reads 0 bytes. Probably just that the connector
+> is not driven yet — the console framebuffer is still on the dGPU from this
+> boot — but a 0-byte EDID on the display you are about to depend on is worth
+> confirming rather than assuming.
 
 **The fix: move the display cable from the graphics card to the motherboard.**
 The B650I AORUS ULTRA's rear I/O carries the iGPU's outputs, and the kernel
