@@ -298,12 +298,13 @@ way with or without the change, so compare against the base commit there.
    destructive step in this plan.** Boots this same stick again. Note the
    [stale NVRAM entry](#residuals--open-not-blocking-the-next-step) for the
    1 TB drive's old ESP, which disko's wipe orphans. The installed machine
-   autologins into **niri** — `desktop.nix` landed with Phase 1 — and comes up
-   with **no network**, because the Wi-Fi PSK is deliberately not in a public
-   repo. Connect with `nmtui` from WezTerm (`Mod+Return`); `n8` is in the
-   `networkmanager` group, so that needs no sudo. The repo is not on the
-   installed system either — `nixos-install` copies the store closure, not the
-   checkout — so `git clone` it once the network is up.
+   autologins into **niri** — `desktop.nix` landed with Phase 1. Before
+   rebooting, run
+   [`scripts/seed-install.sh`](#seed-the-install-before-rebooting), which
+   copies the Wi-Fi profile, this repo, and the Claude and gh sessions onto
+   `/mnt`. Without it the first boot has no network (the PSK is deliberately
+   not in a public repo), no checkout, and no logins — all recoverable by
+   hand, but there is no reason to do it by hand.
 3. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
 
@@ -1823,6 +1824,45 @@ nixos-install --flake /path/to/nix-config#desk
 That is the whole install. No hand-partitioning, no PARTUUID transcription, no
 `blkid` round trip — disko generated the `fileSystems` entries from the same
 declaration it partitioned with.
+
+### Seed the install before rebooting
+
+```sh
+sudo bash /path/to/nix-config/scripts/seed-install.sh
+```
+
+**Run this after `nixos-install` and before the reboot**, while `/mnt` is still
+mounted and the live session still holds the credentials. It copies onto the
+target the four things a public repo cannot carry:
+
+| | Where it lands | Why it cannot be declarative |
+| --- | --- | --- |
+| The Wi-Fi profile | `/etc/NetworkManager/system-connections/` (600, root) | Contains the PSK. NetworkManager keeps profiles as mutable state, so copying the file *is* the whole job, and it already pins `interface-name=wlp14s0` — the same NIC |
+| This repo | `~/nix-config` | `nixos-install` copies the store closure, not the working tree. Seeding the tree rather than cloning means the branch and anything unpushed come along, and first boot needs no network to start work |
+| `~/.claude`, `~/.claude.json` | `~` | A session token. **Not** managed by home-manager — checked, it appears nowhere in `home.file` — so nothing contests it |
+| `~/.config/gh/hosts.yml` | `~/.config/gh/` | The gh token. **Only `hosts.yml`:** `config.yml` *is* managed by `modules/home/gh.nix`, so copying that one would just be backed up and replaced on the first switch |
+
+**No secret is in the script.** It is a list of copy operations; the values are
+read out of the running live session and written only to the target disk, so
+credentials go from RAM to the new drive without passing through git.
+
+Two things it gets right that are easy to get wrong, both found by testing it
+against a fake target rather than during an install:
+
+- **The user's uid comes from `$TARGET/etc/passwd`, not from assuming 1000.**
+  NixOS allocates it during activation. Guessing wrong yields a home directory
+  the user cannot write to — which, with autologin straight into niri, is a
+  baffling first boot rather than an obvious error.
+- **The source home is the *invoking* user's, not root's.** The script needs
+  root to write to `/mnt`, and under `sudo` `$HOME` is `/root`, where none of
+  the credentials live. The first version of this script exited 0 having
+  seeded nothing, reporting each credential as "not present". It now resolves
+  `SUDO_USER`'s home, and warns loudly at the end if any credential was not
+  found.
+
+After this, the first boot associates to Wi-Fi on its own and
+`cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk` works
+immediately, with no `nmtui`, no clone and no browser logins.
 
 **`nixos-install` ends by prompting for a root password. Set one.** It is the
 break-glass for single-user mode if `hosts/desk/` ever stops evaluating. Day
