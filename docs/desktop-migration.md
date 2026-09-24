@@ -3046,7 +3046,8 @@ also holding the other four sources un-de-duplicated.
 
 #### Checklist
 
-- [ ] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled
+- [x] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled —
+      *2026-09-24: `autoScrub` is in `hosts/desk/media.nix`, monthly*
 - [x] `hosts/desk/media.nix`, imported from `hosts/desk/default.nix` — *2026-09-24*
 - [x] `smbpasswd -a n8`; mount from the Mac over the tailnet (the LAN was
       dropped, above) —
@@ -3058,6 +3059,9 @@ also holding the other four sources un-de-duplicated.
 - [x] iPhone mounts `media` through Files over Tailscale — *2026-09-24,
       `smb://desk/media` (MagicDNS resolves in Files); `smbstatus` showed n8
       from `iphone-13-mini` at `100.70.251.123` on SMB3_11*
+- **Step 2 postponed 2026-09-24**, by choice. That also holds Step 3: nothing
+      irreplaceable lands on `/srv/media` without a proven restore. The
+      share itself is in use for anything that has another copy
 - [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
       ed25519 key for it
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
