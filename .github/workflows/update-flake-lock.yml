@@ -45,6 +45,8 @@ jobs:
         run: |
           nix eval --raw .#nixosConfigurations.wsl.config.system.build.toplevel.drvPath
           echo
+          nix eval --raw .#nixosConfigurations.desk.config.system.build.toplevel.drvPath
+          echo
           nix eval --raw .#darwinConfigurations.mba.system.drvPath
           echo
 

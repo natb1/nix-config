@@ -19,6 +19,21 @@
       url = "github:nix-community/NixOS-WSL";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Declarative partitioning for the `desk` host's bulk drive. Used at
+    # install time (Phase 2) and for the fileSystems entries it generates from
+    # the same declaration — see hosts/desk/disko.nix.
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # The libvirt domain for the Windows guest (Phase 4). Declared here rather
+    # than in Phase 4 because flake inputs are cheap to carry and expensive to
+    # add mid-install; the module is imported by `desk` but defines nothing
+    # until virtualisation.libvirt is enabled.
+    NixVirt = {
+      url = "https://flakehub.com/f/AshleyYakeley/NixVirt/*.tar.gz";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, home-manager, claude-code-nix, darwin, nixos-wsl, ... }:
@@ -93,6 +108,25 @@
             hostPlatform = "x86_64-linux";
             homeDirectory = "/home/n8";
             extraModules = [ ./hosts/wsl/home ];
+          })
+        ];
+      };
+
+      # The native desktop. Built from docs/desktop-migration.md; it boots
+      # NixOS on the 1 TB NVMe and (from Phase 4) runs the existing Windows
+      # install as a GPU-passthrough guest off the 2 TB one.
+      nixosConfigurations.desk = nixpkgs.lib.nixosSystem {
+        specialArgs = { inherit inputs; };
+        modules = [
+          # Reached via `inputs` rather than the outputs argument list, which
+          # does not name disko — matching how the list above is written.
+          inputs.disko.nixosModules.disko
+          inputs.NixVirt.nixosModules.default
+          ./hosts/desk
+          home-manager.nixosModules.home-manager
+          (home {
+            hostPlatform = "x86_64-linux";
+            homeDirectory = "/home/n8";
           })
         ];
       };
