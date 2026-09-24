@@ -2210,7 +2210,7 @@ never touches the others.
 | --- | --- | --- |
 | Compositor | **niri** (`programs.niri.enable`, nixpkgs) | Scrolling tiling. The nixpkgs module is enough, so there is no new flake input |
 | niri config | `hosts/desk/home/niri.kdl`, **validated at build** | A flake check runs `niri validate -c` on it, so a typo fails `nix flake check`, not the next login |
-| Login | **getty autologin** on tty1, `exec niri-session` from the login shell | No display manager to configure or break. The cost, accepted: a niri crash drops tty1 to a shell |
+| Login | **getty autologin** on tty1, `exec niri-session -l` from the login shell | No display manager to configure or break. The cost, accepted: a niri crash drops tty1 to a shell |
 | Screen lock | **None** | Decided: nothing sensitive is protected by the session. It sits behind its own encryption |
 | Bar | **waybar** | niri workspaces, tray (Steam, Tailscale, blueman), clock, a swaync button |
 | Notifications | **swaync** | Pop-ups, plus a history panel and do-not-disturb. The panel matters once a phone is forwarding everything ([ANCS](#iphone-notifications-over-ancs)). Action buttons are drawn, so a notification's actions are clickable |
@@ -2237,12 +2237,21 @@ environment.systemPackages = with pkgs; [ xwayland-satellite fuzzel wl-clipboard
 ```nix
 # hosts/desk/home/desktop.nix. Only tty1 starts niri. SSH logins and tty2 get a plain shell.
 programs.zsh.profileExtra = ''
-  if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
-    exec niri-session
+  if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ] && [ -z "$NIRI_SESSION_STARTED" ]; then
+    export NIRI_SESSION_STARTED=1
+    exec niri-session -l
   fi
 '';
 xdg.configFile."niri/config.kdl".source = ./niri.kdl;
 ```
+
+**`-l` is not optional here.** With no arguments, `niri-session` assumes a
+display manager started it and re-execs itself through a login shell to pick up
+the profile. That profile is this block, which execs `niri-session` again — a
+loop that never reaches `niri.service`, spins tty1 at 50% CPU, and leaves the
+screen on `desk login: n8 (automatic login)`. `-l` tells the script it is
+already in a login shell. `NIRI_SESSION_STARTED` is the second guard: it
+survives an exec, so it breaks the loop even if that flag ever changes meaning.
 
 **Chrome must be told where the keyring is.** Chrome picks its password store
 by guessing the desktop from `XDG_CURRENT_DESKTOP`. It does not recognise

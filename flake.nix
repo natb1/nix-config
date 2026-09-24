@@ -178,6 +178,16 @@
         }
         // weztermTests.wezterm-tests
         // claudeDaemonTests.claude-daemon-tests
+        # desk's niri config, parsed by the niri that will read it. A typo in
+        # the KDL is otherwise only found at the next tty1 login, where it is
+        # expensive: niri.service dies, and tty1 is the session. Linux only —
+        # niri does not build for darwin.
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          niri-config = pkgs.runCommand "niri-config-valid" { } ''
+            ${pkgs.niri}/bin/niri validate -c ${./hosts/desk/home/niri.kdl}
+            touch "$out"
+          '';
+        }
       );
     };
 }

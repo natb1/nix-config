@@ -40,8 +40,11 @@ input {
         natural-scroll
     }
 
-    // Focus follows the click, not the pointer.
-    focus-follows-mouse off
+    // Focus follows the click, not the pointer. `focus-follows-mouse` is a
+    // presence flag in niri's KDL, not a boolean — it takes no argument, and
+    // off is simply the absence of the node. `focus-follows-mouse off` is a
+    // parse error, which is fatal: niri.service exits before it ever opens a
+    // DRM device.
 }
 
 // The display is a 3440x1440 ultrawide (Phase 0 read the modes off it).

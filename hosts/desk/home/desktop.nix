@@ -11,11 +11,22 @@
   # crashing drops tty1 to a prompt rather than to nothing, and the Mac can
   # still ssh in (its key is in modules/home/default.nix).
   #
-  # The WAYLAND_DISPLAY guard stops a nested re-exec if a terminal inside the
-  # session ever sources the profile again.
+  # `-l` is load-bearing. Called with no arguments, niri-session assumes it was
+  # started by a display manager and re-execs itself through a *login* shell to
+  # pick up the profile — which sources this file again, hits this same block,
+  # and execs niri-session with no arguments once more. That is an unbreakable
+  # loop: tty1 spins at 50% CPU on a dead login prompt and niri.service is
+  # never reached. `-l` says "already a login shell", so niri-session skips the
+  # re-exec and goes straight to `systemctl --user start niri.service`.
+  #
+  # Two guards, because the loop leaves the machine unusable and is awkward to
+  # recover from. WAYLAND_DISPLAY stops a terminal *inside* the session from
+  # starting a second one; NIRI_SESSION_STARTED survives an exec, so it breaks
+  # the loop by itself if niri-session ever stops honouring `-l`.
   programs.zsh.profileExtra = ''
-    if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
-      exec niri-session
+    if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ] && [ -z "$NIRI_SESSION_STARTED" ]; then
+      export NIRI_SESSION_STARTED=1
+      exec niri-session -l
     fi
   '';
 
