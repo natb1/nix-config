@@ -3055,7 +3055,9 @@ also holding the other four sources un-de-duplicated.
       in `/srv/media` as `n8:users 0644`, so auth, the ownership fix and
       writes all work. Unencrypted at the SMB layer, which is fine inside
       WireGuard
-- [ ] iPhone mounts `media` through Files over Tailscale
+- [x] iPhone mounts `media` through Files over Tailscale — *2026-09-24,
+      `smb://desk/media` (MagicDNS resolves in Files); `smbstatus` showed n8
+      from `iphone-13-mini` at `100.70.251.123` on SMB3_11*
 - [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
       ed25519 key for it
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
