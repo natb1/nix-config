@@ -77,7 +77,19 @@ seed_home() {
     skip "$rel — already at the destination (FORCE=1 to overwrite)"
     return 0
   fi
-  install -d -o "$UID_N" -g "$GID_N" "$(dirname "$dst")"
+  # Create each missing parent separately. `install -d -o` gives the owner only
+  # to the LAST component and leaves every intermediate directory root-owned;
+  # seeding .config/gh/hosts.yml that way left ~/.config root:root, and the
+  # first switch then failed in home-manager with "mkdir: cannot create
+  # directory ~/.config/...: Permission denied".
+  local d="$TARGET$HOME_N" part
+  local IFS=/
+  for part in $(dirname "$rel"); do
+    [ "$part" = "." ] && continue
+    d="$d/$part"
+    [ -d "$d" ] || install -d -o "$UID_N" -g "$GID_N" "$d"
+  done
+  unset IFS
   cp -a "$src" "$dst"
   chown -R "$UID_N:$GID_N" "$dst"
   [ -n "$mode" ] && chmod "$mode" "$dst"

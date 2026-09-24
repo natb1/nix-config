@@ -82,6 +82,12 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
 - [ ] **6. First rebuild from the installed system:**
       `cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk`.
       This is also the test that the seeded checkout and the flake agree.
+      *Hit 2026-09-24:* it failed in `home-manager-n8.service` with
+      `mkdir: cannot create directory '/home/n8/.config/…': Permission denied`
+      — the seed script had left `~/.config` root-owned (fixed since; see
+      [Seed the install](#seed-the-install-before-rebooting)). On an install
+      seeded before the fix: `sudo chown -R n8:users ~/.config`, then rerun
+      the switch.
 - [ ] **7. `sudo tailscale up`** — `desk` is a new tailnet node, not a rename
       of `wsl`.
 - [ ] **8. Add a `desk` row to the README's host table** with its rebuild
@@ -1912,7 +1918,7 @@ target the four things a public repo cannot carry:
 read out of the running live session and written only to the target disk, so
 credentials go from RAM to the new drive without passing through git.
 
-Two things it gets right that are easy to get wrong, both found by testing it
+Three things it gets right that are easy to get wrong, the first two found by testing it
 against a fake target rather than during an install:
 
 - **The user's uid comes from `$TARGET/etc/passwd`, not from assuming 1000.**
@@ -1925,6 +1931,13 @@ against a fake target rather than during an install:
   seeded nothing, reporting each credential as "not present". It now resolves
   `SUDO_USER`'s home, and warns loudly at the end if any credential was not
   found.
+- **Every directory it creates belongs to the user, not only the last one.**
+  `install -d -o` applies the owner to the final path component alone; the
+  first version seeded `.config/gh/hosts.yml` that way and left `~/.config`
+  owned by root, so the first switch failed in `home-manager-n8.service` with
+  `mkdir: cannot create directory '/home/n8/.config/…': Permission denied`.
+  This one was found during the install, not by the fake-target test — which
+  pre-created the home and never checked the intermediate directories.
 
 After this, the first boot associates to Wi-Fi on its own and
 `cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk` works
