@@ -74,17 +74,22 @@ plan gates it now — Phase 0 is the only go/no-go.
 - **Firmware F9d → F43c** (2026-09-23), flashed with Q-Flash from a FAT32
   stick after the image's 16-bit sum matched the published `9D0F`
   (SHA-256 `21A6448F…36748C0C`). `Win32_BIOS` → `F43c`, 2026-07-20. Windows
-  boots, is still activated (`LicenseStatus` 1), and Wi-Fi is up. The
-  setup-screen half of the [post-flash checklist](#firmware-update) is still
-  open. Windows reports **Secure Boot back on**, as F38 predicted, and memory
-  at **JEDEC 4800** (EXPO off).
+  boots, is still activated (`LicenseStatus` 1), and Wi-Fi is up. The flash
+  turned **Secure Boot back on**, as F38 predicted. It is off again:
+  `Confirm-SecureBootUEFI` → False, and Windows still boots from the 2 TB
+  ESP (`Get-Partition | ? IsSystem` → disk 1, partition 3). SVM and the
+  IOMMU are on: Windows lists DMA protection among its available security
+  properties, which needs the IOMMU. Memory runs at **JEDEC 4800** (EXPO
+  off) until BIOS tuning. The plan's *PME Event Wake Up* item turned out not
+  to exist on this board; see the corrected wake item in the
+  [post-flash checklist](#firmware-update).
 
 ### Next, in order
 
-1. **Finish the post-flash checklist**, in firmware setup: Secure Boot off,
-   IOMMU Enabled, Initial Display Output IGD, ErP off with PCIe wake on, and
-   boot order (the 2 TB Windows Boot Manager first) — see
-   [Firmware update](#firmware-update). Fold it into the first step-2 visit.
+1. **Close out the post-flash checklist** — confirm, from firmware setup,
+   Initial Display Output = IGD, IOMMU = Enabled (not Auto), and ErP =
+   Disabled — see [Firmware update](#firmware-update). Fold it into the first
+   step-2 visit.
 2. **Tune the BIOS** — memory timings first, then the CPU — see
    [BIOS tuning](#bios-tuning). After the flash, because it resets every
    setting; **before step 6**, because a failed memory-training boot ends in a
@@ -224,23 +229,28 @@ from the firmware setup. Not from inside Windows.
 
 A firmware update resets settings to defaults. Afterwards, re-check:
 
-- [ ] **SVM** enabled and **IOMMU** set to Enabled (not Auto)
+- [x] **SVM** enabled and **IOMMU** set to Enabled (not Auto) — *2026-09-23:
+      Windows reports virtualization firmware on and lists DMA protection
+      (`Win32_DeviceGuard` property 3, which needs the IOMMU). That cannot
+      tell Enabled from Auto; the setup screen can*
 - [ ] **Initial Display Output: IGD** (the iGPU), not the PCIe slot. If the
       firmware POSTs on the dGPU, the kernel's simpledrm claims the card's
       framebuffer before vfio-pci binds and the bind fails with
       `BAR 0: can't reserve` — see [Phase 4](#phase-4--vfio-and-the-libvirt-host).
       Bare-metal Windows is unaffected: it drives the dGPU from its own driver
       whichever GPU the firmware posted on
-- [ ] **Secure Boot off — it will not be.** *Confirmed 2026-09-23:
-      `UEFISecureBootEnabled` = 1 after the flash.* F38's release notes: *Secure Boot
+- [x] **Secure Boot off — it will not be.** *2026-09-23: on after the flash
+      (`UEFISecureBootEnabled` = 1), then turned off (`Confirm-SecureBootUEFI`
+      → False).* F38's release notes: *Secure Boot
       enabled as system default*. So after flashing it is **on**, and must be
       turned off again (Windows boots either way; systemd-boot without
       lanzaboote does not). CSM off. *Once [Phase 2b](#phase-2b--restore-secure-boot)
       is done this check inverts:* a flash may also reset the key databases to
       factory defaults, dropping your enrolled key — NixOS then refuses to boot
       until the keys are re-enrolled. See Phase 2b's recovery note
-- [ ] Boot order — Windows Boot Manager on the **2 TB** drive first (until
-      NixOS exists)
+- [x] Boot order — Windows Boot Manager on the **2 TB** drive first (until
+      NixOS exists) — *2026-09-23: `Get-Partition | ? IsSystem` → disk 1,
+      partition 3*
 - [ ] XMP/EXPO memory profile, if it was on before — *after the flash:
       4800 MT/s, so off. Whether it was on under F9d went unrecorded; either
       way it is [BIOS tuning](#bios-tuning)'s first step now* — and after
@@ -252,10 +262,17 @@ A firmware update resets settings to defaults. Afterwards, re-check:
       PIN re-setup
 - [x] Wi-Fi still works in Windows (the only network this machine has) —
       *2026-09-23, `Wi-Fi` (RZ616) Up*
-- [ ] **Wake from PCIe devices on, ErP off** (Gigabyte: *Power* → *ErP*
-      Disabled, *PME Event Wake Up* / *Resume by PCI-E Device* Enabled — names
-      vary by version). The Wi-Fi card is a PCIe device, and without this
-      Wake-on-WLAN cannot wake the machine from suspend — see
+- [ ] **ErP Disabled** (*Settings* → *Platform Power* → *ErP*; the menu is
+      in Advanced Mode, F2). *Corrected 2026-09-23:* an earlier version of
+      this item also asked for *PME Event Wake Up* / *Resume by PCI-E Device*.
+      Neither exists on this board. Gigabyte's AM5 BIOS guide lists only AC
+      BACK, ErP, Soft-Off by PWR-BTTN, Power Loading and Resume by Alarm
+      under Platform Power. On AM5, wake from a PCIe device has no firmware
+      switch. ErP only governs standby power in **S5** (soft-off), so it
+      matters for waking a shut-down machine, not a suspended one. Wake from
+      suspend is decided on the Linux side: the device's
+      `/sys/bus/pci/devices/<wifi>/power/wakeup` = `enabled` and its
+      `/proc/acpi/wakeup` entry. Check it in Phase 8 — see
       [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
 - [x] Record the new version in the Phase 0 table
 
@@ -1593,8 +1610,11 @@ networking.networkmanager.settings.connection."wifi.wake-on-wlan" = "magic";
 - **The nightly backup wakes the machine itself**: the restic timer has
   `WakeSystem = true`, so the RTC wakes it, restic runs, and swayidle suspends
   it again after 15 idle minutes.
-- **Firmware:** wake from PCIe devices on, ErP off — in the
-  [firmware checklist](#firmware-update).
+- **Wake source:** AM5 has no firmware switch for PCIe wake (see the
+  [firmware checklist](#firmware-update)), so the Wi-Fi card's
+  `power/wakeup` must read `enabled` in sysfs, and its root port must be
+  enabled in `/proc/acpi/wakeup`. If the magic-packet test fails, check
+  there first.
 - **No Bluetooth wake.** The iPhone would wake the desk every time it got a
   notification.
 
