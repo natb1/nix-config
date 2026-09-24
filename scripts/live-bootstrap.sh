@@ -19,7 +19,7 @@
 set -eu
 
 REPO_URL="${REPO_URL:-https://github.com/natb1/nix-config.git}"
-REPO_DIR="${REPO_DIR:-$HOME/nix-config}"
+REPO_DIR="${REPO_DIR:-$HOME/natb1/nix-config}"
 BRANCH="${BRANCH:-claude/sweet-hypatia-03wf7f}"
 GIT_NAME="${GIT_NAME:-Nathan Buesgens}"
 GIT_EMAIL="${GIT_EMAIL:-nathan@natb1.com}"

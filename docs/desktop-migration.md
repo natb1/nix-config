@@ -120,7 +120,7 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
       sudo — but it is the break-glass for single-user mode if `hosts/desk/`
       ever stops evaluating.
 - [x] **6. First rebuild from the installed system:**
-      `cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk`.
+      `cd ~/natb1/nix-config && sudo nixos-rebuild switch --flake .#desk`.
       This is also the test that the seeded checkout and the flake agree.
       *Hit 2026-09-24:* it failed in `home-manager-n8.service` with
       `mkdir: cannot create directory '/home/n8/.config/…': Permission denied`
@@ -2021,7 +2021,7 @@ target the four things a public repo cannot carry:
 | | Where it lands | Why it cannot be declarative |
 | --- | --- | --- |
 | The Wi-Fi profile | `/etc/NetworkManager/system-connections/` (600, root) | Contains the PSK. NetworkManager keeps profiles as mutable state, so copying the file *is* the whole job, and it already pins `interface-name=wlp14s0` — the same NIC |
-| This repo | `~/nix-config` | `nixos-install` copies the store closure, not the working tree. Seeding the tree rather than cloning means the branch and anything unpushed come along, and first boot needs no network to start work |
+| This repo | `~/natb1/nix-config` | `nixos-install` copies the store closure, not the working tree. Seeding the tree rather than cloning means the branch and anything unpushed come along, and first boot needs no network to start work |
 | `~/.claude`, `~/.claude.json` | `~` | A session token. **Not** managed by home-manager — checked, it appears nowhere in `home.file` — so nothing contests it |
 | `~/.config/gh/hosts.yml` | `~/.config/gh/` | The gh token. **Only `hosts.yml`:** `config.yml` *is* managed by `modules/home/gh.nix`, so copying that one would just be backed up and replaced on the first switch |
 
@@ -2051,7 +2051,7 @@ against a fake target rather than during an install:
   pre-created the home and never checked the intermediate directories.
 
 After this, the first boot associates to Wi-Fi on its own and
-`cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk` works
+`cd ~/natb1/nix-config && sudo nixos-rebuild switch --flake .#desk` works
 immediately, with no `nmtui`, no clone and no browser logins.
 
 **`nixos-install` ends by prompting for a root password. Set one.** It is the
@@ -2244,7 +2244,7 @@ carries over. The system build is checked; the switch and the OAuth are yours,
 because the token cannot go in this public repo:
 
 ```sh
-sudo nixos-rebuild switch --flake ~/nix-config#desk
+sudo nixos-rebuild switch --flake ~/natb1/nix-config#desk
 rclone config          # n → gdrive → drive → scope "drive" → defaults → auto config: yes
 systemctl --user start gdrive
 ls /mnt/g && touch /mnt/g/.desk-write-test && rm /mnt/g/.desk-write-test
@@ -2868,7 +2868,7 @@ NetBIOS and domain membership serve nothing here), and a note that the one
 filesystem. The build is checked; the switch and the Samba password are yours:
 
 ```sh
-sudo nixos-rebuild switch --flake ~/nix-config#desk
+sudo nixos-rebuild switch --flake ~/natb1/nix-config#desk
 sudo smbpasswd -a n8                      # its own password, not a Unix one
 systemctl status samba-smbd samba-wsdd    # both active
 stat -c '%U' /srv/media                   # n8

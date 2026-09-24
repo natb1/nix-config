@@ -1,4 +1,4 @@
-# `rebuild`: pull ~/nix-config and switch this machine to it, one command on
+# `rebuild`: pull ~/natb1/nix-config and switch this machine to it, one command on
 # every host. The pull is fast-forward only, so a branch that has diverged from
 # its remote stops it before anything is built; the new commits are listed
 # before the switch. Extra arguments go to the rebuild (e.g. `rebuild --show-trace`).
@@ -22,7 +22,7 @@ in
       name = "rebuild";
       runtimeInputs = [ pkgs.git ];
       text = ''
-        repo="$HOME/nix-config"
+        repo="$HOME/natb1/nix-config"
         before=$(git -C "$repo" rev-parse HEAD)
         git -C "$repo" pull --ff-only
         git -C "$repo" --no-pager log --oneline "$before..HEAD"

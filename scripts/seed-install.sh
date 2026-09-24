@@ -124,7 +124,7 @@ fi
 # and anything not yet pushed, and it means the first boot needs no network to
 # start working.
 say "This repo"
-seed_home "$SRC_REPO" "nix-config"
+seed_home "$SRC_REPO" "natb1/nix-config"
 
 # ------------------------------------------------------------------ Claude
 # Not managed by home-manager (checked: ~/.claude appears nowhere in
@@ -160,11 +160,11 @@ echo
 say "Seeded. After the reboot, expect:"
 cat <<TXT
   - Wi-Fi to associate on its own, with no nmtui step
-  - the repo at $HOME_N/nix-config, on its branch
+  - the repo at $HOME_N/natb1/nix-config, on its branch
   - claude-code and gh already authenticated
 
   First thing to run there:
-    cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk
+    cd ~/natb1/nix-config && sudo nixos-rebuild switch --flake .#desk
 
   If Wi-Fi does not come up, the profile is at
   /etc/NetworkManager/system-connections/ — check it is 600 and root-owned,

@@ -6,6 +6,10 @@ all the hosts that consume it lands atomically.
 
 ## Hosts
 
+On every host, `rebuild` does the pull and the switch below in one command
+([`modules/home/rebuild.nix`](modules/home/rebuild.nix)); the checkout is
+`~/natb1/nix-config` everywhere.
+
 Run the update from a clone of this repo **on the machine being updated** — a
 host can only build and activate itself, and activation needs root on both
 platforms. A host applies `main` **as locked**: it pulls and switches, and never
@@ -26,13 +30,12 @@ reopen the distro; boot re-registers interop and re-runs home-manager.
 ### `desk` — native NixOS on the desktop
 
 ```sh
-cd ~/nix-config && git pull
+cd ~/natb1/nix-config && git pull
 sudo nixos-rebuild switch --flake .#desk
 ```
 
-The checkout is `~/nix-config`, not `~/natb1/nix-config`: it was seeded there by
-[`scripts/seed-install.sh`](scripts/seed-install.sh). The desktop's Linux
-when NixOS is booted; `wsl` stays for Linux on bare-metal Windows. See
+Or `Mod+Shift+R` in niri, which runs `rebuild` in a terminal. `desk` is the
+desktop's Linux when NixOS is booted; `wsl` stays for Linux on bare-metal Windows. See
 [`docs/desktop-migration.md`](docs/desktop-migration.md).
 
 ### `mba` — Apple Silicon MacBook Air
