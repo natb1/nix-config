@@ -3316,8 +3316,11 @@ Checked before the switch: the printer is on USB `5-2` with serial
       it differently — *2026-09-24, exact match*
 - [x] `lpstat -t` → `brother` enabled, accepting, default; `lp -d brother /etc/os-release` prints
       — *2026-09-24: enabled, accepting, default; job `brother-1` printed*
-- [ ] iPhone: `airprint-desk.mobileconfig` installed, and a page prints from
-      the share sheet over Tailscale
+- [x] iPhone: `airprint-desk.mobileconfig` installed, and a page prints from
+      the share sheet over Tailscale — *2026-09-24. There is no default
+      printer to set: iOS has no such setting, and the AirPrint payload has no
+      key for one (only address, path, port, TLS). The print sheet preselects
+      the last printer used*
 - [ ] ~~From the Mac on the LAN~~ — *dropped 2026-09-24, tailnet-only*
 - [x] From the Mac over Tailscale, off the LAN: the `ipp://desk.<tailnet>.ts.net`
       queue prints — *2026-09-24: a page printed. The queue is now declared in
