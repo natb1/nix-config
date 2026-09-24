@@ -277,7 +277,7 @@ way with or without the change, so compare against the base commit there.
 - **Post-flash checklist closed** (2026-09-23) — confirmed in firmware setup:
   Initial Display Output IGD, IOMMU Enabled (not Auto), ErP Disabled. Memory
   runs the kit's **XMP profile** (the kit has no EXPO): `Win32_PhysicalMemory`
-  → 6000 MT/s. It is **not yet validated**, and the rest of
+  → 6000 MT/s. It has passed **one** of the seven validation rows (`stressapptest`, 2026-09-24, `Status: PASS` with a clean `journalctl -k`); the other six, including the hot run, are outstanding, so it is **not yet validated**. The rest of
   [BIOS tuning](#bios-tuning) is deferred. The validation set runs before
   media [Step 3](#step-3--bring-the-media-in); until then an unexplained
   crash means dropping back to JEDEC first.
@@ -577,6 +577,19 @@ two changes later cannot be attributed.
 2. **The kit's rated profile — XMP, not EXPO.** `CMK32GX5M2D6000C36` carries
    an XMP profile only: DDR5-6000, 36-36-36-76, 1.35 V. **On since
    2026-09-23; the baseline (step 1) was skipped, and validation is pending.**
+   **First validation leg passed, 2026-09-24:** `stressapptest -s 3600
+   -M 20000` on the live USB returned `Status: PASS` — 0 hardware incidents,
+   0 errors, 3600.92 s at 39.4 GB/s — and `journalctl -k -g 'mce|EDAC|Hardware
+   Error'` afterwards showed only subsystem banners (`EDAC MC: Ver: 3.0.0`,
+   `MCE: In-kernel MCE decoding enabled`, `RAS: Correctable Errors collector
+   initialized`), no events. 20000 MB rather than the 24000 MB this document
+   suggested, because a live USB's `/nix/store` upper layer is a tmpfs and
+   over-allocating would have OOM-killed the run. Raw output:
+   [`docs/desktop-inventory/12-stressapptest.txt`](./desktop-inventory/12-stressapptest.txt).
+   **That is one row of seven.** MemTest86+, TestMem5, y-cruncher and the hot
+   run are all still outstanding, and the hot run is the one this profile is
+   most likely to fail — see the temperature note below. So the profile is
+   *not* validated yet; it is one leg in.
    That 1.35 V is DDR_VDD/VDDQ, the DIMMs' own rail, supplied by the PMIC on
    each module. It is not VSOC, the CPU's SoC rail, which the step-3 limit
    below is about. The profile does not set VSOC directly, but the firmware
@@ -650,7 +663,7 @@ Each step passes all of these, or it is reverted:
 | TestMem5 (anta777 *extreme* config) | Bare-metal Windows | 3 cycles, zero errors |
 | y-cruncher (VT3 / all tests) | Bare-metal Windows | 1 hour, no errors |
 | CoreCycler | Bare-metal Windows, **Curve Optimizer only** | Every core, several hours overnight |
-| `stressapptest -s 3600 -M <most of free RAM>` | Linux (live USB, later the host) | "Status: PASS" |
+| `stressapptest -s 3600 -M <most of free RAM>` | Linux (live USB, later the host) | "Status: PASS" — **passed 2026-09-24** on the XMP profile, see below |
 | Hot run | Whatever the machine does at its hottest — a long game session plus a build | Nothing below, afterwards |
 | Error logs | Windows Event Viewer → System, source **WHEA-Logger**; Linux `journalctl -k -g 'mce\|EDAC\|Hardware Error'` | **Empty.** A corrected WHEA-19 is a failure, not a warning: it means the margin is gone |
 
