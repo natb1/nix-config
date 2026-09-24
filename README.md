@@ -168,7 +168,9 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   `rclone config reconnect gdrive:`.
 - `desk`'s Samba password for n8, which the `media` share in
   `hosts/desk/media.nix` checks. Samba keeps its own database, separate from
-  Unix accounts; set it with `sudo smbpasswd -a n8`.
+  Unix accounts; set it with `sudo smbpasswd -a n8`. On `mba` the same
+  password sits in the login keychain, saved the first time
+  `hosts/mba/desk.nix` mounts the share ("Remember this password").
 
 ## Naming
 

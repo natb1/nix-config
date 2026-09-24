@@ -3319,9 +3319,11 @@ Checked before the switch: the printer is on USB `5-2` with serial
 - [ ] iPhone: `airprint-desk.mobileconfig` installed, and a page prints from
       the share sheet over Tailscale
 - [ ] ~~From the Mac on the LAN~~ — *dropped 2026-09-24, tailnet-only*
-- [ ] From the Mac over Tailscale, off the LAN: the `ipp://desk.<tailnet>.ts.net`
-      queue prints — *2026-09-24: added, print not yet confirmed. **Add it from
-      Terminal, not the Add Printer window**:
+- [x] From the Mac over Tailscale, off the LAN: the `ipp://desk.<tailnet>.ts.net`
+      queue prints — *2026-09-24: a page printed. The queue is now declared in
+      [`hosts/mba/desk.nix`](../hosts/mba/desk.nix), which runs the same
+      `lpadmin` on every `darwin-rebuild switch`, as does the media share's
+      mount. **By hand, add it from Terminal, not the Add Printer window**:
       `lpadmin -p desk_brother -D "Brother (desk)" -E -v ipp://100.121.40.74/printers/brother -m everywhere`.
       The window's IP tab never offered *AirPrint* under Use, by name or by
       IP, although `curl` got 200 and `ipptool get-printer-attributes` passed
