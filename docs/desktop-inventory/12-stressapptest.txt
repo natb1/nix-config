@@ -64,3 +64,27 @@ copying path '/nix/store/xpr738ai0b26f1z1gqz33nsbriwgi077-stressapptest-1.0.11' 
 2026/09/24-01:25:26(UTC) Log: Seconds remaining: 3080
 2026/09/24-01:25:36(UTC) Log: Seconds remaining: 3070
 2026/09/24-01:25:46(UTC) Log: Seconds remaining: 3060
+2026/09/24-01:25:56(UTC) Log: Seconds remaining: 3050
+2026/09/24-01:26:06(UTC) Log: Seconds remaining: 3040
+2026/09/24-01:26:16(UTC) Log: Seconds remaining: 3030
+2026/09/24-01:26:26(UTC) Log: Seconds remaining: 3020
+2026/09/24-01:26:36(UTC) Log: Seconds remaining: 3010
+2026/09/24-01:26:46(UTC) Log: Seconds remaining: 3000
+2026/09/24-01:26:46(UTC) Log: Pausing worker threads in preparation for power spike (3000 seconds remaining)
+2026/09/24-01:26:56(UTC) Log: Seconds remaining: 2990
+2026/09/24-01:27:01(UTC) Log: Resuming worker threads to cause a power spike (2985 seconds remaining)
+2026/09/24-01:27:06(UTC) Log: Seconds remaining: 2980
+2026/09/24-01:27:16(UTC) Log: Seconds remaining: 2970
+2026/09/24-01:27:26(UTC) Log: Seconds remaining: 2960
+2026/09/24-01:27:36(UTC) Log: Seconds remaining: 2950
+2026/09/24-01:27:46(UTC) Log: Seconds remaining: 2940
+2026/09/24-01:27:56(UTC) Log: Seconds remaining: 2930
+2026/09/24-01:28:06(UTC) Log: Seconds remaining: 2920
+2026/09/24-01:28:16(UTC) Log: Seconds remaining: 2910
+2026/09/24-01:28:26(UTC) Log: Seconds remaining: 2900
+2026/09/24-01:28:36(UTC) Log: Seconds remaining: 2890
+2026/09/24-01:28:46(UTC) Log: Seconds remaining: 2880
+2026/09/24-01:28:56(UTC) Log: Seconds remaining: 2870
+2026/09/24-01:29:06(UTC) Log: Seconds remaining: 2860
+2026/09/24-01:29:16(UTC) Log: Seconds remaining: 2850
+2026/09/24-01:29:26(UTC) Log: Seconds remaining: 2840
