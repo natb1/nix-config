@@ -3200,7 +3200,9 @@ also holding the other four sources un-de-duplicated.
 - [ ] Measure the total size of the five sources **before Phase 2**; it must
       fit in ~730 GB after de-duplication. Budget Google Photos at more than
       its library size — Takeout's album folders are duplicates of media that
-      also lives under `Photos from <year>/`
+      also lives under `Photos from <year>/` — *so far (2026-09-24): Google
+      Drive 22.1 GiB in 2,884 files (`rclone size`, Google Docs excluded);
+      Google Photos 8.2 GB archived. GCS, the MacBook and Flickr to go*
 - [ ] Record the Google Photos item count **before** requesting Takeout — it is
       the only verification the export admits, and it is unreadable afterwards
       if the library has moved on
@@ -3216,7 +3218,12 @@ also holding the other four sources un-de-duplicated.
       browser download into `/srv/media/takeout/`, then `tar -tzf` on the
       part. Downloading is not gated on BIOS tuning (a corrupt copy fails the
       gzip CRC and Google still holds the original); unpacking and the
-      sidecar merge are*
+      sidecar merge are.* *Downloaded and checked the same evening:
+      `/srv/media/takeout/takeout-20260924T222726Z-1-001.tgz`, 8.16 GB,
+      `tar -tzf` clean; 3,012 entries, of which 1,306 are originals under
+      `Photos from 2012` … `2022` (no `-edited`, no `.json`) plus 124 under
+      `Archive`. The library ends in 2022 — worth confirming against
+      photos.google.com that nothing newer is missing*
 - [ ] [BIOS tuning](#bios-tuning) validated — memory proven stable before
       irreplaceable data passes through it
 - [ ] Ingest from Drive, Photos, GCS, the MacBook and Flickr into separate
