@@ -3018,7 +3018,12 @@ also holding the other four sources un-de-duplicated.
 
 - [ ] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled
 - [x] `hosts/desk/media.nix`, imported from `hosts/desk/default.nix` — *2026-09-24*
-- [ ] `smbpasswd -a n8`; mount from the Mac over both LAN and tailnet
+- [ ] `smbpasswd -a n8`; mount from the Mac over both LAN and tailnet —
+      *tailnet done 2026-09-24:* `smbstatus` showed n8 from `100.86.15.63`
+      (IPv4) on SMB3_11 with `media` open, and Finder's `.DS_Store` landed
+      in `/srv/media` as `n8:users 0644`, so auth, the ownership fix and
+      writes all work. Unencrypted at the SMB layer, which is fine inside
+      WireGuard. LAN still to do; it also settles the IPv6 item above
 - [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
       ed25519 key for it
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
