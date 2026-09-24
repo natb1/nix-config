@@ -2203,6 +2203,26 @@ What carries over from the old module is the *lesson*, not the code: a network
 mount that can vanish mid-session needs its failure to be loud, not silent.
 Keep `RemainAfterExit` off and let systemd restart it.
 
+*Landed 2026-09-24 as [`hosts/desk/gdrive.nix`](../hosts/desk/gdrive.nix):* a
+user unit running `rclone mount gdrive: /mnt/g --vfs-cache-mode full`
+(`Type=notify`, `Restart=on-failure` every 30 s, cache capped at 20 G on the
+root filesystem), with `/mnt/g` created n8-owned by tmpfiles so the WSL path
+carries over. The system build is checked; the switch and the OAuth are yours,
+because the token cannot go in this public repo:
+
+```sh
+sudo nixos-rebuild switch --flake ~/nix-config#desk
+rclone config          # n → gdrive → drive → scope "drive" → defaults → auto config: yes
+systemctl --user start gdrive
+ls /mnt/g && touch /mnt/g/.desk-write-test && rm /mnt/g/.desk-write-test
+```
+
+Until `~/.config/rclone/rclone.conf` exists the unit is *skipped* by a
+condition, not failed. After that, a broken remote fails it visibly.
+
+- [ ] `rclone config` done; `systemctl --user status gdrive` active; `/mnt/g`
+      lists Drive and takes a write
+
 Do **not** put Drive in the Windows VM. The VM is not always on, and making a
 file sync depend on a guest being booted rebuilds the exact coupling this
 migration removes.
