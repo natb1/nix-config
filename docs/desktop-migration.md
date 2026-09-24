@@ -38,6 +38,81 @@ plan gates it now — Phase 0 is the only go/no-go.
 
 ---
 
+## Resume here — 2026-09-23
+
+**For a new session picking this up.** This plan lives on PR
+[#1](https://github.com/natb1/nix-config/pull/1)'s branch
+`claude/sweet-hypatia-03wf7f`, not on `main`. The PR stays open while the
+migration runs. Push plan updates to that branch, and fetch and rebase
+first, because other sessions push to it too. The repo is **public**:
+nothing secret goes in, including Wi-Fi PSKs and tokens.
+
+**Where things stand:** the Windows side of Phase 0 is done, Windows boots
+from its own ESP on the 2 TB drive, firmware is F43c with the post-flash
+checklist closed, and memory runs the kit's XMP profile (unvalidated) — see
+[Status](#status--2026-09-21). The live USB is the 32 GB "ASolid USB" stick
+with **NixOS 26.05 graphical**
+(`nixos-graphical-26.05.10478.1bc55b9def81-x86_64-linux.iso`, SHA-256
+`2EB51809…A64E5B6C`), written raw 2026-09-23. The ISO was hash-checked
+before the write; the stick is read back and hash-checked against it
+before the first boot.
+
+**Next: boot the live USB and do [Phase 0](#phase-0--inventory-and-the-gono-go-gate)'s
+Linux pass.** Nothing is written to either drive in this step.
+
+1. **Boot it.** Stick in, power on, **F12** at the Gigabyte logo, then pick
+   the **`UEFI:`** entry for the stick. Secure Boot is off, so it boots as is.
+2. **Network.** Wi-Fi is the only link (the Ethernet port is not cabled). Use
+   the desktop's network menu or `nmtui`.
+3. **Start a session on the live USB**, so it can run the commands itself.
+   Everything lives in RAM, so these steps repeat on every boot:
+   ```sh
+   nix-shell -p git gh
+   gh auth login                        # browser device flow
+   gh repo clone natb1/nix-config && cd nix-config
+   git switch claude/sweet-hypatia-03wf7f
+   git config user.name 'Nathan Buesgens'; git config user.email nathan@natb1.com
+   NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features 'nix-command flakes' \
+     run --impure nixpkgs#claude-code
+   ```
+   Then tell it: *"Continue the desktop migration from 'Resume here' in
+   docs/desktop-migration.md."* If a session on the live USB is not wanted,
+   run the same commands by hand. Save their output into the repo checkout,
+   push it, and continue from WSL.
+4. **What the session does there**, with tools from
+   `nix-shell -p pciutils usbutils hwloc fio smartmontools dmidecode iw lm_sensors nvme-cli stressapptest`:
+   - [ ] The Phase 0 script, items 1–5 (6–7 optional). Save each output raw
+         under `docs/desktop-inventory/` on the PR branch.
+   - [ ] **The gate:** judge both IOMMU groups, the dGPU (`1002:73ff` +
+         `1002:ab28`) and the 2 TB NVMe controller, against
+         [the gate](#phase-0--inventory-and-the-gono-go-gate), and record
+         the verdict in Status. A dirty group stops here, and the
+         alternatives go to the user before anything else.
+   - [ ] `nixos-generate-config --no-filesystems --show-hardware-config` →
+         `docs/desktop-inventory/hardware-configuration.nix` (Phase 1 moves it
+         to `hosts/desk/`).
+   - [ ] `ls -l /dev/disk/by-id/`, `smartctl -a` per drive, `lscpu -e`,
+         `dmidecode -t system -t baseboard`, against the SMBIOS row of the
+         [Windows-side table](#phase-0-windows-side--measured-2026-09-21) (UUID
+         byte order).
+   - [ ] `ip link` → `<FILL_ME_WLAN_IF>`; `lspci -nn -d 1002:73ff` →
+         `<DGPU_ADDR>` (and `<DGPU_ADDR_UNDERSCORED>`); the iGPU's address →
+         `<IGPU_ADDR>`; the 2 TB drive's controller (step 3 of the script) →
+         `<FAST_NVME_ADDR>`; the 1 TB drive's by-id → `<FILL_ME_BULK>` /
+         `<BULK>`.
+   - [ ] `iw phy` → WoWLAN support with magic packet (the
+         [residual](#residuals--open-not-blocking-the-next-step)).
+   - [ ] `sensors-detect --auto; sensors` → are the fans visible
+         ([Fan control](#fan-control))?
+   - [ ] Optional, and the first leg of XMP validation:
+         `stressapptest -s 3600 -M 24000` → "Status: PASS", and
+         `journalctl -k -g 'mce|EDAC|Hardware Error'` empty afterwards.
+   - [ ] Fill the placeholders above throughout the plan, tick the Phase 0
+         checklist, update Status and this section, and push.
+5. **Then**, depending on the gate: **Phase 1** (land `hosts/desk` from the
+   hardware config — WSL or the live USB both work) and **Phase 2** (install).
+   Phase 2 boots this same stick again.
+
 ## Status — 2026-09-21
 
 ### Done
@@ -92,8 +167,8 @@ plan gates it now — Phase 0 is the only go/no-go.
 
 ### Next, in order
 
-1. **Phase 0, Linux side** — live USB (NixOS 26.05 graphical, written over
-   the Q-Flash stick): IOMMU groups (**the go/no-go gate**),
+1. **Phase 0, Linux side** — see [Resume here](#resume-here--2026-09-23).
+   Live USB (NixOS 26.05 graphical, written over the Q-Flash stick): IOMMU groups (**the go/no-go gate**),
    `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
    `nixos-generate-config`, interface names from `ip link`, and the fan
    sensors ([Fan control](#fan-control)).
