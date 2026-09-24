@@ -2226,7 +2226,19 @@ condition, not failed. After that, a broken remote fails it visibly.
       without the menus. The mount lists Drive; a file written under `/mnt/g`
       showed up on `rclone lsf gdrive:` within seconds, and deleting it removed
       it there too*
-- [ ] **Own OAuth client ID for the `gdrive` remote — do this soon.** rclone
+- [x] **Own OAuth client ID for the `gdrive` remote** — *done 2026-09-24: a
+      Desktop-app client in the Google Cloud project `nix-config-509614`, set
+      with `rclone config update gdrive client_id=… client_secret=…` and
+      re-authorised with `rclone config reconnect gdrive: --auto-confirm`. The
+      shared-client warning is gone, and a write and a delete through `/mnt/g`
+      both reached Drive again.* **One caveat to check:** if the project's
+      consent screen is external and its publishing status is still
+      **Testing**, Google expires the refresh token after **7 days** and the
+      mount dies with `invalid_grant`. Set it to *In production* (Google Auth
+      Platform → Audience → Publish app). A personal app needs no
+      verification for that, only the "unverified app" click-through. If it
+      has already expired, `rclone config reconnect gdrive:` fixes it.
+      The original task, for reference: rclone
       warns on every call that the remote uses its *shared* Google Drive
       client ID, which "is being retired and will stop working during 2026".
       When it goes, the mount stops. Create a client ID in a Google Cloud
