@@ -68,6 +68,9 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
         to the iGPU and keep it off the dGPU. Phase 4 needs this.
       - **If it is still the dGPU:** leave niri's pinning commented out and
         fix the firmware first.
+      - *Measured 2026-09-24 on first boot:* `boot_vga` 1 on `12:00.0`, 0 on
+        `03:00.0`; `card2-HDMI-A-2` (iGPU, `12:00.0`) **connected**,
+        `card1-HDMI-A-1` (dGPU, `03:00.0`) disconnected. Pinning enabled.
 - [x] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
       `sudo systemctl restart NetworkManager`, and check the profile at
       `/etc/NetworkManager/system-connections/` is 600 and root-owned.
