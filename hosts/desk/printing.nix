@@ -10,8 +10,9 @@
 # Tailnet-only, plus the Windows guest over virbr0 — the same scope as the
 # media share (hosts/desk/media.nix), and for the same reason: nothing on
 # Wi-Fi reaches it, so nothing on Wi-Fi is told about it. What that gives up
-# is AirPrint discovery on the home network — the Mac adds the queue once by
-# address, and an iPhone, which cannot add a printer by address, cannot print.
+# is AirPrint discovery on the home network: the Mac adds the queue once by
+# address, and an iPhone — which has no settings screen for that — installs
+# ./airprint-desk.mobileconfig, a profile that adds it by address instead.
 # Opening Wi-Fi is a firewall rule, an allowFrom range and `browsing = true`.
 
 { pkgs, ... }:

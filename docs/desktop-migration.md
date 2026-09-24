@@ -3284,8 +3284,15 @@ following the media share's tailnet-only decision:
 - **`cups-browsed` off.** It defaults on wherever avahi is, discovers *other*
   machines' printers, and is the daemon the 2024 CUPS RCE chain ran through.
 
-The cost: **the iPhone cannot print**, because iOS adds printers only by
-discovery. Opening Wi-Fi is a firewall rule, a LAN range in `allowFrom`, and
+The cost is discovery, not printing. The Mac adds the queue by address. **The
+iPhone does too, through a configuration profile:** iOS has no settings screen
+for a printer by address, but its `com.apple.airprint` payload takes a hostname
+and resource path and is installable by hand, no MDM (Apple's schema:
+`supervised: false`, `allowmanualinstall: true`).
+[`hosts/desk/airprint-desk.mobileconfig`](../hosts/desk/airprint-desk.mobileconfig)
+is that profile: AirDrop it from the Mac, then *Settings → Profile Downloaded →
+Install*. (An earlier note here said the iPhone could not print at all; that
+was wrong.) Opening Wi-Fi is a firewall rule, a LAN range in `allowFrom`, and
 `browsing = true`.
 
 Checked before the switch: the printer is on USB `5-2` with serial
@@ -3293,10 +3300,13 @@ Checked before the switch: the printer is on USB `5-2` with serial
 
 ### Checklist
 
-- [ ] After Phase 2: `lpinfo -v` shows the `usb://Brother/HL-L2305%20series?serial=…`
+- [x] After Phase 2: `lpinfo -v` shows the `usb://Brother/HL-L2305%20series?serial=…`
       URI exactly as in `printing.nix`; fix the string if the backend reports
-      it differently
-- [ ] `lpstat -t` → `brother` enabled, accepting, default; `lp -d brother /etc/os-release` prints
+      it differently — *2026-09-24, exact match*
+- [x] `lpstat -t` → `brother` enabled, accepting, default; `lp -d brother /etc/os-release` prints
+      — *2026-09-24: enabled, accepting, default; job `brother-1` printed*
+- [ ] iPhone: `airprint-desk.mobileconfig` installed, and a page prints from
+      the share sheet over Tailscale
 - [ ] ~~From the Mac on the LAN~~ — *dropped 2026-09-24, tailnet-only*
 - [ ] From the Mac over Tailscale, off the LAN: the `ipp://desk.<tailnet>.ts.net`
       queue prints
