@@ -17,6 +17,7 @@
     ../../modules/nixos
     ./hardware-configuration.nix
     ./disko.nix
+    ./desktop.nix
   ];
 
   # Simultaneously the Tailscale node name, what avahi publishes (desk.local),

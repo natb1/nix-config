@@ -127,6 +127,7 @@
           (home {
             hostPlatform = "x86_64-linux";
             homeDirectory = "/home/n8";
+            extraModules = [ ./hosts/desk/home ];
           })
         ];
       };
