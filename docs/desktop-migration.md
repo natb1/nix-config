@@ -84,8 +84,11 @@ plan gates it now — Phase 0 is the only go/no-go.
   [post-flash checklist](#firmware-update).
 - **Post-flash checklist closed** (2026-09-23) — confirmed in firmware setup:
   Initial Display Output IGD, IOMMU Enabled (not Auto), ErP Disabled. Memory
-  stays at the **JEDEC 4800** default for now. The kit is XMP-only (no EXPO),
-  and [BIOS tuning](#bios-tuning) is deferred.
+  runs the kit's **XMP profile** (the kit has no EXPO): `Win32_PhysicalMemory`
+  → 6000 MT/s. It is **not yet validated**, and the rest of
+  [BIOS tuning](#bios-tuning) is deferred. The validation set runs before
+  media [Step 3](#step-3--bring-the-media-in); until then an unexplained
+  crash means dropping back to JEDEC first.
 
 ### Next, in order
 
@@ -107,9 +110,10 @@ Independent of the list above, in firmware setup, any time:
 
 Later, unscheduled:
 
-- **[BIOS tuning](#bios-tuning)** — memory (the kit's XMP rating, then
-  timings), then the CPU, then fast boot. Deferred 2026-09-23: the JEDEC
-  defaults are the safe state, so nothing above waits on it. Done after
+- **[BIOS tuning](#bios-tuning)** — validate the XMP profile already on,
+  then timings, then the CPU, then fast boot. Deferred 2026-09-23: nothing
+  above waits on it, **except that the XMP profile is validated before media
+  Step 3**. Done after
   Phase 2b, a failed memory-training boot that ends in a CMOS clear also costs
   a Secure Boot key re-enrolment — see
   [Why the ordering matters](#why-the-ordering-matters-here).
@@ -208,7 +212,7 @@ the text was wrong about how the machine behaves.
 | dGPU's Linux PCI address | [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) | `<DGPU_ADDR>` — Windows reports bus 3, but Linux numbers buses independently; take it from `lspci -nn -d 1002:73ff` on the live USB |
 | Wake-on-WLAN on the MT7922 | [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) | `iw phy` on the live USB must list `WoWLAN support` with `wake up on magic packet`. If it does not, suspend is off before it is tried |
 | ancs4linux: pinned revision and hash | [iPhone notifications](#iphone-notifications-over-ancs) | Not in nixpkgs; packaged in this repo, pinned by rev and hash like every other out-of-tree artifact here |
-| Memory kit's DRAM IC | [BIOS tuning](#bios-tuning) | Kit: 2 × 16 GB Corsair Vengeance **`CMK32GX5M2D6000C36`** — **XMP only, no EXPO**: DDR5-6000 36-36-36-76 at 1.35 V; running JEDEC 4800 after the flash. The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
+| Memory kit's DRAM IC | [BIOS tuning](#bios-tuning) | Kit: 2 × 16 GB Corsair Vengeance **`CMK32GX5M2D6000C36`** — **XMP only, no EXPO**: DDR5-6000 36-36-36-76 at 1.35 V; running its XMP profile since 2026-09-23, not yet validated. The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
 
 ### Firmware update
 
@@ -263,9 +267,9 @@ A firmware update resets settings to defaults. Afterwards, re-check:
       NixOS exists) — *2026-09-23: `Get-Partition | ? IsSystem` → disk 1,
       partition 3*
 - [x] XMP/EXPO memory profile, if it was on before — *after the flash:
-      4800 MT/s, so off, and left off (2026-09-23). Whether it was on under
-      F9d went unrecorded. It is [BIOS tuning](#bios-tuning)'s first step,
-      deferred* — and after
+      4800 MT/s, so off. Whether it was on under F9d went unrecorded. Turned
+      on 2026-09-23 (XMP, 6000 MT/s); validating it is
+      [BIOS tuning](#bios-tuning) step 2* — and after
       [BIOS tuning](#bios-tuning), every setting in its table: reload the saved
       profile, then check it against the table, since a profile saved on one
       BIOS version is not guaranteed to load on the next
@@ -291,8 +295,8 @@ A firmware update resets settings to defaults. Afterwards, re-check:
 ### BIOS tuning
 
 **Deferred 2026-09-23 — later, unscheduled.** The machine runs the F43c
-defaults meanwhile, and those are the safe state: nothing in this plan waits
-on tuning. Whenever it happens, each change is validated before the machine
+defaults plus the kit's XMP profile meanwhile. Nothing in this plan waits on
+tuning, except that the XMP profile is validated before media Step 3. Whenever it happens, each change is validated before the machine
 runs with the media on board ([Step 3](#step-3--bring-the-media-in)). If it
 happens after [Phase 2b](#phase-2b--restore-secure-boot), see the key cost
 below. The firmware defaults run this
@@ -330,7 +334,14 @@ two changes later cannot be attributed.
    above). Run the validation set below at defaults, so a later failure has a
    known-good point to fall back to.
 2. **The kit's rated profile — XMP, not EXPO.** `CMK32GX5M2D6000C36` carries
-   an XMP profile only: DDR5-6000, 36-36-36-76, 1.35 V. That is fine on this
+   an XMP profile only: DDR5-6000, 36-36-36-76, 1.35 V. **On since
+   2026-09-23; the baseline (step 1) was skipped, and validation is pending.**
+   That 1.35 V is DDR_VDD/VDDQ, the DIMMs' own rail, supplied by the PMIC on
+   each module. It is not VSOC, the CPU's SoC rail, which the step-3 limit
+   below is about. The profile does not set VSOC directly, but the firmware
+   raises it automatically to run DDR5-6000 (typically to ~1.25 V), and
+   AGESA since 2023 caps it at 1.30 V. Read it off *Tweaker* (*VCORE SOC*),
+   or off HWiNFO's *CPU SoC Voltage (SVI3)*. XMP is fine on this
    board: Gigabyte's *Tweaker* → *XMP/EXPO Profile* reads either kind of SPD
    profile, so select the kit's XMP profile there. If it is not offered, or
    will not train, enter the same values by hand (DRAM frequency 6000;
@@ -476,7 +487,10 @@ anything compiles. A starting point, *Slope* mode, CPU input: ~30–40 % up to
 interval. Leave *FAN Stop* off on the CPU fan.
 
 **Less heat beats any curve.** A mini-ITX cooler has little headroom. **Eco
-Mode** (65 W: PPT 142 W → 88 W, offered in the PBO / AMD Overclocking menus)
+Mode** is AMD's preset that runs the 105 W 7600X within a 65 W TDP's power
+limits (PPT 142 W → 88 W), in effect making it a non-X 7600. Light-load and
+single-core boost are untouched, and only sustained all-core loads clock
+lower. It is offered in the PBO / AMD Overclocking menus, and it
 costs a few percent of all-core throughput, meaning compiles, costs nothing
 measurable in games, and cuts load temperatures sharply. It is the biggest
 single lever on noise here. Curve Optimizer ([BIOS tuning](#bios-tuning)
