@@ -113,7 +113,7 @@ animations {
 binds {
     Mod+Shift+Slash { show-hotkey-overlay; }
 
-    Mod+Return hotkey-overlay-title="Terminal" { spawn "wezterm"; }
+    Mod+Return hotkey-overlay-title="Terminal" { spawn "xdg-terminal-exec"; }
     Mod+D hotkey-overlay-title="Launcher" { spawn "fuzzel"; }
     Mod+Shift+N hotkey-overlay-title="Notifications" { spawn "swaync-client" "-t" "-sw"; }
 

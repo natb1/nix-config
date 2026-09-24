@@ -32,6 +32,18 @@
 
   xdg.configFile."niri/config.kdl".source = ./niri.kdl;
 
+  # The desktop's terminal. WezTerm stays installed (modules/home/wezterm.nix)
+  # as the mux client for the WSL box; Ghostty is what opens locally. Its
+  # defaults — bundled JetBrains Mono with Nerd Font symbols — need no
+  # settings. Which terminal is "the" terminal is decided once, system-side,
+  # by xdg-terminal-exec (../desktop.nix); niri's Mod+Return and fuzzel's
+  # Terminal=true apps both go through it.
+  programs.ghostty.enable = true;
+  xdg.configFile."fuzzel/fuzzel.ini".text = ''
+    [main]
+    terminal=xdg-terminal-exec
+  '';
+
   programs.waybar = {
     enable = true;
     settings.mainBar = {
