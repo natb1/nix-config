@@ -78,6 +78,26 @@ if [ ! "$(lsblk -ndo TRAN "$DEV")" = "usb" ]; then
   die "$DEV is not a USB device. Refusing. (Both NVMe drives are off limits.)"
 fi
 
+# ------------------------------------------------------- resume, or start?
+# THIS CHECK MUST COME FIRST, before any free-space arithmetic. A stock NixOS
+# ISO has exactly two partitions, so a third one is necessarily ours from an
+# earlier run. And once it exists it runs to the end of the disk, so the
+# free-space maths below correctly computes zero and aborts — which is right
+# for a fresh stick and wrong for a resume. Ordering this after the sizing is
+# how the first attempt failed with "only 0 sectors free".
+PART3=$(sfdisk -d "$DEV" | awk '/^\/dev\// { n++ } n > 2 { print $1; exit }')
+
+if [ -n "$PART3" ]; then
+  SKIP_APPEND=1
+  PART="$PART3"
+  say "Found $PART from an earlier run — skipping the append, continuing from there."
+  [ -b "$PART" ] || die "$PART is in the table but has no device node (try: partx -a $DEV)"
+else
+  SKIP_APPEND=0
+fi
+
+if [ "$SKIP_APPEND" = "0" ]; then
+
 # Find the first free sector: one past the end of the last existing partition,
 # rounded up to a 2048-sector boundary.
 #
@@ -126,38 +146,13 @@ sfdisk -d "$DEV" | awk -v ns="$START" -v ne="$((START + SIZE - 1))" '
 
 say "Last used sector: $LAST_END"
 say "New partition:    start $START, size $SIZE sectors ($((SIZE / 2 / 1024 / 1024)) GiB)"
+echo
+read -rp "Append this partition to $DEV? [type YES] " ok
+[ "$ok" = "YES" ] || die "aborted"
 
-# Resumable. If a partition already starts exactly where we were going to put
-# one, a previous run got this far; reuse it rather than appending a second.
-# Without this, re-running after a failure in a later step (LUKS, mkfs) eats
-# another 25 GiB and leaves an orphan.
-EXISTING=$(sfdisk -d "$DEV" | awk -v want="$START" '
-  /^\/dev\// {
-    line = $0
-    if (match(line, /start=[ \t]*[0-9]+/)) { s = substr(line, RSTART, RLENGTH); sub(/start=[ \t]*/, "", s) }
-    if (s + 0 == want + 0) { print $1; exit }
-  }')
-
-if [ -n "$EXISTING" ]; then
-  say "A partition already starts at $START ($EXISTING) — a previous run made it."
-  say "Skipping the append and continuing from there."
-  SKIP_APPEND=1
-else
-  SKIP_APPEND=0
-  echo
-  read -rp "Append this partition to $DEV? [type YES] " ok
-  [ "$ok" = "YES" ] || die "aborted"
-fi
+fi   # end of the fresh-stick path
 
 # ------------------------------------------------------------- the partition
-# Back up sector 0 before touching it. This is what makes the whole operation
-# reversible: the only write to existing data is 16 bytes of partition-table
-# entry, and `dd if=$MBR_BAK of=$DEV bs=512 count=1` puts it back exactly.
-MBR_BAK="${MBR_BAK:-/tmp/$(basename "$DEV")-mbr-$(date +%Y%m%d%H%M%S).bak}"
-dd if="$DEV" of="$MBR_BAK" bs=512 count=1 status=none
-say "Sector 0 backed up to $MBR_BAK — restore with:"
-say "  sudo dd if=$MBR_BAK of=$DEV bs=512 count=1"
-
 # --append is the whole safety argument: it adds an entry and leaves the
 # sector-0 partition 1 exactly as it is. Verified with --no-act on
 # 2026-09-24: sda1 came back as "start 0, bootable" unchanged.
@@ -177,6 +172,15 @@ say "  sudo dd if=$MBR_BAK of=$DEV bs=512 count=1"
 # standing between this script and the ISO. --no-reread disables one check;
 # --force disables the ones worth keeping.
 if [ "$SKIP_APPEND" = "0" ]; then
+  # Back up sector 0 before touching it. This is what makes the operation
+  # reversible: the only write to existing data is 16 bytes of partition-table
+  # entry, and `dd if=$MBR_BAK of=$DEV bs=512 count=1` puts it back exactly.
+  # Only on the fresh path — on a resume there is nothing left to undo.
+  MBR_BAK="${MBR_BAK:-/tmp/$(basename "$DEV")-mbr-$(date +%Y%m%d%H%M%S).bak}"
+  dd if="$DEV" of="$MBR_BAK" bs=512 count=1 status=none
+  say "Sector 0 backed up to $MBR_BAK — restore with:"
+  say "  sudo dd if=$MBR_BAK of=$DEV bs=512 count=1"
+
   say "Appending partition (sfdisk --append --wipe never --no-reread)"
   printf 'start=%s, size=%s, type=83\n' "$START" "$SIZE" \
     | sfdisk --append --wipe never --no-reread "$DEV"
@@ -187,20 +191,21 @@ if [ "$SKIP_APPEND" = "0" ]; then
   # /sys/block/*/start below, not partx's exit status.
   say "Telling the kernel about it (partx -a; the device is mounted, so no full re-read)"
   partx -a "$DEV" || true
+
+  # Identify what we just made by MATCHING ITS START SECTOR, not by taking the
+  # highest-numbered or last-listed partition. Those are assumptions about
+  # ordering; this is the actual identity, and the next step formats it.
+  # (On the resume path PART was already set from the table, above.)
+  PART=$(sfdisk -d "$DEV" | awk -v want="$START" '
+    /^\/dev\// {
+      line = $0
+      if (match(line, /start=[ \t]*[0-9]+/)) { s = substr(line, RSTART, RLENGTH); sub(/start=[ \t]*/, "", s) }
+      if (s + 0 == want + 0) { print $1; exit }
+    }')
+
+  [ -n "$PART" ] || die "could not find a partition starting at $START after --append"
+  [ -b "$PART" ] || die "$PART is not a block device (did partx -a fail?)"
 fi
-
-# Identify what we just made by MATCHING ITS START SECTOR, not by taking the
-# highest-numbered or last-listed partition. Those are assumptions about
-# ordering; this is the actual identity, and the next step formats it.
-PART=$(sfdisk -d "$DEV" | awk -v want="$START" '
-  /^\/dev\// {
-    line = $0
-    if (match(line, /start=[ \t]*[0-9]+/)) { s = substr(line, RSTART, RLENGTH); sub(/start=[ \t]*/, "", s) }
-    if (s + 0 == want + 0) { print $1; exit }
-  }')
-
-[ -n "$PART" ] || die "could not find a partition starting at $START after --append"
-[ -b "$PART" ] || die "$PART is not a block device (did partx -a fail?)"
 
 # Last check before the first destructive command: whatever we are about to
 # format must be empty. If it has a filesystem, we got the wrong partition.
