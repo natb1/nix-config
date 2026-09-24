@@ -1,0 +1,52 @@
+this path will be fetched (149.9 KiB download, 336.3 KiB unpacked):
+  /nix/store/xpr738ai0b26f1z1gqz33nsbriwgi077-stressapptest-1.0.11
+copying path '/nix/store/xpr738ai0b26f1z1gqz33nsbriwgi077-stressapptest-1.0.11' from 'https://cache.nixos.org'...
+2026/09/24-01:16:44(UTC) Log: Commandline - stressapptest -s 3600 -M 20000
+2026/09/24-01:16:44(UTC) Stats: SAT revision 1.0.11_autoconf, 64 bit binary
+2026/09/24-01:16:44(UTC) Log: reproducible @ reproducible on Tue Jan  1 00:00:00 UTC 1980 from open source release
+2026/09/24-01:16:44(UTC) Log: 1 nodes, 12 cpus.
+2026/09/24-01:16:44(UTC) Log: Defaulting to 12 copy threads
+2026/09/24-01:16:44(UTC) Log: Prefer plain malloc memory allocation.
+2026/09/24-01:16:44(UTC) Log: Using mmap() allocation at 0x7e4a50800000.
+2026/09/24-01:16:44(UTC) Stats: Starting SAT, 20000M, 3600 seconds
+2026/09/24-01:16:46(UTC) Log: Region mask: 0x1
+2026/09/24-01:16:56(UTC) Log: Seconds remaining: 3590
+2026/09/24-01:17:06(UTC) Log: Seconds remaining: 3580
+2026/09/24-01:17:16(UTC) Log: Seconds remaining: 3570
+2026/09/24-01:17:26(UTC) Log: Seconds remaining: 3560
+2026/09/24-01:17:36(UTC) Log: Seconds remaining: 3550
+2026/09/24-01:17:46(UTC) Log: Seconds remaining: 3540
+2026/09/24-01:17:56(UTC) Log: Seconds remaining: 3530
+2026/09/24-01:18:06(UTC) Log: Seconds remaining: 3520
+2026/09/24-01:18:16(UTC) Log: Seconds remaining: 3510
+2026/09/24-01:18:26(UTC) Log: Seconds remaining: 3500
+2026/09/24-01:18:36(UTC) Log: Seconds remaining: 3490
+2026/09/24-01:18:46(UTC) Log: Seconds remaining: 3480
+2026/09/24-01:18:56(UTC) Log: Seconds remaining: 3470
+2026/09/24-01:19:06(UTC) Log: Seconds remaining: 3460
+2026/09/24-01:19:16(UTC) Log: Seconds remaining: 3450
+2026/09/24-01:19:26(UTC) Log: Seconds remaining: 3440
+2026/09/24-01:19:36(UTC) Log: Seconds remaining: 3430
+2026/09/24-01:19:46(UTC) Log: Seconds remaining: 3420
+2026/09/24-01:19:56(UTC) Log: Seconds remaining: 3410
+2026/09/24-01:20:06(UTC) Log: Seconds remaining: 3400
+2026/09/24-01:20:16(UTC) Log: Seconds remaining: 3390
+2026/09/24-01:20:26(UTC) Log: Seconds remaining: 3380
+2026/09/24-01:20:36(UTC) Log: Seconds remaining: 3370
+2026/09/24-01:20:46(UTC) Log: Seconds remaining: 3360
+2026/09/24-01:20:56(UTC) Log: Seconds remaining: 3350
+2026/09/24-01:21:06(UTC) Log: Seconds remaining: 3340
+2026/09/24-01:21:16(UTC) Log: Seconds remaining: 3330
+2026/09/24-01:21:26(UTC) Log: Seconds remaining: 3320
+2026/09/24-01:21:36(UTC) Log: Seconds remaining: 3310
+2026/09/24-01:21:46(UTC) Log: Seconds remaining: 3300
+2026/09/24-01:21:56(UTC) Log: Seconds remaining: 3290
+2026/09/24-01:22:06(UTC) Log: Seconds remaining: 3280
+2026/09/24-01:22:16(UTC) Log: Seconds remaining: 3270
+2026/09/24-01:22:26(UTC) Log: Seconds remaining: 3260
+2026/09/24-01:22:36(UTC) Log: Seconds remaining: 3250
+2026/09/24-01:22:46(UTC) Log: Seconds remaining: 3240
+2026/09/24-01:22:56(UTC) Log: Seconds remaining: 3230
+2026/09/24-01:23:06(UTC) Log: Seconds remaining: 3220
+2026/09/24-01:23:16(UTC) Log: Seconds remaining: 3210
+2026/09/24-01:23:26(UTC) Log: Seconds remaining: 3200

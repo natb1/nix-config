@@ -38,7 +38,7 @@ plan gates it now — Phase 0 is the only go/no-go.
 
 ---
 
-## Resume here — 2026-09-23
+## Resume here — 2026-09-24
 
 **For a new session picking this up.** This plan lives on PR
 [#1](https://github.com/natb1/nix-config/pull/1)'s branch
@@ -57,25 +57,41 @@ with **NixOS 26.05 graphical**
 before the write; the stick is read back and hash-checked against it
 before the first boot.
 
-A cloud session on 2026-09-24 did the one Phase 1 step that needs no hardware
-data (the tailscale watcher move, as its own commit). Everything below needs
-the machine itself, so it runs from the live USB. Cloud sessions can still
-evaluate the flake: install Nix from `releases.nixos.org`'s tarball
-(single-user, with `build-users-group =` in `/etc/nix/nix.conf`), then pass
-`--override-input <name> 'git+https://github.com/<owner>/<repo>?rev=<locked rev>&shallow=1'`
-for each locked input, because the proxy serves git clones of GitHub but not
-tarballs. In that container `nix flake check`'s wezterm tests fail the same
-way with or without the change, so compare against the base commit there.
+**Phase 0 is finished and the gate passed.** The Linux pass ran from the live
+USB on 2026-09-24: raw output is committed under
+[`docs/desktop-inventory/`](./desktop-inventory/), read off in the
+[Linux-side table](#phase-0-linux-side--measured-2026-09-24), and the verdict is
+[here](#the-gate--passed-2026-09-24) — **dGPU `03:00.0` alone in IOMMU group 14,
+its audio `03:00.1` alone in 15, the 2 TB NVMe controller `11:00.0` alone in
+28.** Every hardware placeholder in this plan's config blocks now holds a real
+value, so the Phase 1–4 code below can be read as final rather than as a
+template. **Nothing has been written to either drive yet.** The 1 TB drive still
+carries the old Linux install; Phase 2 is the first destructive step.
 
-**Next: boot the live USB and do [Phase 0](#phase-0--inventory-and-the-gono-go-gate)'s
-Linux pass.** Nothing is written to either drive in this step.
+**One action came out of the pass, and it is physical:
+[the monitor is cabled to the dGPU](#the-monitor-is-plugged-into-the-wrong-gpu),
+so the firmware posts on it and simpledrm holds the card Phase 4 wants to give
+away.** Move the display cable to the motherboard and re-check `boot_vga` from
+the live USB. It blocks Phase 4, not Phase 1 or Phase 2.
+
+**Next: [Phase 1](#phase-1--land-hostsdesk-in-the-flake) — land `hosts/desk` in
+the flake.** It needs no hardware, so WSL, a cloud session and the live USB are
+all fine. Start by moving
+[`docs/desktop-inventory/hardware-configuration.nix`](./desktop-inventory/hardware-configuration.nix)
+to `hosts/desk/`. Then [Phase 2](#phase-2--install-nixos-on-the-bulk-drive)
+installs, from this same stick.
+
+### Booting the live USB again (Phase 2, or any re-measurement)
+
+Everything lives in RAM, so all of this repeats on every boot.
 
 1. **Boot it.** Stick in, power on, **F12** at the Gigabyte logo, then pick
    the **`UEFI:`** entry for the stick. Secure Boot is off, so it boots as is.
-2. **Network.** Wi-Fi is the only link (the Ethernet port is not cabled). Use
-   the desktop's network menu or `nmtui`.
-3. **Start a session on the live USB**, so it can run the commands itself.
-   Everything lives in RAM, so these steps repeat on every boot:
+   The stick is the 32 GB "ASolid USB" (`usb-ASolid_USB_B0000492-0:0`).
+2. **Network.** Wi-Fi is the only link (the Ethernet port is not cabled, and
+   `enp13s0` confirms NO-CARRIER). Use the desktop's network menu or `nmtui`.
+   `sudo` on the live user is passwordless.
+3. **Start a session on the live USB**, so it can run the commands itself:
    ```sh
    nix-shell -p git gh
    gh auth login                        # browser device flow
@@ -85,43 +101,22 @@ Linux pass.** Nothing is written to either drive in this step.
    NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features 'nix-command flakes' \
      run --impure nixpkgs#claude-code
    ```
-   Then tell it: *"Continue the desktop migration from 'Resume here' in
-   docs/desktop-migration.md."* If a session on the live USB is not wanted,
-   run the same commands by hand. Save their output into the repo checkout,
-   push it, and continue from WSL.
-4. **What the session does there**, with tools from
-   `nix-shell -p pciutils usbutils hwloc fio smartmontools dmidecode iw lm_sensors nvme-cli stressapptest`:
-   - [ ] The Phase 0 script, items 1–5 (6–7 optional). Save each output raw
-         under `docs/desktop-inventory/` on the PR branch.
-   - [ ] **The gate:** judge both IOMMU groups, the dGPU (`1002:73ff` +
-         `1002:ab28`) and the 2 TB NVMe controller, against
-         [the gate](#phase-0--inventory-and-the-gono-go-gate), and record
-         the verdict in Status. A dirty group stops here, and the
-         alternatives go to the user before anything else.
-   - [ ] `nixos-generate-config --no-filesystems --show-hardware-config` →
-         `docs/desktop-inventory/hardware-configuration.nix` (Phase 1 moves it
-         to `hosts/desk/`).
-   - [ ] `ls -l /dev/disk/by-id/`, `smartctl -a` per drive, `lscpu -e`,
-         `dmidecode -t system -t baseboard`, against the SMBIOS row of the
-         [Windows-side table](#phase-0-windows-side--measured-2026-09-21) (UUID
-         byte order).
-   - [ ] `ip link` → `<FILL_ME_WLAN_IF>`; `lspci -nn -d 1002:73ff` →
-         `<DGPU_ADDR>` (and `<DGPU_ADDR_UNDERSCORED>`); the iGPU's address →
-         `<IGPU_ADDR>`; the 2 TB drive's controller (step 3 of the script) →
-         `<FAST_NVME_ADDR>`; the 1 TB drive's by-id → `<FILL_ME_BULK>` /
-         `<BULK>`.
-   - [ ] `iw phy` → WoWLAN support with magic packet (the
-         [residual](#residuals--open-not-blocking-the-next-step)).
-   - [ ] `sensors-detect --auto; sensors` → are the fans visible
-         ([Fan control](#fan-control))?
-   - [ ] Optional, and the first leg of XMP validation:
-         `stressapptest -s 3600 -M 24000` → "Status: PASS", and
-         `journalctl -k -g 'mce|EDAC|Hardware Error'` empty afterwards.
-   - [ ] Fill the placeholders above throughout the plan, tick the Phase 0
-         checklist, update Status and this section, and push.
-5. **Then**, depending on the gate: **Phase 1** (land `hosts/desk` from the
-   hardware config — WSL or the live USB both work) and **Phase 2** (install).
-   Phase 2 boots this same stick again.
+   Then tell it what to continue with. If a session on the live USB is not
+   wanted, run the commands by hand, save the output into the repo checkout,
+   push, and continue from WSL.
+4. **Two things the live image lacks** that cost time to rediscover: there is
+   no `python3`, and `dmesg` needs `sudo` (`kernel.dmesg_restrict`). Inventory
+   tools come from
+   `nix-shell -p pciutils usbutils hwloc fio smartmontools dmidecode iw lm_sensors nvme-cli stressapptest`;
+   `lspci`, `lsusb`, `smartctl` and `nvme` are already on `PATH`.
+
+Cloud sessions can still evaluate the flake: install Nix from
+`releases.nixos.org`'s tarball (single-user, with `build-users-group =` in
+`/etc/nix/nix.conf`), then pass
+`--override-input <name> 'git+https://github.com/<owner>/<repo>?rev=<locked rev>&shallow=1'`
+for each locked input, because the proxy serves git clones of GitHub but not
+tarballs. In that container `nix flake check`'s wezterm tests fail the same
+way with or without the change, so compare against the base commit there.
 
 ## Status — 2026-09-21
 
@@ -179,18 +174,49 @@ Linux pass.** Nothing is written to either drive in this step.
   (2026-09-24) — [the one landmine](#the-one-landmine-in-the-shared-modules).
   A pure refactor: `.#wsl` evaluates to the same derivation before and after.
 
+- **Phase 0, Linux side — complete, and the gate PASSED** (2026-09-24). Run
+  from the live USB; raw output committed under
+  [`docs/desktop-inventory/`](./desktop-inventory/), read off in the
+  [Linux-side table](#phase-0-linux-side--measured-2026-09-24).
+  **[The gate](#the-gate--passed-2026-09-24) is clean on both parts**: the dGPU
+  `03:00.0` is alone in IOMMU group 14, its HDMI audio `03:00.1` alone in group
+  15, and the 2 TB NVMe controller `11:00.0` alone in group 28. No ACS
+  override, no slot shuffling, no block-device fallback. Also settled:
+  `wlp14s0`; iGPU `12:00.0`; bulk drive
+  `nvme-SHPP41-1000GM_SJB8N565511208H0I`; both SSDs at 1% wear; SMT sibling of
+  CPU *n* is *n*+6; the SMBIOS UUID matches Windows byte for byte.
+  **Every `<DGPU_ADDR>` / `<IGPU_ADDR>` / `<FAST_NVME_ADDR>` / `<FILL_ME_WLAN_IF>`
+  / `<FILL_ME_BULK>` placeholder in this plan's config blocks is now a real
+  value.** Two findings that go the other way, neither blocking:
+  **Linux sees no fans** (ITE `0x8689`, unclaimed by mainline `it87`) and **no
+  DIMM temperatures** (`spd5118` binds nothing), so fan control is
+  firmware-only for good and BIOS tuning's thermal check moves to HWiNFO. In
+  the plus column, **Wake-on-WLAN lists `wake up on magic packet`**, so
+  suspend-on-idle survives to Phase 8.
+
+  The same pass turned up one thing that needs hands on the machine:
+  **the monitor is cabled to the dGPU, so the firmware posts on it**
+  (`boot_vga=1` on `03:00.0`) and the board's own video outputs are empty.
+  *Initial Display Output: IGD* is set and cannot help. See
+  [The monitor is plugged into the wrong GPU](#the-monitor-is-plugged-into-the-wrong-gpu).
+
 ### Next, in order
 
-1. **Phase 0, Linux side** — see [Resume here](#resume-here--2026-09-23).
-   Live USB (NixOS 26.05 graphical, written over the Q-Flash stick): IOMMU groups (**the go/no-go gate**),
-   `/dev/disk/by-id` names, `smartctl`, `lscpu -e`, `dmidecode`,
-   `nixos-generate-config`, interface names from `ip link`, and the fan
-   sensors ([Fan control](#fan-control)).
-2. **Phase 1** — land `hosts/desk` in the flake, from WSL. Independent of
-   step 1; can run any time.
-3. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off.
-4. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
+0. **Move the display cable** from the graphics card to the motherboard, and
+   re-check `boot_vga` from the live USB. Physical, two minutes, no software.
+   Does not block Phase 1 or 2; **does block
+   [Phase 4](#phase-4--vfio-and-the-libvirt-host)**, whose vfio-pci bind fails
+   with `BAR 0: can't reserve` while simpledrm holds the dGPU.
+1. **Phase 1** — land `hosts/desk` in the flake. Nothing blocks it: the gate
+   passed, and `hardware-configuration.nix` is in the repo waiting to be moved
+   to `hosts/desk/`. Runs from WSL or the live USB.
+2. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off. Boots this
+   same stick again. Note the [stale NVRAM entry](#residuals--open-not-blocking-the-next-step)
+   for the 1 TB drive's old ESP, which disko's wipe orphans.
+3. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
+
+~~Phase 0, Linux side~~ — done 2026-09-24, above.
 
 Independent of the list above, in firmware setup, any time:
 
@@ -281,8 +307,8 @@ the text was wrong about how the machine behaves.
 
 | Item | Where it bites | Notes |
 | --- | --- | --- |
-| Board revision on the PCB itself | [Firmware update](#firmware-update) | The box says 1.0. The silkscreen on the board (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before flashing |
-| Wi-Fi interface name on NixOS | Samba, CUPS, firewall | `<FILL_ME_WLAN_IF>` — from `ip link` on the live USB (likely `wlp14s0`-shaped) |
+| Board revision on the PCB itself | [Firmware update](#firmware-update) | The box says 1.0. `dmidecode` cannot settle it — the board's SMBIOS *Version* reads `x.x` (2026-09-24). The silkscreen (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before the *next* flash. F43c is already on and boots, so this is retrospective now |
+| Linux sees neither the fans nor the DIMM temperatures | [Fan control](#fan-control), [BIOS tuning](#bios-tuning) | Measured 2026-09-24. The board's ITE Super I/O reports **chip ID `0x8689`**, which mainline `it87` does not claim (`modprobe it87` → `No such device`), so no header RPM or PWM shows up in `sensors`. `spd5118` finds no DIMM sensors either. Two consequences: fan control stays firmware-only (already the plan, now forced), and BIOS tuning's "DIMMs under ~55 °C" has to be read from HWiNFO under bare-metal Windows. An OS-side curve would need the out-of-tree `it87` fork |
 | Total size of the media, across all five sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication — **together with the host-side Steam library**, which shares that volume. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
 | GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
 | Flickr export request | [Step 3](#step-3--bring-the-media-in) | Asynchronous — Flickr prepares the archive over hours to days. Request it early so it is ready by ingest; download links expire |
@@ -298,8 +324,6 @@ the text was wrong about how the machine behaves.
 | Game library vs ProtonDB, and each title's Secure Boot/TPM requirement | Before Phase 7; Phase 2b | Which titles need Windows at all, which of those need bare metal (kernel anti-cheat), and which of *those* refuse to start without Secure Boot (e.g. Battlefield 6, recent Call of Duty). The last list is why [Phase 2b](#phase-2b--restore-secure-boot) exists |
 | Printer's USB URI | [Printer sharing](#printer-sharing) | The serial-keyed `usb://Brother/HL-L2305%20series?serial=U66480F3N341782` is built from what Windows reports; `lpinfo -v` after Phase 2 is authoritative |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet. The intended answer is ntfy, deferred to [Optional follow-ups](#optional-follow-ups); until then the unit is a desktop pop-up via swaync, which only helps if you are at the desk |
-| dGPU's Linux PCI address | [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) | `<DGPU_ADDR>` — Windows reports bus 3, but Linux numbers buses independently; take it from `lspci -nn -d 1002:73ff` on the live USB |
-| Wake-on-WLAN on the MT7922 | [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) | `iw phy` on the live USB must list `WoWLAN support` with `wake up on magic packet`. If it does not, suspend is off before it is tried |
 | ancs4linux: pinned revision and hash | [iPhone notifications](#iphone-notifications-over-ancs) | Not in nixpkgs; packaged in this repo, pinned by rev and hash like every other out-of-tree artifact here |
 | Memory kit's DRAM IC | [BIOS tuning](#bios-tuning) | Kit: 2 × 16 GB Corsair Vengeance **`CMK32GX5M2D6000C36`** — **XMP only, no EXPO**: DDR5-6000 36-36-36-76 at 1.35 V; running its XMP profile since 2026-09-23, not yet validated. The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
 
@@ -337,12 +361,19 @@ A firmware update resets settings to defaults. Afterwards, re-check:
       Windows reports virtualization firmware on and lists DMA protection
       (`Win32_DeviceGuard` property 3, which needs the IOMMU). That cannot
       tell Enabled from Auto; the setup screen can*
-- [ ] **Initial Display Output: IGD** (the iGPU), not the PCIe slot. If the
+- [x] **Initial Display Output: IGD** (the iGPU), not the PCIe slot — *set, and
+      confirmed in setup 2026-09-23.* If the
       firmware POSTs on the dGPU, the kernel's simpledrm claims the card's
       framebuffer before vfio-pci binds and the bind fails with
       `BAR 0: can't reserve` — see [Phase 4](#phase-4--vfio-and-the-libvirt-host).
       Bare-metal Windows is unaffected: it drives the dGPU from its own driver
-      whichever GPU the firmware posted on
+      whichever GPU the firmware posted on.
+      **But the setting is not sufficient, and on 2026-09-24 it was not
+      working:** `boot_vga=1` on `0000:03:00.0`, because the only monitor is
+      cabled to the graphics card and the board's video outputs are empty. A
+      preference cannot post to a port with nothing in it. The outstanding
+      action is physical, not a firmware one — see
+      [The monitor is plugged into the wrong GPU](#the-monitor-is-plugged-into-the-wrong-gpu)
 - [x] **Secure Boot off — it will not be.** *2026-09-23: on after the flash
       (`UEFISecureBootEnabled` = 1), then turned off (`Confirm-SecureBootUEFI`
       → False).* F38's release notes: *Secure Boot
@@ -506,9 +537,12 @@ Each step passes all of these, or it is reverted:
 temperature, and tREFI is where they show first. A mini-ITX case with the RX
 6600 XT exhausting across the DIMMs is the worst case, and a synthetic memory
 test with the GPU idle does not reproduce it. Watch the SPD hub sensors
-(HWiNFO on Windows; `sensors` via the `spd5118` driver on Linux) during the
-hot run; keep the DIMMs under ~55 °C, and back tREFI off before anything else
-if errors appear only when warm.
+during the hot run; keep the DIMMs under ~55 °C, and back tREFI off before
+anything else if errors appear only when warm. **Read them in HWiNFO under
+bare-metal Windows** — on this board Linux cannot: `spd5118` binds nothing
+(2026-09-24), so `sensors` reports no DIMM temperature at all. That makes the
+hot run a Windows-side test here, which is convenient anyway, since the
+"long game session" half of it is a Windows workload.
 
 #### Where it is written down
 
@@ -589,9 +623,12 @@ louder curve.
 **What the firmware cannot see:**
 
 - **The DIMMs.** They sit in the GPU's exhaust, and BIOS tuning wants them
-  under ~55 °C. No header curve can follow the `spd5118` sensors. If the hot
-  run shows warm DIMMs, raise the case fans' floor, or add an OS-side curve
-  on NixOS (`programs.coolercontrol.enable`) for that fan alone.
+  under ~55 °C. No header curve can follow a DIMM sensor. *And on this board
+  neither can Linux* — `spd5118` binds nothing (2026-09-24), so the
+  `programs.coolercontrol.enable` escape hatch this bullet used to offer does
+  not exist: there is no DIMM reading for it to follow, and no fan for it to
+  drive. If the hot run shows warm DIMMs the remaining levers are firmware
+  ones — raise the case fans' floor, or back tREFI off.
 - **The dGPU while it is bound to vfio-pci with no guest running.** No driver
   manages its fans then. Most cards fall back to a quiet firmware default,
   but some sit at a fixed high speed until a driver loads. Check it in
@@ -599,9 +636,22 @@ louder curve.
   host-side fix (let amdgpu hold it idle, as
   [Lending the dGPU](#lending-the-dgpu-to-the-host-on-demand) already allows),
   not a firmware one.
-- **Linux visibility.** On the live USB (Phase 0), `sensors` should list the
-  fans. If it does not, the board's ITE Super I/O needs a newer `it87` than
-  mainline ships. That only matters if an OS-side curve is ever wanted.
+- **Linux visibility — answered 2026-09-24, and the answer is no.** `sensors`
+  on the live USB lists **no fan at all** from the board. `sensors-detect`
+  finds the ITE chip but reports *"Found unknown chip with ID 0x8689"*, and
+  `modprobe it87` fails with `No such device`: mainline's `it87` does not claim
+  this ID. So there is no header RPM and no PWM control from Linux, and the
+  out-of-tree [`frankcrawford/it87`](https://github.com/frankcrawford/it87)
+  fork would be needed to get any. **This does not change the plan** — fan
+  curves were already going in the firmware, for the two-OS reason above; it
+  removes the fallback rather than the plan. What `sensors` *does* give, and
+  what an OS-side curve could drive from if it ever existed: `k10temp`
+  (Tctl/Tccd1), both NVMe composites, the MT7922, both `amdgpu`, and
+  `gigabyte_wmi` with six unlabelled board temperatures.
+- **The DIMMs, concretely.** `spd5118` binds nothing here either — no DIMM
+  temperature sensor appears. The "under ~55 °C" check in
+  [BIOS tuning](#bios-tuning) therefore has to be read from **HWiNFO under
+  bare-metal Windows**, not from `sensors` as that section assumes.
 
 **Written down** with the rest: the curve points and each header's mode go in
 `hosts/desk/bios.md`, plus Smart Fan 6's own *Save Fan Profile* (F3) to USB,
@@ -614,7 +664,7 @@ since the next firmware update resets them too.
 - [ ] Curves set, Temperature Interval raised; quiet at idle and browsing
 - [ ] Eco Mode tried; kept or rejected on compile time vs noise
 - [ ] Recorded in `hosts/desk/bios.md`; fan profile saved to USB
-- [ ] Phase 0: fans visible in `sensors`; Phase 4: dGPU fan sane under vfio-pci
+- [x] Phase 0: fans visible in `sensors` — *no: ITE `0x8689`, unclaimed by mainline `it87` (2026-09-24). Firmware-only confirmed*; [ ] Phase 4: dGPU fan sane under vfio-pci
 
 ---
 
@@ -686,15 +736,105 @@ that Windows can see is settled; what needs Linux or an elevated prompt is in
 | Network | Windows runs on **Wi-Fi** (MediaTek RZ616 / MT7922, MAC `F0:A6:54:14:9B:0D`); the Intel I225-V wired port (`74:56:3C:47:E8:FF`) is **disconnected** | **Decided: Wi-Fi for everything, for now.** See [Networking on Wi-Fi](#networking-on-wi-fi) |
 | WSL | Switched onto this repo 2026-09-21: hostname `wsl`, applies `.#wsl` as locked, `/etc/nixos` stubs removed, SSH key comment `n8@wsl` | Done — nothing on the WSL side gates this plan any more |
 
-### Still unknown
+### Phase 0, Linux side — measured 2026-09-24
 
-- **IOMMU groups** for the dGPU (bus 3) and the **2 TB** NVMe controller. Still
-  the hard gate, and still only answerable from Linux. The CPU-attached slot is
-  the likelier of the two to be cleanly grouped, which is the good news.
-- **SMART wear** on both P41s (`smartctl -a`, or elevated
-  `Get-PhysicalDisk | Get-StorageReliabilityCounter`).
-- Linux CPU numbering for pinning — Phase 5 assumes the usual Ryzen layout
-  (SMT sibling of CPU *n* is *n*+6); `lscpu -e` confirms it.
+From the NixOS 26.05 live USB. Raw output for every row is committed under
+[`docs/desktop-inventory/`](./desktop-inventory/); this table is the reading of
+it. **The gate passes on both parts** — see
+[the verdict](#the-gate--passed-2026-09-24).
+
+| Item | Measured | Consequence for this plan |
+| --- | --- | --- |
+| IOMMU | **On.** `AMD-Vi: Interrupt remapping enabled`, `Virtual APIC enabled`, default domain type Translated | The firmware's *IOMMU Enabled* stuck. Nothing to change |
+| dGPU | **`03:00.0`** (Navi 23 `1002:73ff`, ASRock board `1849:5216`) + **`03:00.1`** HDMI audio (`1002:ab28`), behind the card's own PCIe switch (`01:00.0` → `02:00.0`) | `<DGPU_ADDR>` resolved. Windows' "bus 3" happens to match Linux's, which is luck, not a rule |
+| iGPU | **`12:00.0`** Raphael `1002:164e`, on the CPU's internal root complex with `12:00.1` audio, `12:00.2` PSP, `12:00.3/.4` USB, `12:00.6` HD audio | `<IGPU_ADDR>` resolved. Each function sits in its own IOMMU group, so passing the dGPU never disturbs it |
+| **2 TB NVMe (Windows `C:`)** | Controller **`11:00.0`**, `nvme1n1`, `SHPP41-2000GM`, serial `ADC8N56931060986L`. **CPU-attached** — it hangs off the CPU root complex next to the iGPU, not off the chipset switch | `<FAST_NVME_ADDR>` resolved. Partitions read back exactly as Windows reported them: MSR 16 M, NTFS 1.8 T, **ESP 300 M labelled `SYSTEM`**, WinRE 909 M. Independent confirmation that [the new ESP](#the-esp-is-on-the-wrong-drive) is real |
+| **1 TB NVMe (NixOS-to-be)** | Controller **`06:00.0`**, `nvme0n1`, `SHPP41-1000GM`, serial `SJB8N565511208H0I`. **Chipset-attached**, behind the 600-series PCIe switch | by-id is **`/dev/disk/by-id/nvme-SHPP41-1000GM_SJB8N565511208H0I`** — what `disko.nix` now references. Holds the old Linux install (1 G ESP `boot`, ext4 `root`/`home`, a 585 G ext4, a `fedora_localhost-live` btrfs, another ext4) — all disposable |
+| SMART, both drives | `Percentage Used` **1%** each; `Media and Data Integrity Errors` **0**; `Critical Warning` `0x00`. 1 TB: 12,670 power-on hours, 14.4 TB written. 2 TB: 9,352 hours, 27.8 TB written | Neither drive is worn. The bulk drive taking NixOS root *and* the media volume is fine on wear grounds |
+| CPU topology | `lscpu -e`: 12 CPUs, 6 cores, **one NUMA node, one 32 MB L3** (`lstopo` agrees). **SMT sibling of CPU *n* is *n*+6** | Phase 5's pinning assumption is confirmed verbatim. No cross-CCD concern, as expected |
+| SMBIOS | system + board manufacturer `Gigabyte Technology Co., Ltd.`, product `B650I AORUS ULTRA`, serials `Default string`, board version `x.x`, UUID **`03560274-043c-0547-e806-ff0700080009`** | **The UUID matches Windows byte for byte** — no byte-swap on this firmware, so the `<sysinfo>` block can be copied straight across. See [Keeping activation stable](#keeping-activation-stable-across-the-crossing) |
+| BIOS | AMI **F43c**, release date **07/21/2026** | Confirms the flash. (The vendor page says 2026-07-20; the SMBIOS date is a day later. Cosmetic) |
+| Network | **`wlp14s0`** — MediaTek MT7922 `14c3:0616` at `0e:00.0`, MAC `f0:a6:54:14:9b:0d`, associated and carrying v4 + v6. Wired `enp13s0` — Intel I225-V `8086:15f3` at `0d:00.0`, MAC `74:56:3c:47:e8:ff`, NO-CARRIER | `<FILL_ME_WLAN_IF>` resolved to `wlp14s0`, which is what the firewall, Samba and CUPS stanzas now name. Both MACs match the Windows-side record |
+| **Wake-on-WLAN** | **Supported.** `iw phy` lists `wake up on magic packet`, plus disconnect, pattern match and net-detect | The [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) residual clears its *firmware/driver* bar. Suspend-on-idle stays on the table; Phase 8 still has to prove it works end to end |
+| Fans and DIMM temps | **Invisible to Linux.** `sensors-detect` finds an ITE chip with **ID `0x8689`**, which mainline `it87` refuses (`No such device`). No `spd5118` DIMM sensors. What *is* visible: `k10temp`, both `nvme`, the MT7922, both `amdgpu`, and `gigabyte_wmi` (six unlabelled board temps) | Answers the Phase 0 fan item in the negative — see [Fan control](#fan-control). Fan curves are firmware-only, which was already the plan |
+| **Which GPU the firmware posted on** | **The dGPU.** `boot_vga=1` on `0000:03:00.0`, `0` on the iGPU. The one monitor (3440×1440) is on `card1-HDMI-A-1`, the RX 6600 XT's HDMI; every iGPU connector is disconnected with zero-byte EDID | **The one action item out of this pass.** simpledrm claims the dGPU's framebuffer at boot, which is the `BAR 0: can't reserve` failure [Phase 4](#phase-4--vfio-and-the-libvirt-host) warns about, and it contradicts "the iGPU runs the desktop always". Fix is a cable move — [The monitor is plugged into the wrong GPU](#the-monitor-is-plugged-into-the-wrong-gpu) |
+| dGPU fan at idle | `amdgpu-pci-0300`: `fan1` **0 RPM**, `pwm1` **0%**, edge 45 °C | The card zero-RPM idles under `amdgpu`. Encouraging for [Phase 4](#phase-4--vfio-and-the-libvirt-host)'s "is the dGPU loud under vfio-pci with no guest" check, but not an answer to it — that is a different driver state |
+
+### The monitor is plugged into the wrong GPU
+
+**Found 2026-09-24, on the live USB. Nothing is broken; a cable has to move
+before Phase 4, and the plan's GPU topology depends on it.** The parallel to
+[The ESP is on the wrong drive](#the-esp-is-on-the-wrong-drive) is exact: a
+physical fact the plan assumed the other way round, cheap to fix, expensive to
+discover late.
+
+Evidence, in
+[`docs/desktop-inventory/13-boot-gpu.txt`](./desktop-inventory/13-boot-gpu.txt):
+
+| Reading | Value |
+| --- | --- |
+| `/sys/bus/pci/devices/0000:03:00.0/boot_vga` (dGPU) | **`1`** |
+| `/sys/bus/pci/devices/0000:12:00.0/boot_vga` (iGPU) | `0` |
+| dGPU connectors | **`card1-HDMI-A-1: connected`** — one 3440×1440 ultrawide. DP-1/2/3 disconnected |
+| iGPU connectors | DP-4, DP-5, DP-6, HDMI-A-2 — **all disconnected, all zero-byte EDID** |
+| Boot framebuffer | `/dev/dri/by-path/pci-0000:03:00.0-platform-simple-framebuffer.0-card`, then `amdgpu 0000:03:00.0: [drm] fb0` |
+
+So the single display hangs off the **RX 6600 XT**, and the motherboard's video
+outputs have nothing in them at all. The firmware posts on the dGPU because,
+with no cable on the board, it has nowhere else to post — *whatever* **Initial
+Display Output** is set to. That setting selects a preference; it cannot
+conjure a monitor onto an empty port.
+
+**Why this matters, in three places:**
+
+1. **It is exactly the `BAR 0: can't reserve` hazard** the
+   [post-flash checklist](#firmware-update) and
+   [Phase 4](#phase-4--vfio-and-the-libvirt-host) warn about. The boot
+   framebuffer above *is* simpledrm holding the card the guest is supposed to
+   get. Left as is, the vfio-pci bind fails.
+2. **It contradicts the topology decision** — *"AMD iGPU → the NixOS desktop,
+   always"*. The desktop cannot run on the iGPU when no monitor is attached to
+   it. niri's `render-drm-device "…12:00.0-render"` would render on a GPU
+   driving no screen.
+3. **It makes the Status entry for the post-flash checklist half-true.** *Initial
+   Display Output IGD* was confirmed in firmware setup on 2026-09-23, and that
+   is still what the setting says. The machine posts on the dGPU regardless.
+   The setting was never the whole requirement; the cable is.
+
+**The fix: move the display cable from the graphics card to the motherboard.**
+The B650I AORUS ULTRA's rear I/O carries the iGPU's outputs, and the kernel
+sees four connectors on `12:00.0` — HDMI-A-2 plus three DP (one of which is the
+USB-C port's DP alt mode). The monitor is a 3440×1440 ultrawide, which both
+HDMI 2.1 and DP 1.4 drive comfortably at that resolution.
+
+**Then verify, and only then is it done** — re-boot the live USB and check
+`boot_vga` has moved to `0000:12:00.0`, that `card*-HDMI-A-*` on the iGPU reads
+`connected`, and that no `simple-framebuffer` path under
+`/dev/dri/by-path/` names `0000:03:00.0`. That last one is the real test: it is
+the thing that has to be absent for Phase 4's bind to work.
+
+**A wrinkle worth deciding before Phase 8, not during it:** with the monitor on
+the iGPU, the guest's dGPU output has no screen of its own. That is what
+[Phase 7](#phase-7--display-input-audio)'s Looking Glass is for, and this plan
+already chose it — but it means bare-metal Windows and the guest reach the
+display by different routes, and
+[lending the dGPU to the host](#lending-the-dgpu-to-the-host-on-demand) becomes
+a render-offload story (DRI_PRIME onto the iGPU's screen) rather than a
+different-cable story. Both are already how the plan is written. The thing not
+to do is leave the cable on the dGPU and hope.
+
+### Still unknown — closed 2026-09-24
+
+All three were answered on the live USB. Raw output under
+`docs/desktop-inventory/`; the summary is
+[Phase 0, Linux side](#phase-0-linux-side--measured-2026-09-24).
+
+- ~~**IOMMU groups**~~ — **both clean.** The gate passes. dGPU `03:00.0` alone
+  in group 14, its HDMI audio `03:00.1` alone in group 15, and the 2 TB NVMe
+  controller `11:00.0` alone in group 28.
+- ~~**SMART wear**~~ — both P41s at **`Percentage Used` 1%**, zero media errors.
+- ~~Linux CPU numbering~~ — `lscpu -e` confirms it: **SMT sibling of CPU *n* is
+  *n*+6**, exactly what Phase 5 assumed.
 
 ---
 
@@ -750,7 +890,7 @@ lstopo-no-graphics --of txt   # pkgs.hwloc — shows CCD/L3 boundaries
 # 6. OPTIONAL now: both drives are the same P41 model, so this only confirms
 #    the 1 TB is not degraded relative to the 2 TB.
 fio --name=r --rw=randread --bs=4k --iodepth=32 --numjobs=4 --size=2G \
-    --runtime=30 --time_based --group_reporting --filename=/dev/<BULK>
+    --runtime=30 --time_based --group_reporting --filename=/dev/nvme0n1
 
 # 7. OPTIONAL: USB port -> controller map. Only needed if Phase 7 ever falls
 #    back to passing a whole USB controller, which must not be the printer's
@@ -760,6 +900,44 @@ for b in /sys/bus/usb/devices/usb*; do
   printf '%s -> %s\n' "${b##*/}" "$(basename "$(readlink -f "$b/..")")"
 done
 ```
+
+### The gate — **PASSED**, 2026-09-24
+
+Run from the live USB; raw output in
+[`docs/desktop-inventory/04-iommu-groups.txt`](./desktop-inventory/04-iommu-groups.txt).
+Both parts are clean, and cleaner than this plan dared assume: **this board
+gives almost every endpoint its own IOMMU group.**
+
+| | Device | Group | Group contains | Verdict |
+| --- | --- | --- | --- | --- |
+| Part 1 | dGPU `03:00.0` (Navi 23) | **14** | that function, alone | **Clean** |
+| Part 1 | dGPU HDMI audio `03:00.1` | **15** | that function, alone | **Clean** |
+| Part 2 | 2 TB NVMe controller `11:00.0` | **28** | that controller, alone | **Clean** |
+
+Three things worth recording, because they are what make the verdict safe:
+
+- **The GPU's two functions are in *separate* groups** (14 and 15), not one
+  shared group. Both still go to the guest — each group is passed in full, and
+  each contains only its own function. Nothing the host needs is dragged along.
+- **The 2 TB controller is CPU-attached**, on its own, while the 1 TB controller
+  (`06:00.0`) sits in group 17 **together with** the chipset switch's downstream
+  port `05:00.0`. The right drive got the clean group. Had it been the other way
+  round, the whole VFIO-the-controller design would have needed the
+  block-device fallback below. It was not luck that it landed this way — the
+  CPU-attached slot was [called as the likelier one](#still-unknown--closed-2026-09-24) —
+  but it was not guaranteed either.
+- **Group 17's extra member is a PCIe bridge, not an endpoint**, and it belongs
+  to the drive the *host* keeps. It would not have blocked passthrough even if
+  the drives were swapped — bridges are not assigned to a guest — but that is
+  moot now.
+
+So: **no `pcie_acs_override`, no moving cards between slots, no block-device
+fallback.** Phase 4's `driver_override` binding of `0000:11:00.0` is exactly
+right, and [Risk 3](#risks-ranked) (an ID match taking both controllers) stays
+handled by binding the address rather than the ID — both controllers really do
+report `1c5c:1959`, as Windows warned.
+
+The original gate, kept for the record:
 
 **The gate, part 1 — the dGPU.** The card and its HDMI-audio function must sit
 in an IOMMU group containing nothing else the host needs.
@@ -787,13 +965,27 @@ guaranteed, and it is not a detail you can discover later.
 
 Also in Phase 0:
 
-- [ ] `nixos-generate-config --no-filesystems --show-hardware-config` from the
-      live USB → this is `hosts/desk/hardware-configuration.nix`
-- [ ] Record `/dev/disk/by-id/` names for every drive (by-id, not `/dev/nvme0n1` —
-      by-id is stable across reboots and is what disko should reference)
-- [ ] `smartctl -a` each SSD: model, capacity, and the wear indicator
+- [x] **The gate** — *both parts clean, 2026-09-24. See
+      [the verdict](#the-gate--passed-2026-09-24)*
+- [x] `nixos-generate-config --no-filesystems --show-hardware-config` from the
+      live USB → this is `hosts/desk/hardware-configuration.nix` — *generated
+      2026-09-24 into
+      [`docs/desktop-inventory/hardware-configuration.nix`](./desktop-inventory/hardware-configuration.nix);
+      Phase 1 moves it to `hosts/desk/`. It is short and unsurprising:
+      `kvm-amd`, the AMD microcode line, and `nvme xhci_pci ahci usbhid
+      usb_storage sd_mod` in initrd*
+- [x] Record `/dev/disk/by-id/` names for every drive (by-id, not `/dev/nvme0n1` —
+      by-id is stable across reboots and is what disko should reference) —
+      *bulk = `/dev/disk/by-id/nvme-SHPP41-1000GM_SJB8N565511208H0I`, already
+      substituted into `disko.nix` below. The 2 TB is
+      `nvme-SHPP41-2000GM_ADC8N56931060986L`, which disko must never name*
+- [x] `smartctl -a` each SSD: model, capacity, and the wear indicator
       (`Percentage Used` on NVMe). The bulk drive now holds NixOS root as well
-      as the media volume, so its wear matters more than it used to
+      as the media volume, so its wear matters more than it used to — *both at
+      **1%**, zero media errors; the bulk drive has 12,670 power-on hours and
+      14.4 TB written. No wear objection to the shared-volume plan*
+- [x] `ip link`, `iw phy`, `lscpu -e`, `dmidecode`, `sensors` — *2026-09-24, all
+      in the [Linux-side table](#phase-0-linux-side--measured-2026-09-24)*
 - [ ] Inventory the game library: which titles, and what ProtonDB says about
       each. Every title that runs native under Proton is a title neither boot
       mode has to serve
@@ -1305,7 +1497,7 @@ brings it near a formatting tool.
 # destroy the Windows install.
 {
   disko.devices.disk.bulk = {
-    device = "/dev/disk/by-id/nvme-<FILL_ME_BULK>";
+    device = "/dev/disk/by-id/nvme-SHPP41-1000GM_SJB8N565511208H0I";
     type = "disk";
     content = {
       type = "gpt";
@@ -1768,8 +1960,8 @@ new devices unless told not to:
 ```kdl
 // hosts/desk/home/niri.kdl
 debug {
-    render-drm-device "/dev/dri/by-path/pci-0000:<IGPU_ADDR>-render"
-    ignore-drm-device "/dev/dri/by-path/pci-0000:<DGPU_ADDR>.0-render"
+    render-drm-device "/dev/dri/by-path/pci-0000:12:00.0-render"
+    ignore-drm-device "/dev/dri/by-path/pci-0000:03:00.0-render"
 }
 ```
 
@@ -1791,6 +1983,14 @@ Decided: try suspend, with Wake-on-WLAN as the way back. If that proves
 unreliable, fall back to screens off and never suspend. The two jobs conflict
 most here: a sleeping desktop saves power, but a sleeping server is not a
 server.
+
+**First gate cleared, 2026-09-24.** `iw phy` on the live USB lists
+`WoWLAN support` with **`wake up on magic packet`** — plus wake on disconnect,
+pattern match (1 pattern, 1–128 bytes) and net-detect (10 match sets). So the
+MT7922's driver advertises what this design needs, and suspend is worth
+trying rather than dead on arrival. That is a *capability* check and nothing
+more: it says the feature exists, not that this card, this firmware and AM5's
+s2idle resume cleanly together. The Phase 8 bar below is still the real test.
 
 ```nix
 # hosts/desk/home/desktop.nix
@@ -1814,7 +2014,7 @@ so it can never suspend under you:
 # no-calling-libvirt-from-a-hook rule does not apply.
 busy() {
   virsh -c qemu:///system domstate win 2>/dev/null | grep -qx running && return  # suspend + VFIO = no
-  fuser -s /dev/dri/by-path/pci-0000:<DGPU_ADDR>.0-* 2>/dev/null && return      # a game on the lent dGPU; gamepad input is not "activity"
+  fuser -s /dev/dri/by-path/pci-0000:03:00.0-* 2>/dev/null && return      # a game on the lent dGPU; gamepad input is not "activity"
   systemctl is-active --quiet restic-backups-media.service && return
   [ -n "$(lpstat -o)" ] && return                                               # queued print jobs
   [ -n "$(ss -Htn state established '( sport = :445 or sport = :22 )')" ] && return  # SMB client, SSH / the Mac's mux session
@@ -2035,7 +2235,7 @@ protocol both speak well beats two they each speak badly.
 
   # tailscale0 is a trusted interface in modules/nixos/tailscale.nix, so the
   # tailnet needs no rule here. Wi-Fi and the guest's NAT bridge do.
-  networking.firewall.interfaces."<FILL_ME_WLAN_IF>" = {
+  networking.firewall.interfaces."wlp14s0" = {
     allowedTCPPorts = [ 445 5357 ];
     allowedUDPPorts = [ 3702 ];
   };
@@ -2406,7 +2606,7 @@ point of having a print server.
 
   # 631 on the same two interfaces as Samba. tailscale0 is already trusted.
   # mDNS (5353/udp) is opened by services.avahi's own openFirewall default.
-  networking.firewall.interfaces."<FILL_ME_WLAN_IF>".allowedTCPPorts = [ 631 ];
+  networking.firewall.interfaces."wlp14s0".allowedTCPPorts = [ 631 ];
   networking.firewall.interfaces.virbr0.allowedTCPPorts = [ 631 ];
 }
 ```
@@ -2588,8 +2788,8 @@ other controller for `nvme` when udev gets to it.
 # Bind one specific slot, not every device with that ID. vfio_pci is already
 # loaded (boot.initrd.kernelModules above), so a probe is all it takes.
 boot.initrd.preDeviceCommands = ''
-  echo vfio-pci > /sys/bus/pci/devices/0000:<FAST_NVME_ADDR>/driver_override
-  echo 0000:<FAST_NVME_ADDR> > /sys/bus/pci/drivers_probe
+  echo vfio-pci > /sys/bus/pci/devices/0000:11:00.0/driver_override
+  echo 0000:11:00.0 > /sys/bus/pci/drivers_probe
 '';
 ```
 
@@ -2668,7 +2868,7 @@ by then both functions are back on vfio-pci.
 # hosts/desk/dgpu.nix
 { pkgs, lib, ... }:
 let
-  dgpu = "0000:<DGPU_ADDR>.0";   # function 0 only, from Phase 0
+  dgpu = "0000:03:00.0";   # function 0 only, from Phase 0
   dgpuSwitch = pkgs.writeShellScriptBin "dgpu" ''
     set -eu
     PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.psmisc pkgs.libvirt pkgs.gnugrep ]}
@@ -2719,7 +2919,7 @@ in
   # Games pick the dGPU when it is lent and fall back to the iGPU when it is
   # not. Mesa's DRI_PRIME covers GL, and Vulkan through the device-select layer.
   programs.steam.package = pkgs.steam.override {
-    extraEnv.DRI_PRIME = "pci-0000_<DGPU_ADDR_UNDERSCORED>_0";
+    extraEnv.DRI_PRIME = "pci-0000_03_00_0";
   };
 }
 ```
@@ -3286,7 +3486,7 @@ in full, and then the parts that only show up under load:
       `vfio-pci`. No amdgpu oops in `journalctl -k -b`. Then start `win`: the
       dGPU works in the guest after having been lent
 - [ ] **niri never holds the card:** while it is lent,
-      `fuser -v /dev/dri/by-path/pci-0000:<DGPU_ADDR>.0-*` lists no `niri`
+      `fuser -v /dev/dri/by-path/pci-0000:03:00.0-*` lists no `niri`
 - [ ] **A refused start is a clean refusal:** lend the card, leave a game
       running, `virsh start win` → fails, naming the game. Host still fine,
       no cores fenced off (`systemctl show user.slice -p AllowedCPUs` empty)

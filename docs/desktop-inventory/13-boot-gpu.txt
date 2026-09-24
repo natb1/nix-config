@@ -1,0 +1,45 @@
+## Which GPU did the firmware post on?  (Phase 0, 2026-09-24)
+
+### boot_vga
+0000:03:00.0 boot_vga=1
+0000:12:00.0 boot_vga=0
+
+### /dev/dri/by-path
+total 0
+lrwxrwxrwx 1 root root  8 Sep 24 00:54 pci-0000:03:00.0-card -> ../card1
+lrwxrwxrwx 1 root root  8 Sep 24 00:53 pci-0000:03:00.0-platform-simple-framebuffer.0-card -> ../card0
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 pci-0000:03:00.0-render -> ../renderD128
+lrwxrwxrwx 1 root root  8 Sep 24 00:54 pci-0000:12:00.0-card -> ../card2
+lrwxrwxrwx 1 root root 13 Sep 24 00:54 pci-0000:12:00.0-render -> ../renderD129
+
+### connector status
+card1-DP-1: disconnected
+card1-DP-2: disconnected
+card1-DP-3: disconnected
+card1-HDMI-A-1: connected
+card1-Writeback-1: unknown
+card2-DP-4: disconnected
+card2-DP-5: disconnected
+card2-DP-6: disconnected
+card2-HDMI-A-2: disconnected
+card2-Writeback-2: unknown
+
+### card -> pci -> driver
+card1 -> 0000:03:00.0 driver=amdgpu
+card2 -> 0000:12:00.0 driver=amdgpu
+
+### modes on the connected output
+card1-HDMI-A-1:
+3440x1440
+3440x1440
+2560x1440
+
+### dmesg framebuffer handoff
+[    0.074226] Console: colour dummy device 80x25
+[    0.500293] simple-framebuffer simple-framebuffer.0: [drm] Registered 1 planes with drm panic
+[    0.500295] [drm] Initialized simpledrm 1.0.0 for simple-framebuffer.0 on minor 0
+[    0.501261] Console: switching to colour frame buffer device 128x48
+[    0.501801] simple-framebuffer simple-framebuffer.0: [drm] fb0: simpledrmdrmfb frame buffer device
+[    9.538482] Console: switching to colour dummy device 80x25
+[   12.141849] Console: switching to colour frame buffer device 215x45
+[   12.141853] amdgpu 0000:03:00.0: [drm] fb0: amdgpudrmfb frame buffer device
