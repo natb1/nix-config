@@ -55,6 +55,29 @@
   # need them, so a group this host does not yet create cannot warn on switch.
   users.users.n8.extraGroups = [ "networkmanager" ];
 
+  # Without this the machine is unadministrable on first boot, and finding
+  # that out costs a live-USB chroot.
+  #
+  # This repo sets no password for n8 and none for root — nothing in
+  # modules/nixos/ ever needed one, because NixOS-WSL arranges its own
+  # passwordless sudo for the default user. On a native host that inheritance
+  # does not apply: getty autologin lets you *in* without a password, but
+  # `sudo` and `su` then prompt for passwords that do not exist, so
+  # `nixos-rebuild switch` is impossible on the machine you just installed.
+  #
+  # Passwordless sudo rather than a password because it costs nothing here
+  # that is not already spent. The desktop decision (see desktop.nix) is
+  # autologin on tty1 with no screen lock, so physical access already means
+  # full access; a sudo password on top would be theatre. What actually
+  # protects things is elsewhere and unaffected: SSH is key-only with
+  # PasswordAuthentication off, and secrets live in gnome-keyring under its
+  # own password.
+  #
+  # nixos-install still prompts for a root password at the end of Phase 2.
+  # Set one — it is the break-glass for single-user mode if this file ever
+  # stops evaluating.
+  security.sudo.wheelNeedsPassword = false;
+
   # NOT time.hardwareClockInLocalTime. Phase 0 measured this Windows as
   # RealTimeIsUniversal = 1 — it already keeps the RTC in UTC, which is also
   # NixOS's default. Setting localtime here would *create* the clock fight it

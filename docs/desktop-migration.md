@@ -1872,6 +1872,17 @@ That is the whole install. No hand-partitioning, no PARTUUID transcription, no
 `blkid` round trip — disko generated the `fileSystems` entries from the same
 declaration it partitioned with.
 
+**`nixos-install` ends by prompting for a root password. Set one.** It is the
+break-glass for single-user mode if `hosts/desk/` ever stops evaluating. Day
+to day it is unused: `n8` has passwordless sudo, for the reason recorded in
+`hosts/desk/default.nix` — this repo sets no password for anybody, because
+NixOS-WSL arranged its own and nothing here ever had to. On a native host that
+inheritance does not apply, and without `security.sudo.wheelNeedsPassword =
+false` the freshly installed machine autologins into a desktop where `sudo`
+and `su` both prompt for passwords that do not exist. Caught by evaluation
+before the install rather than after it; the recovery would have been a live
+USB and a chroot.
+
 Then reboot and **verify both boot paths before going further**, while the live
 USB is still plugged in:
 
