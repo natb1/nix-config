@@ -144,11 +144,19 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
         line is gone; the unit owns swaync now, which is what gives it
         `Restart=on-failure` and dbus activation. waybar keeps its
         `spawn-at-startup` because `programs.waybar` without `systemd.enable`
-        generates no unit to collide with.
+        generates no unit to collide with. After the switch the duplicate was
+        killed and the unit started in its place: `swaync.service` is
+        `active (running)`, owns `org.freedesktop.Notifications`, and delivers
+        — and **nothing is failed**, user or system.
+      - *A second gap found the same way:* `notify-send` was not installed at
+        all, so item 9's own audio/notification check and the
+        [Desktop session checklist](#desktop-session-checklist) line that names
+        it were unrunnable. `libnotify` is now in the package list.
       - *Still needs your hands, at the console:* `Mod+Return`, `Mod+D`
-        (fuzzel), `notify-send test` landing in swaync's history, the waybar
-        tray showing Steam/Tailscale/blueman, and Chrome's
-        `chrome://version` showing the flag. These are the
+        (fuzzel), that a notification actually **draws on screen** (delivery is
+        proven, the pop-up is not), the waybar tray showing
+        Steam/Tailscale/blueman, and Chrome's `chrome://version` showing the
+        flag. These are the
         [Desktop session checklist](#desktop-session-checklist) items.
 
 Known-good state at install time, for comparison if something looks wrong:
@@ -2534,11 +2542,22 @@ What to expect:
 - [ ] Chrome: `chrome://version` shows `--password-store=gnome-libsecret`,
       and a saved password survives a reboot after one keyring prompt
 - [ ] waybar tray shows Steam, Tailscale and blueman; fuzzel launches
-- [ ] `notify-send test` pops up in swaync and lands in its history — *swaync
-      runs, but until 2026-09-24 it ran from niri's `spawn-at-startup` while
-      `swaync.service` sat failed on a start-limit, the two having raced. The
-      duplicate launcher is gone and the unit owns it; this line still wants a
-      real notification through it*
+- [x] `notify-send test` pops up in swaync and lands in its history —
+      *2026-09-24, with two fixes on the way. swaync was started twice, by
+      niri's `spawn-at-startup` and by the unit `services.swaync.enable`
+      generates; the spawned copy won the `org.freedesktop.Notifications` bus
+      name and the unit sat failed on a start-limit. And `notify-send` itself
+      was never packaged, so this check could not be run as written —
+      `libnotify` is now in `hosts/desk/desktop.nix`. Proved end to end by
+      calling `Notify` over the bus: swaync returned an id and
+      `swaync-client --count` went to 1. The pop-up appearing on screen is the
+      one part still unseen from here*
+      - Useful detail if this recurs: swaync's "An instance of
+        SwayNotificationCenter is already running!" is a **bus-name** check,
+        not a process check, and the process is named `.swaync-wrapped` — so
+        `pkill -x swaync` and `pgrep -ax swaync` both miss it and make it look
+        as though nothing is running. `busctl --user list | grep -i notif`
+        names the real owner.
 - [ ] iPhone paired: a text message appears in swaync within seconds. Walk out
       of range and back, and the next one still arrives without re-pairing
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal

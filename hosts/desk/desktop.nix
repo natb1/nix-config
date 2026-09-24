@@ -62,6 +62,11 @@
     wl-clipboard
     pwvucontrol
 
+    # notify-send. swaync is the daemon, but nothing shipped the client, so
+    # the plan's own `notify-send test` was an unrunnable check until
+    # 2026-09-24 — and any script wanting to reach the desktop had no way to.
+    libnotify
+
     # Chrome must be told where the keyring is. It picks its password store by
     # guessing the desktop from XDG_CURRENT_DESKTOP, does not recognise
     # "niri", and falls back to `basic` — which keeps saved passwords and
