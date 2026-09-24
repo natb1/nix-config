@@ -121,11 +121,26 @@ printf 'start=%s, size=%s, type=83\n' "$START" "$SIZE" | sfdisk --append "$DEV"
 say "Telling the kernel about it (partx -a; the device is mounted, so no full re-read)"
 partx -a "$DEV" || true
 
-# Identify what we just made: the highest-numbered partition on the device.
-PART=$(lsblk -lno NAME "$DEV" | tail -n1)
-PART="/dev/$PART"
-[ -b "$PART" ] || die "expected $PART to exist after partx"
-say "New partition is $PART"
+# Identify what we just made by MATCHING ITS START SECTOR, not by taking the
+# highest-numbered or last-listed partition. Those are assumptions about
+# ordering; this is the actual identity, and the next step formats it.
+PART=$(sfdisk -d "$DEV" | awk -v want="$START" '
+  /^\/dev\// {
+    line = $0
+    if (match(line, /start=[ \t]*[0-9]+/)) { s = substr(line, RSTART, RLENGTH); sub(/start=[ \t]*/, "", s) }
+    if (s + 0 == want + 0) { print $1; exit }
+  }')
+
+[ -n "$PART" ] || die "could not find a partition starting at $START after --append"
+[ -b "$PART" ] || die "$PART is not a block device (did partx -a fail?)"
+
+# Last check before the first destructive command: whatever we are about to
+# format must be empty. If it has a filesystem, we got the wrong partition.
+if blkid "$PART" >/dev/null 2>&1; then
+  die "$PART already holds a filesystem ($(blkid -o value -s TYPE "$PART")). Refusing to format."
+fi
+
+say "New partition is $PART (start $START) — empty, as expected"
 
 # --------------------------------------------------------------------- LUKS
 say "Formatting $PART as LUKS2 (you will set a passphrase)"
