@@ -220,7 +220,11 @@ if [ -n "$EXISTING_FS" ]; then
   die "$PART already holds a '$EXISTING_FS' filesystem. Refusing to format."
 fi
 
-say "New partition is $PART (start $START) — empty, as expected"
+# Report the offset the KERNEL has for this partition, read from sysfs, rather
+# than the $START this run computed — $START does not exist on the resume path,
+# and the kernel's value is the one that governs what actually gets written.
+PART_START=$(cat "/sys/class/block/$(basename "$PART")/start" 2>/dev/null || echo '?')
+say "Partition to format: $PART (kernel start=$PART_START) — no filesystem, as expected"
 
 # --------------------------------------------------------------------- LUKS
 say "Formatting $PART as LUKS2 (you will set a passphrase)"
@@ -257,6 +261,23 @@ Everything here is a credential. That is why the partition is LUKS.
 TXT
 
 say "Done. Mounted at $MOUNT"
+
+# A stable name for the partition, for the unlock instructions below.
+#
+# NOT by-partlabel: that is a GPT-only concept, and this stick has a DOS/MBR
+# table. /dev/disk/by-partlabel does exist on this machine, but it holds the
+# NVMe drives' GPT labels — an earlier version of this message pointed at a
+# path there that could never appear. by-id names the physical stick, so it
+# stays correct even when the stick enumerates as sdb somewhere else.
+PERSIST_DEV=$(
+  for link in /dev/disk/by-id/*-part"${PART##*[a-z]}" /dev/disk/by-partuuid/*; do
+    [ -e "$link" ] || continue
+    [ "$(readlink -f "$link")" = "$(readlink -f "$PART")" ] || continue
+    case "$link" in */by-id/usb-*) echo "$link"; break ;; esac
+  done
+)
+[ -n "$PERSIST_DEV" ] || PERSIST_DEV="$PART"
+
 echo
 cat <<TXT
 Next, to fill it (none of this is automatic, because it is all secret):
@@ -273,7 +294,7 @@ Next, to fill it (none of this is automatic, because it is all secret):
   sudo cp /etc/NetworkManager/system-connections/*.nmconnection $MOUNT/nm/
 
 On later boots:
-  sudo cryptsetup open /dev/disk/by-partlabel/$LABEL $LABEL   # or by device
+  sudo cryptsetup open $PERSIST_DEV $LABEL
   sudo mkdir -p $MOUNT && sudo mount /dev/mapper/$LABEL $MOUNT
   curl -sL https://raw.githubusercontent.com/natb1/nix-config/main/scripts/live-bootstrap.sh | sh
 TXT
