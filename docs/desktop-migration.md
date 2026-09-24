@@ -2718,7 +2718,19 @@ What to expect:
       field in swaync — **confirmed working after the switch.** Reconnect is
       automatic: the bond is in `/var/lib/bluetooth`, `bluetooth.json` names
       the phone with `enabled`, and tetherd re-supervised it by itself after a
-      restart. Still to try: out of range and back, and a reboot*
+      restart. Still to try: a reboot.* *Out of range and back, 2026-09-24:
+      half passed.* Away 16:40–18:20, the phone stayed at the edge of range:
+      the LE link came up and dropped 115 times (mirroring briefly active 11
+      times) while MAP held. From 18:13 the iPhone stopped answering LE at
+      all, so texts (MAP) kept arriving and email (ANCS) did not;
+      `tether --bt-connection` said "The iPhone is not answering on LE".
+      Turning Bluetooth off and on **in the iPhone's Settings** fixed it at
+      once. Tether's BLUETOOTH.md (2026-08-19) records the same iPhone-side
+      wedge, likely provoked by a burst of connect attempts, with the same
+      and only remedy — nothing on desk can clear it. Open question: does a
+      clean absence (phone well out of range) recover by itself? If the wedge
+      recurs every time, report it upstream with `tetherd.log`
+
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
       suspend bar in [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
