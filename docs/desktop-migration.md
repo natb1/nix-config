@@ -2659,9 +2659,10 @@ untouched.
 
 ### Step 1 — `/srv/media` as a network share
 
-**SMB, not NFS.** The clients are the MacBook and Windows — in either boot
-mode, since bare metal reaches the share over the LAN like any other client and
-the guest reaches it over the virtual network. NFS on macOS is a long-standing
+**SMB, not NFS.** The clients are the MacBook, the iPhone and Windows — in
+either boot mode; the guest reaches it over the virtual network. (*Decided
+2026-09-24: tailnet-only* — see the landed note below. Bare metal reaches the
+share through Tailscale on Windows, not over the LAN.) NFS on macOS is a long-standing
 disappointment — Finder integration,
 locking, and UID mapping all fight you — and Windows needs SMB regardless. One
 protocol both speak well beats two they each speak badly.
@@ -2758,8 +2759,8 @@ stat -c '%U' /srv/media                   # n8
 smbclient -L localhost -U n8              # lists `media`
 ```
 
-Then from the Mac: Finder → Go → Connect to Server → `smb://desk.local/media`,
-and again as `smb://desk/media` over the tailnet.
+Then from the Mac: Finder → Go → Connect to Server → `smb://desk/media`
+(MagicDNS, over the tailnet).
 
 *Verified 2026-09-24 after the switch:* `samba-smbd`, `samba-wsdd` and
 `srv-media.mount` active; `/srv/media` is `n8:users`; smbd on 445 and wsdd on
@@ -2770,9 +2771,29 @@ registered `_smb._tcp` with avahi and Finder's sidebar would not show `desk`
 (`multicast dns register = Yes` is a silent no-op). Fixed with a static
 `services.avahi.extraServiceFiles.smb`; `avahi-browse -rt _smb._tcp` confirms
 it after the next switch — *confirmed 2026-09-24:* `desk` publishes
-`_smb._tcp` on 445 over Wi-Fi (IPv4 and IPv6).
+`_smb._tcp` on 445 over Wi-Fi (IPv4 and IPv6). *Then removed the same day,
+with the LAN — below.*
 
-- [ ] **`hosts allow` does not cover IPv6.** Its entries are all IPv4, and
+**Tailnet-only, decided 2026-09-24.** `tailscale ping` from `desk` to the Mac
+went direct over the home network, not through a DERP relay, so a LAN mount
+would add no speed, only a second way in. That way in was also the IPv6 hole
+below. So the `wlp14s0` firewall rule and the mDNS advertisement are gone;
+the share is reachable from the tailnet (`tailscale0` is trusted) and from
+the guest's `virbr0`, and `hosts allow` is exactly loopback,
+`192.168.122.0/24`, `100.64.0.0/10` and `fd7a:115c:a1e0::/48`, with
+`hosts deny = ALL`. Given up: Finder's sidebar discovery (use
+`smb://desk/media`) and bare-metal Windows without Tailscale — install
+Tailscale there rather than reopening Wi-Fi.
+
+**iPhone:** the Tailscale app, signed into the same tailnet, then Files →
+⋯ → *Connect to Server* → `smb://100.121.40.74/media` (desk's tailnet
+address; `smb://desk/media` works too if MagicDNS resolves in Files), as
+*Registered User* n8 with the Samba password. Files plays and previews
+most media; VLC or Infuse browse the same SMB share if Files' player is not
+enough.
+
+- [x] **`hosts allow` does not cover IPv6** — *resolved 2026-09-24 by going
+      tailnet-only (above) and `hosts deny = ALL`.* Its entries are all IPv4, and
       `hosts deny = 0.0.0.0/0` matches only IPv4, so an IPv6 client is let
       through: `smbclient -L` against the Wi-Fi's global `2607:…` address
       lists shares. The wlp14s0 firewall rule opens 445 on IPv6 too. What
@@ -3018,12 +3039,14 @@ also holding the other four sources un-de-duplicated.
 
 - [ ] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled
 - [x] `hosts/desk/media.nix`, imported from `hosts/desk/default.nix` — *2026-09-24*
-- [ ] `smbpasswd -a n8`; mount from the Mac over both LAN and tailnet —
+- [x] `smbpasswd -a n8`; mount from the Mac over the tailnet (the LAN was
+      dropped, above) —
       *tailnet done 2026-09-24:* `smbstatus` showed n8 from `100.86.15.63`
       (IPv4) on SMB3_11 with `media` open, and Finder's `.DS_Store` landed
       in `/srv/media` as `n8:users 0644`, so auth, the ownership fix and
       writes all work. Unencrypted at the SMB layer, which is fine inside
-      WireGuard. LAN still to do; it also settles the IPv6 item above
+      WireGuard
+- [ ] iPhone mounts `media` through Files over Tailscale
 - [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
       ed25519 key for it
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
