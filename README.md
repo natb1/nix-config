@@ -23,6 +23,17 @@ If a switch restarts systemd (any nixpkgs bump that moves it), WSL loses its
 fails the Windows-side home-manager steps. Run `wsl --shutdown` from Windows and
 reopen the distro; boot re-registers interop and re-runs home-manager.
 
+### `desk` — native NixOS on the desktop
+
+```sh
+cd ~/nix-config && git pull
+sudo nixos-rebuild switch --flake .#desk
+```
+
+The checkout is `~/nix-config`, not `~/natb1/nix-config`: it was seeded there by
+[`scripts/seed-install.sh`](scripts/seed-install.sh). Replaces `wsl` as the
+desktop's Linux; see [`docs/desktop-migration.md`](docs/desktop-migration.md).
+
 ### `mba` — Apple Silicon MacBook Air
 
 ```sh

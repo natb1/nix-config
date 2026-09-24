@@ -4,33 +4,28 @@
 // Design: docs/desktop-migration.md, "The desktop session".
 
 // ---------------------------------------------------------------------------
-// GPU pinning — NOT YET ENABLED. Read this before turning it on.
+// GPU pinning — enabled 2026-09-24.
 //
 // The plan's end state is that niri renders on the iGPU and never opens the
 // dGPU, even while the dGPU is lent to the host. A compositor that holds a
 // card's DRM node pins it, and the card cannot go back to vfio-pci until the
 // compositor exits — so without this, starting the VM would mean logging out.
 //
-// It is commented out because of a physical fact Phase 0 measured on
-// 2026-09-24: the only monitor is cabled to the dGPU, and every iGPU
-// connector reads disconnected (boot_vga=1 on 0000:03:00.0). Enabling the
-// block below while that is true tells niri to render on a GPU driving no
-// screen and to ignore the one GPU that has the monitor — a black session on
-// first boot, recoverable only over SSH from the Mac.
-//
-// Turn it on in the same change that moves the display cable to the
-// motherboard, and verify with `boot_vga` before rebooting. Phase 4 needs it;
-// Phase 8 proves niri stays off the card.
+// Enabled once the monitor cable moved to the motherboard and the first boot
+// into desk read boot_vga=1 on the iGPU (0000:12:00.0). If the display cable
+// ever goes back to the dGPU, comment this out first: niri would render on a
+// GPU driving no screen and ignore the one that has the monitor, which gives a
+// black session (recover from another tty, SSH, or the previous generation
+// in the boot menu).
 //
 // Both are `debug` options — check them against the niri wiki for the pinned
 // version. If `ignore-drm-device` will not take a by-path symlink, use the
 // node the dGPU gets when lent (/dev/dri/renderD129-shaped) plus a udev rule
 // to make the name stable.
-//
-// debug {
-//     render-drm-device "/dev/dri/by-path/pci-0000:12:00.0-render"
-//     ignore-drm-device "/dev/dri/by-path/pci-0000:03:00.0-render"
-// }
+debug {
+    render-drm-device "/dev/dri/by-path/pci-0000:12:00.0-render"
+    ignore-drm-device "/dev/dri/by-path/pci-0000:03:00.0-render"
+}
 // ---------------------------------------------------------------------------
 
 input {

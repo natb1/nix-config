@@ -40,8 +40,10 @@ plan gates it now — Phase 0 is the only go/no-go.
 
 ## After the reboot — do these, in order
 
-**NixOS is installed on the 1 TB drive as of 2026-09-24. Nothing below has been
-done yet; the machine has not been rebooted.** Work through this list on the
+**NixOS is installed on the 1 TB drive as of 2026-09-24, and has booted.
+Items 2, 3 and 5–8 are done (2026-09-24): `boot_vga` read 1 on the iGPU, so
+niri's GPU pinning is now enabled; the first switch passed after the
+`~/.config` ownership fix; `desk` is on the tailnet. 1, 4 and 9 remain.** Work through this list on the
 first boot into `desk`. Items 1–4 are verification and take minutes; 5 onward
 is ordinary work.
 
@@ -53,7 +55,7 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
       posting on the dGPU and you were blind at the systemd-boot menu — which
       is how you choose Windows. Not fatal, and the fix is either firmware
       (*Initial Display Output: IGD*) or moving the cable back to the card.
-- [ ] **2. `cat /sys/bus/pci/devices/0000:12:00.0/boot_vga`** → must be **`1`**
+- [x] **2. `cat /sys/bus/pci/devices/0000:12:00.0/boot_vga`** → must be **`1`**
       (and `0000:03:00.0` must be `0`). **This is the Phase 4 gate.** The cable
       was moved on 2026-09-24 and the DRM connectors confirmed it, but
       `boot_vga` is decided at POST and was still `1` on the dGPU at install
@@ -66,7 +68,7 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
         to the iGPU and keep it off the dGPU. Phase 4 needs this.
       - **If it is still the dGPU:** leave niri's pinning commented out and
         fix the firmware first.
-- [ ] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
+- [x] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
       `sudo systemctl restart NetworkManager`, and check the profile at
       `/etc/NetworkManager/system-connections/` is 600 and root-owned.
 - [ ] **4. Windows still boots bare metal, and is still activated.** Pick it
@@ -75,11 +77,11 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
       drive, so this is confirming rather than fixing — but confirm it before
       trusting it. Check the clocks agree afterwards, both sides keeping the
       RTC in UTC.
-- [ ] **5. Set the root password** if it was not set before the reboot:
+- [x] **5. Set the root password** if it was not set before the reboot:
       `sudo passwd root`. Day to day it is unused — `n8` has passwordless
       sudo — but it is the break-glass for single-user mode if `hosts/desk/`
       ever stops evaluating.
-- [ ] **6. First rebuild from the installed system:**
+- [x] **6. First rebuild from the installed system:**
       `cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk`.
       This is also the test that the seeded checkout and the flake agree.
       *Hit 2026-09-24:* it failed in `home-manager-n8.service` with
@@ -88,9 +90,9 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
       [Seed the install](#seed-the-install-before-rebooting)). On an install
       seeded before the fix: `sudo chown -R n8:users ~/.config`, then rerun
       the switch.
-- [ ] **7. `sudo tailscale up`** — `desk` is a new tailnet node, not a rename
+- [x] **7. `sudo tailscale up`** — `desk` is a new tailnet node, not a rename
       of `wsl`.
-- [ ] **8. Add a `desk` row to the README's host table** with its rebuild
+- [x] **8. Add a `desk` row to the README's host table** with its rebuild
       command — the one Phase 2 checklist item that is pure documentation.
 - [ ] **9. Sanity-check the desktop**: niri starts on tty1, waybar and swaync
       are up, `Mod+Return` gives WezTerm, `Mod+D` gives fuzzel, audio works
