@@ -74,12 +74,21 @@ so the firmware posts on it and simpledrm holds the card Phase 4 wants to give
 away.** Move the display cable to the motherboard and re-check `boot_vga` from
 the live USB. It blocks Phase 4, not Phase 1 or Phase 2.
 
-**Next: [Phase 1](#phase-1--land-hostsdesk-in-the-flake) — land `hosts/desk` in
-the flake.** It needs no hardware, so WSL, a cloud session and the live USB are
-all fine. Start by moving
-[`docs/desktop-inventory/hardware-configuration.nix`](./desktop-inventory/hardware-configuration.nix)
-to `hosts/desk/`. Then [Phase 2](#phase-2--install-nixos-on-the-bulk-drive)
-installs, from this same stick.
+**[Phase 1](#phase-1--land-hostsdesk-in-the-flake) is also done** (2026-09-24,
+from this same live USB). `hosts/desk` is in the flake and `.#desk` evaluates
+to `nixos-system-desk-26.11.20260920.44a9189.drv`; `.#wsl` is undisturbed. What
+landed, and what was deliberately left for later phases:
+[here](#what-phase-1-actually-landed--2026-09-24).
+
+**Next: [Phase 2](#phase-2--install-nixos-on-the-bulk-drive) — the install, and
+the first destructive step in this plan.** It runs from this same stick, and it
+wipes the 1 TB drive. Before starting it, re-read the by-id name in
+`hosts/desk/disko.nix` against `ls -l /dev/disk/by-id/` on the booted machine:
+both drives are the same P41 family and both controllers report `1c5c:1959`, so
+that one line is what stands between the install and the Windows disk. It
+should read `nvme-SHPP41-1000GM_SJB8N565511208H0I` — the **1000**GM, 931.5 GB,
+the one carrying the old Linux install. Expect a TTY, not a desktop, on first
+boot.
 
 ### Booting the live USB again (Phase 2, or any re-measurement)
 
@@ -200,23 +209,32 @@ way with or without the change, so compare against the base commit there.
   *Initial Display Output: IGD* is set and cannot help. See
   [The monitor is plugged into the wrong GPU](#the-monitor-is-plugged-into-the-wrong-gpu).
 
+- **Phase 1 — `hosts/desk` landed and evaluates** (2026-09-24). The installable
+  base only: `default.nix` (systemd-boot, NetworkManager, MT7922 firmware),
+  `hardware-configuration.nix`, `disko.nix`, the `disko` and `NixVirt` flake
+  inputs, `nixosConfigurations.desk`, and `desk` added to CI's eval gate.
+  Checked rather than assumed: `.#desk` evaluates, **`.#wsl` still does**,
+  disko generated all four `fileSystems`, and its device is the 1 TB drive.
+  Details and the deliberate omissions:
+  [What Phase 1 actually landed](#what-phase-1-actually-landed--2026-09-24).
+
 ### Next, in order
 
-0. **Move the display cable** from the graphics card to the motherboard, and
+1. **Move the display cable** from the graphics card to the motherboard, and
    re-check `boot_vga` from the live USB. Physical, two minutes, no software.
-   Does not block Phase 1 or 2; **does block
+   Does not block Phase 2; **does block
    [Phase 4](#phase-4--vfio-and-the-libvirt-host)**, whose vfio-pci bind fails
    with `BAR 0: can't reserve` while simpledrm holds the dGPU.
-1. **Phase 1** — land `hosts/desk` in the flake. Nothing blocks it: the gate
-   passed, and `hardware-configuration.nix` is in the repo waiting to be moved
-   to `hosts/desk/`. Runs from WSL or the live USB.
-2. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off. Boots this
-   same stick again. Note the [stale NVRAM entry](#residuals--open-not-blocking-the-next-step)
-   for the 1 TB drive's old ESP, which disko's wipe orphans.
+2. **Phase 2** — install NixOS on the 1 TB drive, Secure Boot off. **The first
+   destructive step in this plan.** Boots this same stick again. Note the
+   [stale NVRAM entry](#residuals--open-not-blocking-the-next-step) for the
+   1 TB drive's old ESP, which disko's wipe orphans. The installed machine
+   comes up on a TTY, not a desktop — that is expected, see
+   [What Phase 1 actually landed](#what-phase-1-actually-landed--2026-09-24).
 3. **Phase 2b** — turn Secure Boot back on, with lanzaboote and your own keys
    plus Microsoft's.
 
-~~Phase 0, Linux side~~ — done 2026-09-24, above.
+~~Phase 0, Linux side~~ and ~~Phase 1~~ — both done 2026-09-24, above.
 
 Independent of the list above, in firmware setup, any time:
 
@@ -1226,6 +1244,13 @@ unlicensed one pass for licensed.
 
 ## Phase 1 — Land `hosts/desk` in the flake
 
+> **Done, 2026-09-24** — from the live USB rather than the WSL box, which works
+> just as well since the phase touches no hardware. `.#desk` evaluates and
+> `.#wsl` is undisturbed. See
+> [What Phase 1 actually landed](#what-phase-1-actually-landed--2026-09-24) at
+> the end of this section for the file list and the checks that were run. The
+> rest of this section is the design it was built from.
+
 **Do this from the WSL box, before the wipe.** It evaluates and builds without
 touching hardware, so a broken config is found while there is still a working
 machine to fix it from.
@@ -1340,9 +1365,51 @@ boot.loader.efi.canTouchEfiVariables = true;   # writes the NVRAM entry Phase 2 
 users.users.n8.extraGroups = [ "libvirtd" "kvm" "input" "networkmanager" ];
 ```
 
-- [ ] Add `desk` to the "Evaluate every host" step in
+- [x] Add `desk` to the "Evaluate every host" step in
       `.github/workflows/update-flake-lock.yml`, next to `wsl` — the weekly
-      lock bump gates only the hosts it is told about.
+      lock bump gates only the hosts it is told about. — *done 2026-09-24*
+
+### What Phase 1 actually landed — 2026-09-24
+
+**The installable base, and nothing beyond it.** `.#desk` evaluates, which is
+all Phase 1 promised; Phase 2 can install from it as it stands. Committed:
+
+| File | What it carries |
+| --- | --- |
+| `hosts/desk/default.nix` | hostname, `system.stateVersion = "26.05"`, imports of `modules/nixos` + the two below, **systemd-boot** and `canTouchEfiVariables`, NetworkManager + redistributable firmware for the MT7922, and `networkmanager` on the user |
+| `hosts/desk/hardware-configuration.nix` | moved out of `docs/desktop-inventory/`, where Phase 0 generated it |
+| `hosts/desk/disko.nix` | the bulk drive only, exactly as specified above |
+| `flake.nix` | the `disko` and `NixVirt` inputs, and `nixosConfigurations.desk` |
+| `.github/workflows/update-flake-lock.yml` | `desk` joins the eval gate |
+
+Verified on the live USB, not assumed:
+
+- `.#desk` evaluates → `nixos-system-desk-26.11.20260920.44a9189.drv`.
+- **`.#wsl` still evaluates** — the new inputs do not disturb it.
+- disko generated all four `fileSystems`: `/` (ext4, `disk-bulk-root`), `/boot`
+  (vfat, `umask=0077`, `disk-bulk-ESP`), and `/srv/media` + `/srv/games` as
+  `subvol=` mounts on `disk-bulk-media`. That is the check worth doing, because
+  it is the half of disko `nixos-install` depends on and the half a destroy run
+  does not exercise.
+- **`disko.devices.disk.bulk.device` resolves to the 1 TB drive**, not the 2 TB
+  Windows one.
+- `boot.loader.grub.enable` is `false` and systemd-boot `true` — the failure
+  Phase 2 would otherwise hit with the drive already wiped.
+- `time.hardwareClockInLocalTime` is `false`, as Phase 0 requires.
+- Lock: disko `725ea35` (2026-09-18), NixVirt `0.6.0` (2025-05-25).
+
+**Deliberately not landed yet**, because they belong to the phases that
+configure them, and a module nothing enables is a module nothing tests:
+`desktop.nix` (niri), `gaming.nix`, `vfio.nix`, `dgpu.nix`, `libvirt.nix`,
+`perf-hook.nix`, `media.nix`, `ancs.nix`, `secure-boot.nix`. The file tree
+above is the target layout, not Phase 1's deliverable. `NixVirt`'s module *is*
+imported already — it defines nothing until `virtualisation.libvirt` is
+enabled, and adding a flake input mid-install is the thing worth avoiding.
+
+**Consequence for Phase 2: the freshly installed machine has no desktop.** It
+boots to a TTY with NetworkManager, SSH, Tailscale and Docker. That is enough
+for `nmtui`, `tailscale up`, the `git clone` and the `nixos-rebuild switch`
+loop Phase 2 ends with — which is how the desktop arrives.
 
 ### Networking on Wi-Fi
 
