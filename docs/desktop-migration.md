@@ -38,6 +38,72 @@ plan gates it now — Phase 0 is the only go/no-go.
 
 ---
 
+## After the reboot — do these, in order
+
+**NixOS is installed on the 1 TB drive as of 2026-09-24. Nothing below has been
+done yet; the machine has not been rebooted.** Work through this list on the
+first boot into `desk`. Items 1–4 are verification and take minutes; 5 onward
+is ordinary work.
+
+The install was seeded ([Seed the install](#seed-the-install-before-rebooting)),
+so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
+
+- [ ] **1. Did it boot, and was POST visible?** Two separate questions. If the
+      screen was blank until the desktop appeared, the firmware is still
+      posting on the dGPU and you were blind at the systemd-boot menu — which
+      is how you choose Windows. Not fatal, and the fix is either firmware
+      (*Initial Display Output: IGD*) or moving the cable back to the card.
+- [ ] **2. `cat /sys/bus/pci/devices/0000:12:00.0/boot_vga`** → must be **`1`**
+      (and `0000:03:00.0` must be `0`). **This is the Phase 4 gate.** The cable
+      was moved on 2026-09-24 and the DRM connectors confirmed it, but
+      `boot_vga` is decided at POST and was still `1` on the dGPU at install
+      time. Also re-check `cat /sys/class/drm/card*-HDMI-A-*/status` and that
+      the iGPU connector's `edid` is now **non-zero** — it read 0 bytes before
+      the reboot, which was probably just an undriven connector, but it is the
+      only display this machine has.
+      - **If `boot_vga` is 1 on the iGPU:** uncomment the `debug` block in
+        [`hosts/desk/home/niri.kdl`](../hosts/desk/home/niri.kdl) to pin niri
+        to the iGPU and keep it off the dGPU. Phase 4 needs this.
+      - **If it is still the dGPU:** leave niri's pinning commented out and
+        fix the firmware first.
+- [ ] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
+      `sudo systemctl restart NetworkManager`, and check the profile at
+      `/etc/NetworkManager/system-connections/` is 600 and root-owned.
+- [ ] **4. Windows still boots bare metal, and is still activated.** Pick it
+      from the firmware boot menu (**F12**). *Settings → System → Activation*
+      should still say the digital licence is linked. Nothing touched its
+      drive, so this is confirming rather than fixing — but confirm it before
+      trusting it. Check the clocks agree afterwards, both sides keeping the
+      RTC in UTC.
+- [ ] **5. Set the root password** if it was not set before the reboot:
+      `sudo passwd root`. Day to day it is unused — `n8` has passwordless
+      sudo — but it is the break-glass for single-user mode if `hosts/desk/`
+      ever stops evaluating.
+- [ ] **6. First rebuild from the installed system:**
+      `cd ~/nix-config && sudo nixos-rebuild switch --flake .#desk`.
+      This is also the test that the seeded checkout and the flake agree.
+- [ ] **7. `sudo tailscale up`** — `desk` is a new tailnet node, not a rename
+      of `wsl`.
+- [ ] **8. Add a `desk` row to the README's host table** with its rebuild
+      command — the one Phase 2 checklist item that is pure documentation.
+- [ ] **9. Sanity-check the desktop**: niri starts on tty1, waybar and swaync
+      are up, `Mod+Return` gives WezTerm, `Mod+D` gives fuzzel, audio works
+      (`wpctl status`), and Chrome opens with
+      `--password-store=gnome-libsecret` honoured (gnome-keyring will ask for
+      its own password on first use — that is intended, not a fault).
+
+Known-good state at install time, for comparison if something looks wrong:
+
+| | |
+| --- | --- |
+| Boot entries | `BootOrder: 0000,0002,0001,0005` — `0000` Linux Boot Manager (NixOS, 1 TB ESP) first, `0001` Windows (2 TB ESP, PARTUUID `8614cf7c…`), `0005` the USB stick |
+| Stale NVRAM entry | **Already removed.** `Boot0004` pointed at the wiped 1 TB ESP (PARTUUID `f968dba4…`, which now exists on no partition) and was deleted with `efibootmgr -b 0004 -B`. That closes the residual the plan carried |
+| Target layout | `nvme0n1p1` 1 G vfat `/boot`, `p2` 200 G ext4 `/`, `p3` 730.5 G btrfs with `/srv/media` and `/srv/games` subvolumes |
+| Windows drive | `nvme1n1` untouched — 16 M MSR, 1.8 T NTFS, 300 M vfat `SYSTEM`, 909 M WinRE |
+| Root filesystem after install | 14 G used of 196 G |
+
+---
+
 ## Resume here — 2026-09-24
 
 **For a new session picking this up.** This plan lives on PR
@@ -409,7 +475,7 @@ the text was wrong about how the machine behaves.
 | Google One quota headroom for the Takeout archive | [Step 3](#step-3--bring-the-media-in) | Delivery to Drive stores the archive *in* Drive, against the same quota Photos already fills, so it needs free space equal to the library. No headroom → download-link delivery pulled inside the 7 days, or a month of extra storage |
 | Windows Hello sign-in method | Before the first guest boot | Bare metal and the guest use different TPMs, so a TPM-backed PIN is invalidated on every crossing — [Two TPMs, one install](#two-tpms-one-install). Decide: password sign-in, PIN re-created per crossing, or test fTPM passthrough |
 | Fate of the Drive/Photos/GCS/MacBook/Flickr copies | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
-| Stale NVRAM entry for the old ESP | Phase 2 | Once disko wipes the 1 TB drive, the old "Windows Boot Manager" entry points at nothing. `efibootmgr -b <n> -B` it, alongside the `efibootmgr -o` step |
+| ~~Stale NVRAM entry for the old ESP~~ | ~~Phase 2~~ | **Closed 2026-09-24.** disko wiped the 1 TB drive and `Boot0004` (PARTUUID `f968dba4…`) was left pointing at nothing; verified that GUID exists on no partition, then removed it with `efibootmgr -b 0004 -B`. One Windows entry remains, on the 2 TB ESP |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
 | `account.microsoft.com/devices` | Before Phase 8 | Note the name the PC is listed under — it is how the Activation Troubleshooter identifies it |
@@ -1878,14 +1944,16 @@ USB and a chroot.
 Then reboot and **verify both boot paths before going further**, while the live
 USB is still plugged in:
 
-- [ ] NixOS boots from the bulk drive
+- [ ] NixOS boots from the bulk drive — *installed 2026-09-24, not yet booted*
 - [ ] Windows still boots bare metal from the firmware boot menu, and is still
       activated (Settings → System → Activation). Nothing should have changed —
       confirming that is the point
 - [ ] Clocks agree after crossing between them — both sides keeping the RTC in
       UTC (`RealTimeIsUniversal = 1` on Windows, the default on NixOS)
-- [ ] `efibootmgr -o` puts systemd-boot first, so NixOS is the default and
-      Windows is the deliberate choice
+- [x] `efibootmgr -o` puts systemd-boot first, so NixOS is the default and
+      Windows is the deliberate choice — *already the case after install:
+      `BootOrder: 0000,0002,0001,0005`. The stale `Boot0004` for the wiped
+      1 TB ESP was removed with `efibootmgr -b 0004 -B`*
 
 Then `sudo tailscale up`, `git clone` the repo to `~/natb1/nix-config`, and from
 there it is the same `nixos-rebuild switch --flake .#desk` loop as every other
