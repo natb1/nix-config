@@ -11,13 +11,10 @@
   `desk` is the MagicDNS short name, the same one Files resolves for
   smb://desk/media. No TLS: the path is already WireGuard.
 
-  Also a home-screen Web Clip, "desk media", opening smb://n8@desk. iOS has no
-  payload for Files' server list (Apple's payload reference, 2026-09-25), but
-  an smb:// URL hands off to Files' Connect to Server. It lands at the server,
-  not in `media` (iOS drops the share path), and asks for the Samba password
-  the first time — which never goes in a profile: this repo is public.
-  Unverified as a Web Clip until tried; the fallback is Files → ⋯ → Connect
-  to Server by hand.
+  The media share is not in here. iOS has no payload for Files' server list,
+  and a Web Clip to smb://n8@desk was tried (2026-09-25): Web Clips open in
+  the default browser — Chrome on this phone — which does not hand smb:// to
+  Files. Files keeps the server under Browse → Shared once connected by hand.
 -->
 <plist version="1.0">
 <dict>
@@ -48,31 +45,11 @@
 			<key>PayloadVersion</key>
 			<integer>1</integer>
 		</dict>
-		<dict>
-			<key>URL</key>
-			<string>smb://n8@desk</string>
-			<key>Label</key>
-			<string>desk media</string>
-			<key>IsRemovable</key>
-			<true/>
-			<key>FullScreen</key>
-			<false/>
-			<key>PayloadDisplayName</key>
-			<string>desk media share</string>
-			<key>PayloadIdentifier</key>
-			<string>com.natb1.desk.webclip.media</string>
-			<key>PayloadType</key>
-			<string>com.apple.webClip.managed</string>
-			<key>PayloadUUID</key>
-			<string>69AFCAFE-157A-49C6-96B0-67A2A1B00B39</string>
-			<key>PayloadVersion</key>
-			<integer>1</integer>
-		</dict>
 	</array>
 	<key>PayloadDescription</key>
-	<string>The Brother HL-L2305 and the media share, both on desk over Tailscale.</string>
+	<string>The Brother HL-L2305 shared from desk over Tailscale.</string>
 	<key>PayloadDisplayName</key>
-	<string>desk (AirPrint + media share)</string>
+	<string>Brother on desk (AirPrint)</string>
 	<key>PayloadIdentifier</key>
 	<string>com.natb1.desk.airprint</string>
 	<key>PayloadRemovalDisallowed</key>
