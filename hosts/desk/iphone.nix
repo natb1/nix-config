@@ -32,7 +32,8 @@ let
   # That looks like "no notifications lately", so say it out loud: one
   # swaync alert per episode, after five minutes of Classic up and
   # notifications down. Genuinely away, Classic is down too, and it stays
-  # quiet.
+  # quiet. The alert withdraws itself once notifications flow again (after
+  # the Bluetooth cycle), and only then: leaving while wedged keeps it up.
   ancsWatch = pkgs.writeShellApplication {
     name = "tether-ancs-watch";
     runtimeInputs = [
@@ -40,10 +41,11 @@ let
       pkgs.libnotify
       pkgs.coreutils
       pkgs.gnugrep
+      pkgs.systemd
     ];
     text = ''
       down=0
-      alerted=0
+      alert=""
       while true; do
         status=$(timeout 30 tether --bt-connection 2>/dev/null || true)
         if grep -q '^BR/EDR: *yes' <<<"$status" &&
@@ -51,12 +53,15 @@ let
           down=$((down + 1))
         else
           down=0
-          alerted=0
         fi
-        if [ "$down" -ge 5 ] && [ "$alerted" -eq 0 ]; then
-          notify-send -a Tether -i phone "iPhone notifications are stuck" \
-            "Texts still arrive; other notifications do not. Turn Bluetooth off and on in the iPhone's Settings."
-          alerted=1
+        if [ "$down" -ge 5 ] && [ -z "$alert" ]; then
+          alert=$(notify-send -p -a Tether -i phone "iPhone notifications are stuck" \
+            "Texts still arrive; other notifications do not. Turn Bluetooth off and on in the iPhone's Settings.")
+        fi
+        if [ -n "$alert" ] && grep -q '^Notifications: *yes' <<<"$status"; then
+          busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
+            org.freedesktop.Notifications CloseNotification u "$alert" || true
+          alert=""
         fi
         sleep 60
       done

@@ -43,6 +43,9 @@
   # Secure Boot stays off until Phase 2b swaps this for lanzaboote.
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
+  # MemTest86+ as a boot menu entry, for BIOS tuning's validation set
+  # (docs/desktop-migration.md): no USB stick needed for it.
+  boot.loader.systemd-boot.memtest86.enable = true;
 
   # Wi-Fi is the only link: the Intel I225-V port is not cabled, and Phase 0
   # confirmed it (enp13s0, NO-CARRIER). The MediaTek RZ616 (MT7922, mt7921e)

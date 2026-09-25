@@ -787,7 +787,7 @@ Each step passes all of these, or it is reverted:
 
 | Test | Where | Pass |
 | --- | --- | --- |
-| MemTest86+ | USB now; `boot.loader.systemd-boot.memtest86.enable = true` once NixOS exists | 4 full passes, zero errors |
+| MemTest86+ | The systemd-boot menu entry (`boot.loader.systemd-boot.memtest86.enable`, on since 2026-09-25) | 4 full passes, zero errors |
 | TestMem5 (anta777 *extreme* config) | Bare-metal Windows | 3 cycles, zero errors |
 | y-cruncher (VT3 / all tests) | Bare-metal Windows | 1 hour, no errors |
 | CoreCycler | Bare-metal Windows, **Curve Optimizer only** | Every core, several hours overnight |
@@ -2743,7 +2743,10 @@ What to expect:
       mirroring back by 08:30). So the wedge is set **on the way out**, while
       crossing the edge of range, and time in range does not clear it: two
       departures, two wedges. Next: an iOS automation that cycles Bluetooth
-      when the phone joins the home Wi-Fi, and the upstream report
+      when the phone joins the home Wi-Fi, and the upstream report. *2026-09-25:
+      the alert did fire overnight and was waiting in the panel. The
+      automation is declined — a manual cycle on seeing the alert is enough —
+      so the alert now withdraws itself once notifications flow again*
 
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
