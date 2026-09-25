@@ -174,6 +174,15 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   Unix accounts; set it with `sudo smbpasswd -a n8`. On `mba` the same
   password sits in the login keychain, saved the first time
   `hosts/mba/desk.nix` mounts the share ("Remember this password").
+- `desk`'s restic credentials for the media backup in `hosts/desk/media.nix`,
+  in `/etc/restic/` (root, dir 0700, files 0600). `media.password` is the
+  repository's **encryption key**: there is no reset, and without it the
+  backup on the Hetzner Storage Box is unreadable. `id_ed25519` is the SSH key
+  the box's `authorized_keys` pins to append-only
+  (`rclone serve restic --stdio --append-only restic/media`). A lost key is
+  replaced by generating a new one and swapping the line on the box; a lost
+  password cannot be replaced. See `docs/desktop-migration.md`, "Before any
+  original is retired", for where the off-machine copies go.
 - `desk`'s iCloud Photos backup state, for `hosts/desk/icloud.nix`: one env
   file per instance in `~/.config/icloudpd/` (Apple ID and library name), each
   Apple ID's password in gnome-keyring under `service=pyicloud://icloud-password`,

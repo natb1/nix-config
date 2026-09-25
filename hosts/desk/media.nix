@@ -1,6 +1,6 @@
 # /srv/media as an SMB share — Media storage Step 1.
-# docs/desktop-migration.md, "Media storage", is the design; Steps 2 (restic
-# to Hetzner) and 3 (bringing the media in) land here later, in that order.
+# docs/desktop-migration.md, "Media storage", is the design. Step 2 (restic
+# to Hetzner) is below; Step 3 (bringing the media in) is by hand.
 #
 # SMB, not NFS: the clients are the MacBook and Windows, and SMB is the one
 # protocol both speak well.
@@ -16,7 +16,7 @@
 # Not managed by this repo: Samba's own password database. `smbpasswd -a n8`
 # is hand-provisioned, and listed in the README's unmanaged-state section.
 
-{ ... }:
+{ pkgs, ... }:
 
 {
   services.samba = {
@@ -107,5 +107,74 @@
   systemd.services.samba-smbd = {
     after = [ "srv-media.mount" ];
     requires = [ "srv-media.mount" ];
+  };
+
+  # Step 2: restic to the Hetzner Storage Box u676942, append-only.
+  #
+  # The box's authorized_keys pins /etc/restic/id_ed25519 to
+  #   command="rclone serve restic --stdio --append-only restic/media",restrict
+  # so whatever remote command restic sends is ignored, and the repository
+  # path lives on the box, not here. desk can add snapshots and cannot delete
+  # them: proved 2026-09-25, `forget` got 403 Forbidden and the snapshot
+  # survived. Hence no pruneOpts — forget would fail every run. Retention is a
+  # manual job with the offline prune key.
+  #
+  # Not managed by this repo: /etc/restic/media.password (the repository's
+  # encryption key: no reset, lose it and the backup is unreadable) and
+  # /etc/restic/id_ed25519. Both root 0600, listed in the README.
+  services.restic.backups.media = {
+    initialize = true;
+    paths = [ "/srv/media" ];
+    repository = "rclone:";
+    passwordFile = "/etc/restic/media.password";
+    extraOptions = [
+      # BatchMode: an ssh prompt inside restic's pipe cannot be answered and
+      # surfaces as an HTTP timeout; fail fast with ssh's own error instead.
+      "rclone.program='ssh -p 23 -i /etc/restic/id_ed25519 -o BatchMode=yes u676942@u676942.your-storagebox.de'"
+    ];
+    extraBackupArgs = [ "--exclude-caches" "--one-file-system" ];
+    runCheck = true;
+    # Samples, not a full download: ~15 GB/day at 730 GB, over Wi-Fi.
+    # %% because the module puts this in ExecStart, where % is a specifier.
+    checkOpts = [ "--read-data-subset=2%%" ];
+    timerConfig = {
+      OnCalendar = "daily";
+      RandomizedDelaySec = "2h";
+      Persistent = true; # catch up after downtime
+      WakeSystem = true; # for when suspend lands (Phase 8)
+    };
+  };
+
+  systemd.services.restic-backups-media = {
+    # Same footgun as Samba: without the bulk SSD, restic would snapshot an
+    # empty directory on the root filesystem and report success.
+    after = [ "srv-media.mount" ];
+    requires = [ "srv-media.mount" ];
+    unitConfig.OnFailure = "restic-backups-media-failed.service";
+  };
+
+  # The alert until the plan's ntfy exists (<FILL_ME_notify_unit>), as in
+  # icloud.nix — but this is a system unit, so it has to reach into n8's
+  # session bus. If nobody is logged in, the alert is lost; that is the gap
+  # the retirement gate's alerting item closes.
+  systemd.services.restic-backups-media-failed = {
+    description = "Alert: restic-backups-media failed";
+    serviceConfig.Type = "oneshot";
+    script = ''
+      uid=$(${pkgs.coreutils}/bin/id -u n8)
+      ${pkgs.util-linux}/bin/runuser -u n8 -- \
+        ${pkgs.coreutils}/bin/env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
+        ${pkgs.libnotify}/bin/notify-send -u critical -a restic \
+          'Media backup failed' 'journalctl -u restic-backups-media'
+    '';
+  };
+
+  # The unit runs as root; ssh reads this system-wide known_hosts. The
+  # non-default port makes the [host]:port form mandatory.
+  # SHA256:XqONwb1S0zuj5A1CDxpOSuD2hnAArV1A3wKY7Z3sdgM, matched against
+  # docs.hetzner.com/storage/storage-box/general on 2026-09-25.
+  programs.ssh.knownHosts.storagebox = {
+    hostNames = [ "[u676942.your-storagebox.de]:23" ];
+    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs";
   };
 }
