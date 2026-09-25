@@ -962,7 +962,13 @@ since the next firmware update resets them too.
       ~7400 RPM at 25 % duty (read via the out-of-tree `it87`, 2026-09-24).
       Match it to a header in Smart Fan 6*
 - [ ] Each header's mode matches its fan (PWM for 4-pin, Voltage for 3-pin)
-- [ ] Curves set, Temperature Interval raised; quiet at idle and browsing
+- [ ] Curves set, Temperature Interval raised; quiet at idle and browsing —
+      *2026-09-25: set. CPU fan left on its firmware default (it already ran
+      hotter-biased than this plan's curve, and the CPU is heat-limited);
+      the case fan's curve adjusted. Saved with F3 as `fan-profile` — which
+      landed on the stick's 3 MB `EFIBOOT` partition, not `BIOS`; copied to
+      [`hosts/desk/bios/fan-profile-2026-09-25`](../hosts/desk/bios/) and to
+      the `BIOS` partition. Values to transcribe from the photos*
 - [ ] Eco Mode tried; kept or rejected on compile time vs noise — *2026-09-25:
       switchable from NixOS instead of firmware setup: `eco on` / `eco off` /
       `eco status` ([`hosts/desk/eco.nix`](../hosts/desk/eco.nix), ryzen_smu
