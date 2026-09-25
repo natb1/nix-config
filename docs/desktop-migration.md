@@ -581,7 +581,7 @@ the text was wrong about how the machine behaves.
 | Printer's USB URI | [Printer sharing](#printer-sharing) | The serial-keyed `usb://Brother/HL-L2305%20series?serial=U66480F3N341782` is built from what Windows reports; `lpinfo -v` after Phase 2 is authoritative |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet. The intended answer is ntfy, deferred to [Optional follow-ups](#optional-follow-ups); until then the unit is a desktop pop-up via swaync, which only helps if you are at the desk |
 | Storage Box and Hetzner account credentials | [Media storage](#media-storage) | **Interim, 2026-09-25:** the box's main-account password is the Hetzner account password, kept in Chrome's password manager. Two problems to fix before the backup is trusted. (1) Reuse: the box password is sent to the box and also works for SMB/WebDAV/FTP if they are on, and the account login can reset everything, including snapshots. They should be two different passwords. (2) The append-only design assumes a compromised `desk` cannot reach an unrestricted credential. Chrome on `desk` can. Evaluating Vaultwarden and KeePassXC. Either works if the vault stays locked on `desk` and is unlocked only on the phone or laptop |
-| Storage Box hardening steps | [Media storage](#media-storage) | To write: 2FA on the Hetzner account; SMB/WebDAV/FTP off; password login on port 22 off where the Console allows it; automatic snapshots (Console-managed, read-only over SSH, count against the 1 TB); later, replace the box password with the offline prune key. The restic repository password (`/etc/restic/media.password`) is an encryption key, not a login: there is no reset, and losing it makes the backup unreadable. The unattended unit needs it in plain text on `desk`, so the hardening is about how it is kept: root-owned, mode 0600; never in the repo or the Nix store (`passwordFile` is a path); never echoed to a terminal or chat; not reused anywhere. Copy it off `desk` (password manager, plus paper in the recovery plan) before any original is retired: *postponed 2026-09-25* while every file still exists at its source or can be downloaded again. See [Before any original is retired](#before-any-original-is-retired). Optionally, `restic key add` a second repository key for the trusted person, so theirs can be revoked without touching yours |
+| Storage Box hardening steps | [Media storage](#media-storage) | **Done 2026-09-25:** 2FA on the Hetzner account; SMB and WebDAV off (the box's *additional settings* list SMB, WebDAV, SSH and external reachability; only the last two are on); daily automatic snapshots, 10 kept (Console-managed, read-only over SSH, count against the 1 TB); append-only forced command proved. **To do:** password login on port 22 off where the Console allows it; later, replace the box password with the offline prune key. The restic repository password (`/etc/restic/media.password`) is an encryption key, not a login: there is no reset, and losing it makes the backup unreadable. The unattended unit needs it in plain text on `desk`, so the hardening is about how it is kept: root-owned, mode 0600; never in the repo or the Nix store (`passwordFile` is a path); never echoed to a terminal or chat; not reused anywhere. Copy it off `desk` (password manager, plus paper in the recovery plan) before any original is retired: *postponed 2026-09-25* while every file still exists at its source or can be downloaded again. See [Before any original is retired](#before-any-original-is-retired). Optionally, `restic key add` a second repository key for the trusted person, so theirs can be revoked without touching yours |
 | Written recovery plan (dead man's switch, digital estate) | [Media storage](#media-storage) | To write. Someone other than you has to be able to get the media back: where the Hetzner login, the restic repository password (`/etc/restic/media.password`) and the prune key are held, and how a trusted person gets them if you cannot. Without the restic password the backup is unreadable ciphertext. The paper copy also holds what the custody rule (below) marks for paper, and the memorized passwords |
 | Credential custody rule | Before the vault is chosen | Every credential gets one of three homes, and none is reused. **Memorized** (typed often enough to remember): the vault's master password, `mba`'s login password and `desk`'s gnome-keyring password. **Vault only** (random, pasted, rarely typed): Samba, `desk` root, the Hetzner account password and the box password. **Vault plus paper** (needed when a device, or the vault itself, is gone): the Hetzner 2FA recovery codes, `mba`'s FileVault recovery key, the vault's own recovery kit, the restic password and the prune key. None of it goes in git, not even as a hash. `desk`'s root disk is unencrypted, so every hash on it can be cracked offline by whoever holds the disk. Only a random password, used nowhere else, makes that harmless. **Decide:** the Hetzner row above keeps the vault locked on `desk`, which means no vault autofill in `desk`'s Chrome. Either accept that, or split into two vaults: an everyday one for web logins that `desk` may unlock, and an infrastructure one that it never unlocks (Hetzner, box, prune key, restic, root, recovery codes). With KeePassXC that is two `.kdbx` files; with Bitwarden/Vaultwarden, two accounts |
 | `desk` root password | [After the reboot](#after-the-reboot--do-these-in-order), item 5 | Break-glass only: `n8` has passwordless sudo. It does not stop anyone with physical access. The disk is unencrypted and the systemd-boot editor is on (the NixOS default), so `init=/bin/sh` at the boot menu gives a root shell without it. That is consistent with the autologin threat model, and it is also the way back if this password is lost. It is needed exactly when `desk` is broken, so a copy only on `desk` is useless: keep it in the vault (readable from the phone). Random, but typeable at a console with no paste: 5–6 diceware words. Set with `passwd root`, not `hashedPassword` in the repo. `boot.loader.systemd-boot.editor = false` is only worth setting together with disk encryption. Until then it closes nothing and removes the recovery path |
@@ -3250,53 +3250,28 @@ invocation, second repository — not a migration.
 
 #### The unit
 
-```nix
-# hosts/desk/media.nix, continued
-{
-  services.restic.backups.media = {
-    initialize = true;
-    paths = [ "/srv/media" ];
-    # Append-only: the box's authorized_keys forces this key to
-    # `rclone serve restic --stdio --append-only restic/media`, so the path
-    # lives there and the remote command restic sends is ignored.
-    repository = "rclone:";
-    passwordFile = "/etc/restic/media.password";        # 0600, hand-provisioned
-    extraOptions = [
-      "rclone.program='ssh -p 23 -i /etc/restic/id_ed25519 u676942@u676942.your-storagebox.de'"
-    ];
-    extraBackupArgs = [ "--exclude-caches" "--one-file-system" ];
-    # No pruneOpts: forget is refused by the append-only channel, and
-    # retention runs by hand with the offline prune key.
-    runCheck = true;
-    checkOpts = [ "--read-data-subset=2%" ];            # samples, not a full download — ~15 GB/day at 730 GB, over Wi-Fi; 1% if the uplink minds
-    timerConfig = {
-      OnCalendar = "daily";
-      RandomizedDelaySec = "2h";
-      Persistent = true;                                # catch up after downtime
-      # No WakeSystem: the RTC has no alarm — see The desktop session's Idle
-    };
-  };
+**In `hosts/desk/media.nix` since 2026-09-25. That file is authoritative;**
+this section used to carry a copy, and the copy drifted. Over the first
+draft, the unit as built:
 
-  # A backup whose failures are silent is not a backup. This repo has no
-  # alerting yet; until it does, at minimum make the failure visible.
-  systemd.services.restic-backups-media.unitConfig.OnFailure = "<FILL_ME_notify_unit>";
-
-  # The unit runs as root with no known_hosts, so the first ssh to the box
-  # would fail host-key verification. Hetzner publishes the fingerprints; the
-  # non-default port makes the [host]:port form mandatory. This IS declarative
-  # and belongs in the repo, unlike the private key.
-  programs.ssh.knownHosts.storagebox = {
-    # SHA256:XqONwb1S0zuj5A1CDxpOSuD2hnAArV1A3wKY7Z3sdgM, matched against
-    # docs.hetzner.com/storage/storage-box/general on 2026-09-25.
-    hostNames = [ "[u676942.your-storagebox.de]:23" ];
-    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs";
-  };
-}
-```
-
-Verify the `services.restic.backups` option names against the pinned nixpkgs
-before committing — that module has churned, and the flake tracks
-`nixos-unstable`.
+- **Append-only over `rclone:`**, per the section below. No `pruneOpts`,
+  because `forget` is refused and retention is manual.
+- **`BatchMode=yes` in `rclone.program`.** An ssh prompt inside restic's pipe
+  cannot be answered, and it surfaces as an unrelated HTTP timeout.
+- **The host key is pinned in `programs.ssh.knownHosts`**:
+  `SHA256:XqONwb1S0zuj5A1CDxpOSuD2hnAArV1A3wKY7Z3sdgM`, checked against
+  Hetzner's docs.
+- **It `requires` `srv-media.mount`**, as Samba does. Without the bulk SSD it
+  would otherwise snapshot an empty directory and report success.
+- **`--read-data-subset=2%%`.** The module puts `checkOpts` in `ExecStart`,
+  where `%` is a systemd specifier.
+- **No `WakeSystem`.** This board's RTC has no alarm, and the timer fails to
+  load with it (see The desktop session's Idle).
+- **`OnFailure` sends a `notify-send` pop-up into n8's session.** That stays
+  until ntfy exists.
+- The module also installs **`restic-media`**, which is restic with the
+  unit's repository, password and ssh already set: `sudo restic-media
+  snapshots`.
 
 #### Three Hetzner specifics that are otherwise an evening
 
@@ -3351,7 +3326,9 @@ A backup is a claim until it is restored. All four, before trusting it:
 
 - [ ] `restic snapshots` **from the MacBook**, not from `desk` — proves the repo
       opens with only the password and key, and does not depend on the machine
-      that made it
+      that made it. *Deferred to the [retirement gate](#before-any-original-is-retired):
+      it needs the password off `desk` and a second append-only key on the box,
+      the Mac's own, never a copy of `desk`'s*
 - [x] Restore one large file to `/tmp` and `cmp` it byte-for-byte against the original
       — *2026-09-25, test set: `sudo restic-media restore latest --include
       …/takeout-20260924T222726Z-1-001.tgz --target /var/tmp/restore` from
@@ -3360,8 +3337,9 @@ A backup is a claim until it is restored. All four, before trusting it:
       installs `restic-media`, which is restic with the unit's repository,
       password and ssh. Repeat on the full set before the retirement gate*
 - [ ] Simulate the real failure: unplug the bulk SSD, boot, and confirm Samba
-      refuses to serve rather than exposing an empty share — then restore into a
-      fresh filesystem and time it
+      refuses to serve rather than exposing an empty share, **and** that
+      `restic-backups-media` fails (and alerts) rather than snapshotting an empty
+      directory — then restore into a fresh filesystem and time it
 - [ ] `systemctl list-timers restic-backups-media` after a week, and confirm a
       deliberately broken run is actually noticed
 
@@ -3668,7 +3646,8 @@ target: one moves, the other stops on the lock, nothing is overwritten.
 - [x] iPhone mounts `media` through Files over Tailscale — *2026-09-24,
       `smb://desk/media` (MagicDNS resolves in Files); `smbstatus` showed n8
       from `iphone-13-mini` at `100.70.251.123` on SMB3_11*
-- **Step 2 postponed 2026-09-24**, by choice. That also holds Step 3: nothing
+- **Step 2 postponed 2026-09-24**, by choice; **resumed and running
+      2026-09-25** (below). That also held Step 3: nothing
       irreplaceable lands on `/srv/media` without a proven restore. The
       share itself is in use for anything that has another copy — which
       includes every source still in place: downloading is not the risk,
@@ -3714,6 +3693,8 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       up over Wi-Fi; `check --read-data-subset=2%` found no errors; next run
       from the timer. The first switch failed the timer on `WakeSystem` (the
       RTC has no alarm — see The desktop session's Idle), now dropped*
+- [ ] `sudo rm /etc/restic/known_hosts`, left over from the shell test. The unit
+      uses the pinned system-wide key
 - [ ] Offline prune key, recorded somewhere that is not this machine —
       postponed to the [retirement gate](#before-any-original-is-retired)
 - [ ] The four restore proofs above — run once on a small test set before
