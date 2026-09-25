@@ -560,14 +560,16 @@ the text was wrong about how the machine behaves.
 | --- | --- | --- |
 | Board revision on the PCB itself | [Firmware update](#firmware-update) | The box says 1.0. `dmidecode` cannot settle it — the board's SMBIOS *Version* reads `x.x` (2026-09-24). The silkscreen (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before the *next* flash. F43c is already on and boots, so this is retrospective now |
 | Linux sees neither the fans nor the DIMM temperatures | [Fan control](#fan-control), [BIOS tuning](#bios-tuning) | Measured 2026-09-24. The board's ITE Super I/O reports **chip ID `0x8689`**, which mainline `it87` does not claim (`modprobe it87` → `No such device`), so no header RPM or PWM shows up in `sensors`. `spd5118` finds no DIMM sensors either. Two consequences: fan control stays firmware-only (already the plan, now forced), and BIOS tuning's "DIMMs under ~55 °C" has to be read from HWiNFO under bare-metal Windows. An OS-side curve would need the out-of-tree `it87` fork |
-| Total size of the media, across all five sources | Media storage, [Step 3](#step-3--bring-the-media-in) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr must fit in ~730 GB after de-duplication — **together with the host-side Steam library**, which shares that volume. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
+| Total size of the media, across all five sources plus iCloud | Media storage, [Step 3](#step-3--bring-the-media-in), [Step 4](#step-4--iphone-photos-from-icloud) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr + both iCloud Photos libraries (and the shared library's growth) must fit in ~730 GB after de-duplication — **together with the host-side Steam library**, which shares that volume. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
 | GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
 | Flickr export request | [Step 3](#step-3--bring-the-media-in) | Asynchronous — Flickr prepares the archive over hours to days. Request it early so it is ready by ingest; download links expire |
 | Google Takeout export request | [Step 3](#step-3--bring-the-media-in) | Same shape as Flickr, worse deadline: Takeout is prepared over hours to days and the **download links expire after 7 days**. Request it with *delivery to Google Drive* so it lands somewhere rclone can pull from unattended, instead of a browser download that must finish inside the window |
 | Google Photos library size and item count | [Step 3](#step-3--bring-the-media-in) | Read both off [photos.google.com](https://photos.google.com) before requesting the export — the count is the only verification Takeout admits, and it has to be recorded *before* the library changes under it |
 | Google One quota headroom for the Takeout archive | [Step 3](#step-3--bring-the-media-in) | Delivery to Drive stores the archive *in* Drive, against the same quota Photos already fills, so it needs free space equal to the library. No headroom → download-link delivery pulled inside the 7 days, or a month of extra storage |
+| Which Apple ID creates the Shared Library | [Step 4](#step-4--iphone-photos-from-icloud) | The creator's iCloud plan stores every Camera photo from both phones from then on. Pick the account with the larger plan, or the one on a Family Sharing iCloud+ plan |
+| iCloud session lapse | [Step 4](#step-4--iphone-photos-from-icloud) | The ongoing backup needs an interactive 2FA re-auth roughly every two months. Until ntfy exists, the `OnFailure` alert only reaches the desk |
 | Windows Hello sign-in method | Before the first guest boot | Bare metal and the guest use different TPMs, so a TPM-backed PIN is invalidated on every crossing — [Two TPMs, one install](#two-tpms-one-install). Decide: password sign-in, PIN re-created per crossing, or test fTPM passthrough |
-| Fate of the Drive/Photos/GCS/MacBook/Flickr copies | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
+| Fate of the Drive/Photos/GCS/MacBook/Flickr copies (not iCloud: the phones keep using it) | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
 | ~~Stale NVRAM entry for the old ESP~~ | ~~Phase 2~~ | **Closed 2026-09-24.** disko wiped the 1 TB drive and `Boot0004` (PARTUUID `f968dba4…`) was left pointing at nothing; verified that GUID exists on no partition, then removed it with `efibootmgr -b 0004 -B`. One Windows entry remains, on the 2 TB ESP |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
@@ -2831,6 +2833,9 @@ the media.
 Three steps, in this order. The share is useful on day one; the backup is what
 makes the share safe to depend on; and only then does the media come in —
 because it is irreplaceable, it arrives on a volume whose backup already works.
+A fourth, [Step 4](#step-4--iphone-photos-from-icloud), added 2026-09-25, covers the
+two iPhones: a one-time copy of each personal iCloud library, then an ongoing copy
+of a shared one.
 
 **Where the media is today** (2026-09-21): spread across five places —
 **Google Drive**, **Google Photos**, **the MacBook's internal storage**, a **GCS
@@ -2839,7 +2844,8 @@ account and one Google One quota but **two separate stores** — Google severed 
 Drive↔Photos folder sync in July 2019, so nothing in Photos is reachable through
 the Drive remote and it needs its own ingest path. None of them is this machine,
 which is good news: every source is itself a copy that survives the migration
-untouched.
+untouched. **iCloud Photos** (two Apple IDs) is the sixth, and the only one still
+growing, so it gets [its own step](#step-4--iphone-photos-from-icloud).
 
 ### Step 1 — `/srv/media` as a network share
 
@@ -3265,7 +3271,8 @@ also holding the other four sources un-de-duplicated.
       then a `restic forget` that must **fail** — before wiring the unit
 - [ ] The four restore proofs above — run once on a small test set before
       ingest, and again after
-- [ ] Measure the total size of the five sources **before Phase 2**; it must
+- [ ] Measure the total size of the five sources (plus both iCloud libraries,
+      [Step 4](#step-4--iphone-photos-from-icloud)) **before Phase 2**; it must
       fit in ~730 GB after de-duplication. Budget Google Photos at more than
       its library size — Takeout's album folders are duplicates of media that
       also lives under `Photos from <year>/` — *so far (2026-09-24): Google
@@ -3298,6 +3305,180 @@ also holding the other four sources un-de-duplicated.
       directories; `rclone check` / `rsync --dry-run --checksum` / item counts
       each; merge the Takeout sidecars back into the media; then de-duplicate
 - [ ] First full backup, restore proof, *then* decide the fate of the sources
+
+### Step 4 — iPhone photos from iCloud
+
+Added 2026-09-25. **Two Apple IDs, n8's and n8's wife's, both with iCloud
+Photos on.** Neither library is in the five sources above, and unlike them the
+two keep growing, so this step has two halves: a **one-time copy of each
+personal library**, and an **ongoing copy of one shared library** that both
+cameras write into from now on. The tool for both is
+[`icloudpd`](https://github.com/icloud-photos-downloader/icloud_photos_downloader)
+(`pkgs.icloudpd`; nixpkgs has no NixOS module, so the unit below is hand-written).
+
+**Why a shared library rather than two ongoing backups.** icloudpd logs in as
+one Apple ID and sees only that ID's libraries. Two ongoing backups would mean
+two sessions to keep alive, and each one lapses on its own schedule (Apple is
+reported to expire trusted sessions after roughly two months) and needs its
+owner there to type a 2FA code. So both cameras write into an
+**iCloud Shared Photo Library** instead. One session on n8's account then
+sees the new photos from both phones. The wife's account is logged in to
+once, for the one-time copy, and never again.
+
+| | Personal library (`PrimarySync`) | Shared library (`SharedSync-…`) |
+| --- | --- | --- |
+| What lands in it | Everything **before** the camera switch, plus, afterwards, screenshots, images saved from Messages/Safari, and photos from other camera apps | Every **Camera app** photo and video from both phones after the switch |
+| Backup | **Once**, per account, right after the switch | **Ongoing**, daily timer, n8's account only |
+| Lands in | `/srv/media/icloud/n8/`, `/srv/media/icloud/<FILL_ME_wife>/` | `/srv/media/icloud/shared/` |
+| Accepted gap | Screenshots and saved images after the switch are not backed up. The one-time run can be repeated by hand at any time; it skips files it already has | Items someone moves back to their personal library drop out of the ongoing backup |
+
+#### Prerequisites, on both Apple IDs
+
+- **iCloud Photos on**, on each phone (Settings → Photos → *iCloud Photos*).
+  icloudpd reads iCloud, not the phone. A photo that has not uploaded does not
+  exist as far as the backup is concerned.
+- **Advanced Data Protection off**, and **Access iCloud Data on the Web on**
+  (Settings → *Apple Account* → iCloud). icloudpd uses the web API, and with
+  ADP on it cannot log in at all.
+- **iOS 16.1 or later.** The Shared Library needs it; both phones are well past it.
+- **Whose iCloud plan pays.** The Shared Library counts against the
+  **creator's** iCloud storage, and from now on it will hold both phones'
+  photos. The account with the larger plan (or the one on a Family Sharing
+  iCloud+ plan) creates it.
+
+#### Move both cameras to the Shared Library
+
+1. On the paying account's iPhone: Settings → Photos → *Shared Library* → set
+   up, and invite the other Apple ID. It is limited to 6 participants, and each
+   person can be in only one.
+2. **When the setup asks which existing photos to move, choose to move them
+   manually and then move none.** The personal libraries stay intact for the
+   one-time copy below. Moving everything in would also work, but it spends the
+   creator's quota on the other person's back catalogue and splits the
+   verification counts across two libraries.
+3. On **both** phones: Settings → Photos → Shared Library → *Sharing from
+   Camera* → **Share Automatically** on, and **Share When at Home** off, so
+   sharing does not depend on where the phone is.
+4. On both phones, open Camera and check that the Shared Library button (two
+   people) is on. It can be switched per shot, and that choice sticks.
+5. **Record the switch date.** It is where the personal snapshots end and the
+   shared library begins.
+
+This half has no dependency on the machine and can happen today.
+
+#### One-time copy of each personal library
+
+Run by hand on `desk` as n8, over SSH, **after** the switch, so each snapshot is
+complete up to the date recorded above. Same gate as the Step 3 ingest:
+[BIOS tuning](#bios-tuning) validated first. icloudpd verifies nothing against
+Apple's checksums, so a bit flip in the copy would go unnoticed. Not gated on
+restic: iCloud keeps the originals, the same reasoning that let the Takeout
+download go ahead early.
+
+```sh
+# Per account. --auth-only prompts for the password and the 2FA code.
+icloudpd --username <apple-id> --cookie-directory ~/.icloudpd/<name> --auth-only
+icloudpd --username <apple-id> --cookie-directory ~/.icloudpd/<name> --list-libraries
+#   PrimarySync          ← the personal library
+#   SharedSync-<UUID>    ← the shared one, once it exists
+icloudpd --username <apple-id> --cookie-directory ~/.icloudpd/<name> \
+  --library PrimarySync --directory /srv/media/icloud/<name>
+```
+
+- **Originals only, by default.** An edited photo comes down as the camera's
+  original, without the edit. If the edits matter, add `--size adjusted`
+  alongside `--size original` (check the packaged version's `--help`;
+  repeating `--size` is recent).
+- **Verify by count, as for Takeout.** Photos → Library → *All Photos* shows
+  "N Photos, M Videos" at the bottom on each phone. A Live Photo comes down as
+  a still plus a `.MOV`, so count the stills and videos separately
+  (Takeout trap 2 again). Then **run the same command again**: it must
+  download nothing.
+- **Then delete the wife's cookie directory** (`rm -r ~/.icloudpd/<FILL_ME_wife>`).
+  Nothing ongoing needs that account, and a live session into someone else's
+  iCloud should not sit on a box that does not need it.
+- **Overlap with Google Photos is expected.** Phones have historically backed
+  up to both. De-duplicate with the rest of Step 3, after verifying.
+
+#### Ongoing copy of the shared library
+
+One template unit, one instance today: n8's account, the Shared Library. A
+timer rather than icloudpd's own `--watch-with-interval`, for the same
+reason restic runs on one: a failed run becomes a failed unit, and that
+becomes an `OnFailure` alert.
+
+```nix
+# hosts/desk/icloud.nix — sketch; confirm flags against pkgs.icloudpd's --help
+{ pkgs, ... }:
+{
+  systemd.services."icloudpd@" = {
+    description = "iCloud Photos → /srv/media/icloud (%i)";
+    after = [ "network-online.target" "srv-media.mount" ];
+    wants = [ "network-online.target" ];
+    requires = [ "srv-media.mount" ];   # the same footgun as Samba's
+    unitConfig.OnFailure = "<FILL_ME_notify_unit>";
+    serviceConfig = {
+      Type = "oneshot";
+      User = "n8";                      # the share's `force user`; files match
+      StateDirectory = "icloudpd/%i";   # cookies, 0700, off the share
+      EnvironmentFile = "/etc/icloudpd/%i.env";  # APPLE_ID=, LIBRARY=SharedSync-…
+      # NO --auto-delete and NO --delete-after-download. Anyone in the Shared
+      # Library can delete from it; the backup only ever adds.
+      ExecStart = ''
+        ${pkgs.icloudpd}/bin/icloudpd --username ''${APPLE_ID} \
+          --cookie-directory /var/lib/icloudpd/%i \
+          --library ''${LIBRARY} --directory /srv/media/icloud/shared \
+          --no-progress-bar
+      '';
+    };
+  };
+  systemd.timers."icloudpd@shared" = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = { OnCalendar = "daily"; Persistent = true; RandomizedDelaySec = "1h"; };
+  };
+}
+```
+
+- **The password.** With a valid session cookie icloudpd should not need
+  it, but it asks again when the session lapses. Keep it in
+  `/etc/icloudpd/shared.password`, 0600, and hand it over with whichever
+  `--password-provider` the packaged version supports non-interactively. Check
+  that the password does not end up in `argv`. It goes on the README's
+  unmanaged-state list along with the `.env` file.
+- **Re-authentication is a chore on a timer.** When the session lapses, the
+  run fails, `OnFailure` fires, and the fix is interactive:
+  `sudo -u n8 icloudpd --username <apple-id> --cookie-directory /var/lib/icloudpd/shared --auth-only`
+  from any SSH session, with n8's phone to hand for the code. Until
+  `<FILL_ME_notify_unit>` reaches a phone (ntfy), the alert only helps at the
+  desk. A shared library that silently stopped backing up two months ago is
+  the failure to avoid.
+- **Backed up by Step 2** like everything else under `/srv/media`. Once
+  restic has passed its restore proofs, `/srv/media/icloud/` plus Hetzner is a
+  real second copy. Until then iCloud is the only authoritative one. Nothing
+  here is ever a reason to delete from iCloud to free quota.
+
+#### Checklist
+
+- [ ] Both Apple IDs: iCloud Photos on, ADP off, Access iCloud Data on the Web on
+- [ ] Decide which account creates the Shared Library (it pays the storage);
+      read each personal library's size from Settings → *Apple Account* →
+      iCloud and add both to the ~730 GB budget
+- [ ] Create the Shared Library, invite the other account, move **no**
+      existing photos
+- [ ] Both phones: *Share Automatically* on, *Share When at Home* off, Camera's
+      Shared Library button on. Take a test photo on each and confirm it shows
+      up under the Shared Library on the *other* phone. Record the switch date
+- [ ] Record each personal library's photo and video counts, as of the switch
+- [ ] [BIOS tuning](#bios-tuning) validated
+- [ ] One-time `PrimarySync` copy for n8, then for n8's wife. Counts match;
+      a second run downloads nothing. Delete the wife's cookie directory
+- [ ] `hosts/desk/icloud.nix` imported. `--auth-only` into
+      `/var/lib/icloudpd/shared`, then `systemctl start icloudpd@shared` and
+      confirm the test photos from both phones landed
+- [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the failure is
+      noticed; restore it
+- [ ] Two weeks later: `systemctl list-timers icloudpd@shared` shows daily
+      runs, and new photos from both phones are on the share
 
 ---
 
