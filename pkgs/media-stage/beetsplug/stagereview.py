@@ -239,7 +239,11 @@ class StageSession(TerminalImportSession):
     def get_duplicate_action(self, task, found_duplicates):
         key = self.key(task)
         if self.answers is not None:
-            mode = self.dupmode.get(key)
+            # A chosen release can meet an album already filed under its
+            # name; the answer may say "on_duplicate": "remove" (replace the
+            # library copy) or "keep" (both). Otherwise the new one waits.
+            a = self.answers.get(item_id(key)) or {}
+            mode = self.dupmode.get(key) or {"remove": "dup:remove", "keep": "dup:keep"}.get(a.get("on_duplicate"))
             if mode == "dup:merge":
                 self.merging.add(key)
                 return DuplicateAction.MERGE
