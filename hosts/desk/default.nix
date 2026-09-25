@@ -22,6 +22,8 @@
     ./media.nix
     ./printing.nix
     ./iphone.nix
+    ./eco.nix
+    ./sensors.nix
   ];
 
   # Simultaneously the Tailscale node name, what avahi publishes (desk.local),

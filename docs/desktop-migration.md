@@ -930,7 +930,12 @@ louder curve.
   (Tctl/Tccd1), both NVMe composites, the MT7922, both `amdgpu`, and
   `gigabyte_wmi` with six unlabelled board temperatures.
 - **The DIMMs, concretely.** `spd5118` binds nothing here either — no DIMM
-  temperature sensor appears. The "under ~55 °C" check in
+  temperature sensor appears. *Cause found 2026-09-25: the SMBus driver
+  (`i2c_piix4`) is refused because ACPI claims its ports for Gigabyte's WMI
+  SMBus pass-through, which only Windows tools call.
+  [`hosts/desk/sensors.nix`](../hosts/desk/sensors.nix) sets
+  `acpi_enforce_resources=lax` with the reasoning; confirm after the next
+  reboot with `sensors | grep -A3 spd5118`.* The "under ~55 °C" check in
   [BIOS tuning](#bios-tuning) therefore has to be read from **HWiNFO under
   bare-metal Windows**, not from `sensors` as that section assumes.
 
@@ -945,7 +950,12 @@ since the next firmware update resets them too.
       Match it to a header in Smart Fan 6*
 - [ ] Each header's mode matches its fan (PWM for 4-pin, Voltage for 3-pin)
 - [ ] Curves set, Temperature Interval raised; quiet at idle and browsing
-- [ ] Eco Mode tried; kept or rejected on compile time vs noise
+- [ ] Eco Mode tried; kept or rejected on compile time vs noise — *2026-09-25:
+      switchable from NixOS instead of firmware setup: `eco on` / `eco off` /
+      `eco status` ([`hosts/desk/eco.nix`](../hosts/desk/eco.nix), ryzen_smu
+      with Zen 4's RSMU PPT/TDC/EDC commands). Leave firmware Eco Mode off.
+      First use to confirm: `eco status` reads 142/110/170 at stock, `eco on`
+      makes it 88/75/150, and an all-core build holds package power near 88 W*
 - [ ] Recorded in `hosts/desk/bios.md`; fan profile saved to USB
 - [x] Phase 0: fans visible in `sensors` — *not with mainline `it87` (ITE `0x8689` unclaimed); yes with the out-of-tree fork plus `ignore_resource_conflict=1`, read-only in practice (2026-09-24). Curves stay in firmware*; [ ] Phase 4: dGPU fan sane under vfio-pci
 
