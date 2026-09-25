@@ -3598,16 +3598,38 @@ the library path so the two cannot drift apart:
 | Video | the container's title: `Heat (1995)`, `The Wire - S01E01 - The Target`, the YouTube title | `mkvpropedit` in place for MKV/WebM; a stream-copy remux for MP4/MOV |
 | Music | album artist, artist, album, title, track (disc, year where known) | beets, from MusicBrainz or by hand |
 
-**From the Mac.** The share is mounted at `/Volumes/media`, so the steps are
-the same with that prefix: stage with `rsync -a --progress ~/Downloads/<…>
-/Volumes/media/staging/mba-downloads/`, then scan, draft, classify and check
-there. Run the heavy steps **on desk**, where the disk is local:
-`ssh desk media-stage scan --hash /srv/media/staging/mba-downloads` (hashing
-over SMB reads every byte across the network) and `ssh desk media-stage apply
-/srv/media/staging/mba-downloads` (tagging an MP4 rewrites it). Downloads
-folders hold more than films: anything that is not a movie, an episode or a
-YouTube video has no place in the layout yet — leave it `skip` and decide
-where it goes before inventing a folder for it.
+**From the Mac.** Two shares, mounted by the same launchd agent
+([`hosts/mba/desk.nix`](../hosts/mba/desk.nix)): `/Volumes/media`, the
+library, **read-only** over SMB; and `/Volumes/media-staging`, which is
+`/srv/media/staging` and writable. Stage with `rsync -a --progress
+~/Downloads/<…> /Volumes/media-staging/mba-downloads/`, classify by editing
+`/Volumes/media-staging/mba-downloads.tsv`, and run `media-stage` **on desk**,
+where the disk is local and the library writable: `ssh desk media-stage scan
+--hash /srv/media/staging/mba-downloads` (hashing over SMB would read every
+byte across the network), `draft`, `check`, `apply` (tagging an MP4 rewrites
+it). `check` and `lint` also work from the Mac. `apply` there stops with "run
+this on desk". Downloads folders hold more than films: anything that is not a
+movie, an episode or a YouTube video has no place in the layout yet. Leave it
+`skip`, and decide where it goes before inventing a folder for it.
+
+**Keeping Claude on the procedure.** Added 2026-09-25. A Claude Code session on
+the Mac starts knowing nothing of this plan. Three layers, from soft to hard:
+
+- **A skill.** [`modules/home/media-share.nix`](../modules/home/media-share.nix)
+  installs `~/.claude/skills/media-share/SKILL.md` on desk and the Mac. It
+  loads whenever a request is about putting media on the share, whatever
+  directory the session started in, and holds this procedure in short.
+- **A `CLAUDE.md` line** from the same module. It is always loaded and names
+  the skill.
+- **The read-only library share.** It holds even if the first two are missed.
+  A copy into `/Volumes/media` fails, and the share's `README.md` (installed
+  on both shares by the `media-readme` unit in
+  [`hosts/desk/media.nix`](../hosts/desk/media.nix)) says what to do instead.
+  The cost: nothing, Finder included, can drag a file into the library, or
+  rename or delete one there, from the Mac. That is done on desk.
+
+On desk itself `/srv/media` is writable as n8, so only the skill and the
+`CLAUDE.md` line apply there.
 
 **Two hosts at once** (desk locally, the Mac over SMB) are safe by
 construction, not by care. Writers take lock files created atomically — they
@@ -3725,6 +3747,10 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       album artist, the untagged soundtracks by hand; `staging/audio/` ends
       empty
 - [ ] `media-stage lint` clean
+- [ ] Library read-only from the Mac: after both switches, `/Volumes/media`
+      and `/Volumes/media-staging` mount; `touch /Volumes/media/x` fails;
+      `README.md` is on both; a fresh `claude` on the Mac asked to "put this
+      video on the media share" picks up the `media-share` skill
 - [ ] The Mac's Downloads videos, by [Filing a batch](#filing-a-batch)
 - [ ] `gcloud auth login`; save the GCS listing to `/srv/media/gcs/listing.txt`
       and check the storage class (`gcloud storage buckets describe`)

@@ -51,8 +51,21 @@
         "fruit:metadata" = "stream";
         "fruit:posix_rename" = "yes";
       };
+      # The library is read-only over SMB; batches arrive through
+      # media-staging, and media-stage moves them in, on desk. Added
+      # 2026-09-25 so that nothing — Finder, a script, an agent that never
+      # heard of media-stage — writes into the library past the rename table,
+      # the checks and the locks (docs/desktop-migration.md, "Filing a
+      # batch"). Deleting or renaming inside the library is done on desk too.
       media = {
         path = "/srv/media";
+        browseable = "yes";
+        "read only" = "yes";
+        "valid users" = "n8";
+        "force user" = "n8";
+      };
+      media-staging = {
+        path = "/srv/media/staging";
         browseable = "yes";
         "read only" = "no";
         "valid users" = "n8";
@@ -66,7 +79,29 @@
   # disko creates the subvolume root-owned, and `force user = n8` means every
   # write through the share is n8's — so without this the share is read-only
   # in practice. `d` adjusts the owner of a directory that already exists.
-  systemd.tmpfiles.rules = [ "d /srv/media 0755 n8 users -" ];
+  systemd.tmpfiles.rules = [
+    "d /srv/media 0755 n8 users -"
+    "d /srv/media/staging 0755 n8 users -"
+  ];
+
+  # The procedure, where anyone listing either share sees it. Installed, not
+  # symlinked (Samba will not follow a link out of the share into the store),
+  # and rewritten by any switch that changes it — tmpfiles' C never replaces
+  # an existing file.
+  systemd.services.media-readme = {
+    description = "Install README.md on the media shares";
+    after = [ "srv-media.mount" "systemd-tmpfiles-setup.service" ];
+    requires = [ "srv-media.mount" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      install -m 0444 ${./media-README.md} /srv/media/README.md
+      install -m 0444 ${./media-README.md} /srv/media/staging/README.md
+    '';
+  };
 
   # WS-Discovery, so the Windows guest finds the share on virbr0. Multicast
   # discovery does not cross the tailnet, so this is for the guest only.

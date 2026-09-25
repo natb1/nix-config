@@ -6,7 +6,7 @@
 # Not managed here: the Samba password. It lives in the login keychain,
 # saved the first time the share is mounted with "Remember this password".
 
-{ pkgs, ... }:
+{ ... }:
 
 let
   queue = "desk_brother";
@@ -32,17 +32,19 @@ in
     fi
   '';
 
-  # smb://desk/media, mounted at login and remounted after sleep or a
-  # dropped connection. osascript's `mount volume` is the Finder path, so it
-  # finds the password in the login keychain, and asks once if it is not
-  # there yet. The port check first keeps a desk that is off (or booted into
-  # Windows) from raising a "problem connecting to the server" dialog every
-  # five minutes.
-  # media-stage, for filing a batch from this Mac (its Downloads, say) into
-  # the share: staged under /Volumes/media/staging/, then scanned, drafted,
-  # checked and applied in place — docs/desktop-migration.md, "Filing a batch".
-  home-manager.users.n8.home.packages = [ (pkgs.callPackage ../../pkgs/media-stage { }) ];
+  # media-stage and the Claude Code guidance for filing into the share: a
+  # batch is staged in /Volumes/media-staging/<batch>, then scanned, drafted,
+  # checked here and applied on desk — docs/desktop-migration.md, "Filing a
+  # batch".
+  home-manager.users.n8.imports = [ ../../modules/home/media-share.nix ];
 
+  # smb://desk/media (the library, read-only from here) and
+  # smb://desk/media-staging (where batches arrive), mounted at login and
+  # remounted after sleep or a dropped connection. osascript's `mount volume`
+  # is the Finder path, so it finds the password in the login keychain, and
+  # asks once if it is not there yet. The port check first keeps a desk that
+  # is off (or booted into Windows) from raising a "problem connecting to the
+  # server" dialog every five minutes.
   home-manager.users.n8.launchd.agents.desk-media = {
     enable = true;
     config = {
@@ -50,9 +52,11 @@ in
         "/bin/sh"
         "-c"
         ''
-          /sbin/mount | /usr/bin/grep -q '@desk/media on ' && exit 0
           /usr/bin/nc -z -G 3 desk 445 >/dev/null 2>&1 || exit 0
-          /usr/bin/osascript -e 'mount volume "smb://n8@desk/media"'
+          for share in media media-staging; do
+            /sbin/mount | /usr/bin/grep -q "@desk/$share on " && continue
+            /usr/bin/osascript -e "mount volume \"smb://n8@desk/$share\""
+          done
         ''
       ];
       RunAtLoad = true;

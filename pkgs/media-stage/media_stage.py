@@ -11,8 +11,11 @@ share, a GCS listing, a Mac's Downloads folder):
   apply  STAGING   move each file into place, then write its standard metadata
   lint   [DIR...]  audit the library: layout and metadata
 
-STAGING is a directory under <library>/staging/. Its sidecars sit next to it:
-staging/print/ has staging/print.manifest.jsonl and staging/print.tsv.
+STAGING is a batch directory: /srv/media/staging/<batch> on desk, which the
+Mac sees as /Volumes/media-staging/<batch>. Its sidecars sit next to it:
+staging/print/ has staging/print.manifest.jsonl and staging/print.tsv. The
+library share is read-only from the Mac, so apply, tag and lint --fix run
+on desk (`ssh desk media-stage apply /srv/media/staging/<batch>`).
 
 The table (TSV, header row) needs `old` and `new` columns; `confidence` and
 `note` are optional. `old` is relative to STAGING, `new` to the library root.
@@ -31,6 +34,7 @@ is its machine-checked form; keep the two in step.
 
 import argparse
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -445,7 +449,7 @@ def draft(a):
             for line in f:
                 if line.strip():
                     kept[line.rstrip("\n").split("\t")[keep_header.index("old")]] = line.rstrip("\n")
-    recs = [json.loads(l) for l in open(manifest)]
+    recs = [json.loads(l) for l in Path(manifest).read_text().splitlines() if l]
     rows, stems = {}, {}
     # Pass 1: primary files.
     for r in recs:
@@ -562,6 +566,13 @@ class Lock:
                     continue
                 sys.exit(f"locked: {self.path}\n  held by: {holder or '?'}\n"
                          "  wait for it, or delete the file if that process is gone")
+            except (PermissionError, OSError) as e:
+                if not isinstance(e, PermissionError) and e.errno != errno.EROFS:
+                    raise
+                # The library share is read-only over SMB (hosts/desk/media.nix).
+                sys.exit(f"cannot write {self.path}: {e.strerror}\n"
+                         "  from the Mac the library is read-only: run this on desk, e.g.\n"
+                         "  ssh desk media-stage apply /srv/media/staging/<batch>")
         with os.fdopen(fd, "w") as f:
             f.write(f"{socket.gethostname()} {os.getpid()} {self.what} "
                     f"{datetime.datetime.now().isoformat(timespec='seconds')}\n")

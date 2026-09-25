@@ -6,10 +6,11 @@
 # can be rebuilt from the tags with `beet import -A -C /srv/media/music`
 # (as-is, no copy/move), since `write` puts everything it knows in the files.
 
-{ pkgs, ... }:
+{ ... }:
 
 {
-  home.packages = [ (pkgs.callPackage ../../../pkgs/media-stage { }) ];
+  # media-stage, and the Claude Code guidance that makes an agent use it.
+  imports = [ ../../../modules/home/media-share.nix ];
 
   programs.beets = {
     enable = true;

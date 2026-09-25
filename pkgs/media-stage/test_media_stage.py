@@ -7,6 +7,7 @@ and lint, the way a real batch goes."""
 
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -25,6 +26,8 @@ def run_cli(*args):
             ms.main(list(args))
         except SystemExit as e:
             code = e.code if isinstance(e.code, int) else 1
+            if isinstance(e.code, str):
+                out.write(e.code)
     return code, out.getvalue()
 
 
@@ -266,6 +269,25 @@ class Concurrency(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertTrue((st / "Heat.1995.mkv").exists())
             self.assertTrue((lib / ".media-stage.lock").exists())  # not ours to remove
+
+    @unittest.skipIf(os.geteuid() == 0, "root writes through 0555")
+    def test_read_only_library_says_run_on_desk(self):
+        # The Mac: staging on its own share, the library read-only.
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = Path(d) / "media", Path(d) / "media-staging" / "b"
+            (lib / "movies").mkdir(parents=True)
+            st.mkdir(parents=True)
+            make_video(st / "Heat.1995.mkv")
+            for cmd in ("scan", "draft", "check"):
+                self.assertEqual(run_cli(cmd, str(st), "--library", str(lib))[0], 0)
+            lib.chmod(0o555)
+            try:
+                code, out = run_cli("apply", str(st), "--library", str(lib))
+            finally:
+                lib.chmod(0o755)
+            self.assertNotEqual(code, 0)
+            self.assertIn("ssh desk media-stage apply", out)
+            self.assertTrue((st / "Heat.1995.mkv").exists())
 
     def test_stale_lock_on_this_host_is_cleared(self):
         with tempfile.TemporaryDirectory() as d:
