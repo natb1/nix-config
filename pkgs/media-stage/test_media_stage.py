@@ -88,6 +88,68 @@ def make_video(path):
            "-t", "1", "-c:v", "mpeg4", "-c:a", "aac", "-shortest", str(path))
 
 
+def make_mp3(path, **tags):
+    meta = [x for k, v in tags.items() for x in ("-metadata", f"{k}={v}")]
+    ffmpeg("-f", "lavfi", "-i", "sine=f=440", "-t", "1", *meta, str(path))
+
+
+class Review(unittest.TestCase):
+    """group, and review export -> answers -> review import."""
+
+    def test_group_audio_by_album(self):
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "audio"
+            st.mkdir(parents=True)
+            make_mp3(st / "a1.mp3", album="Nocturnal", title="One", track="1")
+            make_mp3(st / "a2.mp3", album="Nocturnal", title="Two", track="2")
+            make_mp3(st / "Runehammer Games - Daisy Crown - 01 Endless Wind.mp3")
+            make_mp3(st / "stray.mp3")
+            self.assertEqual(run_cli("scan", str(st), "--library", d)[0], 0)
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)
+            self.assertEqual(sorted(p.relative_to(st).as_posix() for p in st.rglob("*.mp3")), [
+                "Daisy Crown/Runehammer Games - Daisy Crown - 01 Endless Wind.mp3",
+                "Nocturnal/a1.mp3", "Nocturnal/a2.mp3", "_loose/stray.mp3"])
+            manifest = (Path(d) / "staging" / "audio.manifest.jsonl").read_text()
+            self.assertIn("Nocturnal/a1.mp3", manifest)  # rescanned
+
+    def test_round_trip(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "print"
+            st.mkdir(parents=True)
+            for n in ("sure.pdf", "unsure.pdf", "blank.pdf"):
+                make_pdf(st / n, title=n)
+            self.assertEqual(run_cli("scan", str(st), "--library", d)[0], 0)
+            (lib / "staging" / "print.tsv").write_text(
+                "old\tnew\tnote\n"
+                "sure.pdf\trpg/Cairn/Sure.pdf\t\n"
+                "unsure.pdf\trpg/Cairn/Unsure.pdf\tcheck: guessed from text\n"
+                "blank.pdf\t\t\n")
+            self.assertEqual(run_cli("review", "export", str(st), "--library", d)[0], 0)
+            review = json.loads((lib / "staging" / "print.review.json").read_text())
+            by = {i["key"]: i for i in review["items"]}
+            self.assertEqual(sorted(by), ["blank.pdf", "unsure.pdf"])
+            self.assertEqual(by["unsure.pdf"]["options"][0]["value"], "path:rpg/Cairn/Unsure.pdf")
+            ans = lib / "answers"
+            ans.mkdir()
+            (ans / "a.json").write_text(json.dumps({"data": {  # wrapped, as an export may be
+                "batch": "print", "item": by["unsure.pdf"]["id"], "choice": "custom",
+                "fields": {"new": "books/Someone/Unsure.pdf"}, "note": "it is a novel"}}))
+            (ans / "b.json").write_text(json.dumps({
+                "batch": "print", "item": by["blank.pdf"]["id"], "choice": "skip"}))
+            (ans / "other.json").write_text(json.dumps({
+                "batch": "audio", "item": by["blank.pdf"]["id"], "choice": "option", "value": "path:x"}))
+            code, out = run_cli("review", "import", str(st), "--answers", str(ans), "--library", d)
+            self.assertEqual(code, 0, out)
+            table = (lib / "staging" / "print.tsv").read_text()
+            self.assertIn("unsure.pdf\tbooks/Someone/Unsure.pdf\treviewed\tcheck: guessed from text · reviewer: it is a novel", table)
+            self.assertIn("blank.pdf\tskip\treviewed", table)
+            self.assertEqual(run_cli("review", "export", str(st), "--library", d)[0], 0)
+            self.assertEqual(json.loads((lib / "staging" / "print.review.json").read_text())["items"], [])
+            code, out = run_cli("check", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+
+
 class Layout(unittest.TestCase):
     good = [
         "music/Julian Bream/Nocturnal (1993)/1-01 Britten - Nocturnal.mp3",

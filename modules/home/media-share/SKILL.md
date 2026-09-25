@@ -64,23 +64,46 @@ agent or person per batch.
      If still unsure, `skip`. Never guess a year.
    - Home videos, screen recordings, phone clips, installers, archives,
      anything unidentified: `skip`, and list them for the user.
-   - Audio: `beets`. Duplicates that `check` reports as byte-identical: `skip`.
+   - Audio rows say `beets`; see below. Duplicates that `check` reports as
+     byte-identical: `skip`.
    - Do not rely on a file's old folder or name when its contents say
      otherwise.
+   Music is not classified by hand. On desk:
+   `media-stage group /srv/media/staging/<batch>` (one folder per album), then
+   `beet stage-review /srv/media/staging/<batch>`. It imports every album with a
+   strong MusicBrainz match, with no prompts, and writes the rest, with their
+   candidates, to `<batch>.review.json`.
 5. **Check**: `media-stage check <staging>/<batch>`, and fix the table until it
-   reports 0 errors.
-6. **Show the user**: before applying, give a summary of the moves (counts per
-   top-level folder, every row that was blank or not `high`, every `skip`).
-   Apply only after they agree.
-7. **Apply**, on desk: `media-stage apply /srv/media/staging/<batch>`
+   reports 0 errors. Rows that are still guesses stay flagged in their note
+   (`check`, `guess`, `likely`) or below `high`, so that step 6 asks about them.
+6. **Review page**: the user decides what you could not.
+   - Tables: `media-stage review export <staging>/<batch>` writes
+     `<batch>.review.json` with every row that is blank, `skip`, below `high`,
+     or flagged in its note. Audio: `beet stage-review` already wrote it.
+   - Find the page: `Artifact` `list`, title **Media Filing Review**.
+   - Load the batch: `ArtifactData` `set`, collection `reviews`, doc id
+     `<batch>`, `file_path` the review JSON. Replace an older version of the
+     same batch; never mix batches in one document.
+   - Give the user the link, how many items wait, and a summary of what will
+     be filed without asking (rows per top-level folder). Stop until they say
+     the batch is reviewed. Don't apply anything from the batch before that.
+7. **Read the answers**: `ArtifactData` `query`, collection `answers`, where
+   `batch == <batch>`, `out_dir` `/srv/media/staging/<batch>.answers`. Then on
+   desk:
+   - Tables: `media-stage review import /srv/media/staging/<batch> --answers
+     /srv/media/staging/<batch>.answers`, then `check` again.
+   - Audio: `beet stage-review --answers /srv/media/staging/<batch>.answers
+     /srv/media/staging/<batch>`. A chosen release is applied by its id,
+     hand-entered tags as-is, "Leave it in staging" leaves the album where it
+     is.
+8. **Apply**, on desk: `media-stage apply /srv/media/staging/<batch>`
    (from the Mac: `ssh desk media-stage apply /srv/media/staging/<batch>`).
    It re-checks, moves, writes standard metadata and logs to
    `<batch>.applied.jsonl`. It can be rerun.
-   Music: `ssh -t desk beet import --group-albums /srv/media/staging/<batch>`
-   (interactive). Needs the user.
-8. **Lint**: `media-stage lint` (read-only, fine from the Mac). Report what is
-   left in staging (the `skip`s) and ask the user what to do with them and
-   with the source.
+9. **Lint and close**: `media-stage lint`. Mark the review filed with
+   `ArtifactData` `update` on `reviews/<batch>`: `{"closed": "<date>"}`. Report
+   what is filed, what is left in staging and why, and ask what to do with the
+   leftovers and with the source.
 
 ## Rules
 

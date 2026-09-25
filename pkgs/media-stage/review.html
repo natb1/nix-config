@@ -1,0 +1,498 @@
+<title>Media Filing Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Review page for media-stage batches: pkgs/media-stage/review.html in
+   github.com/natb1/nix-config. Data: db `reviews/<batch>` (written by
+   Claude from <batch>.review.json) and `answers/<batch>~<item>` (written
+   here, read back by Claude). docs/desktop-migration.md, "Filing a batch". */
+:root {
+  --bg: #eef1f0;
+  --surface: #ffffff;
+  --sunk: #f5f7f6;
+  --ink: #1b2327;
+  --muted: #5b686e;
+  --line: #d6dddc;
+  --accent: #2c5a86;
+  --accent-soft: #e3ecf5;
+  --ok: #2d7a4c;
+  --ok-soft: #e2f1e8;
+  --warn: #9a5b00;
+  --warn-soft: #fbefd9;
+  --skip: #6b5a86;
+  --skip-soft: #eee9f5;
+  --focus: #2c5a86;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #12171a; --surface: #1a2125; --sunk: #151b1e; --ink: #e4eaec; --muted: #94a3a9;
+    --line: #2c363b; --accent: #86b4e0; --accent-soft: #1f3040; --ok: #7ccf9c; --ok-soft: #1b3226;
+    --warn: #e7b35f; --warn-soft: #3a2c14; --skip: #b9a6dc; --skip-soft: #2a2438; --focus: #86b4e0;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #12171a; --surface: #1a2125; --sunk: #151b1e; --ink: #e4eaec; --muted: #94a3a9;
+  --line: #2c363b; --accent: #86b4e0; --accent-soft: #1f3040; --ok: #7ccf9c; --ok-soft: #1b3226;
+  --warn: #e7b35f; --warn-soft: #3a2c14; --skip: #b9a6dc; --skip-soft: #2a2438; --focus: #86b4e0;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); padding-inline: 16px; padding-block: 0 48px; }
+.wrap { max-width: 920px; margin: 0 auto; display: grid; gap: 20px; }
+header { padding-top: 28px; display: grid; gap: 6px; }
+h1 { font-size: 26px; line-height: 1.2; margin: 0; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0; max-width: 65ch; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+.eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+.batches { display: flex; flex-wrap: wrap; gap: 8px; }
+.batch-tab { display: grid; gap: 2px; text-align: left; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; min-width: 150px; }
+.batch-tab[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.batch-tab .name { font-weight: 600; }
+.batch-tab .count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.meter { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--ok); }
+
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; justify-content: space-between;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; background: var(--bg); padding-block: 10px; border-bottom: 1px solid var(--line); }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn { font: inherit; font-size: 13px; font-weight: 600; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--surface); cursor: pointer; }
+.btn.quiet { background: transparent; color: var(--accent); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.status { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.items { display: grid; gap: 14px; }
+.item { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; }
+.item.decided { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.item-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; }
+.item-title { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; margin: 0; }
+.item-sub { color: var(--muted); font-size: 13px; }
+.pill { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.why { background: var(--warn-soft); color: var(--warn); }
+.pill.done { background: var(--ok-soft); color: var(--ok); }
+.pill.skip { background: var(--skip-soft); color: var(--skip); }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+dl.evidence { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; background: var(--sunk); border-radius: 6px; padding: 10px 12px; }
+dl.evidence dt { color: var(--muted); }
+dl.evidence dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+dl.evidence details summary { cursor: pointer; color: var(--accent); }
+@media (max-width: 520px) { dl.evidence { grid-template-columns: 1fr; } dl.evidence dd { margin-bottom: 6px; } }
+
+fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+legend { padding: 0; margin-bottom: 6px; }
+.choice { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choice input[type="radio"] { margin: 3px 0 0; accent-color: var(--accent); }
+.choice .label { font-weight: 500; overflow-wrap: anywhere; }
+.choice .label.path { font-family: var(--mono); font-size: 13px; }
+.choice .detail { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.choice .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 2px; }
+.score { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent); }
+.suggested { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ok); }
+.choice a { font-size: 12px; color: var(--accent); }
+.custom-fields { display: grid; gap: 8px; margin-top: 8px; }
+.custom-fields label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+input[type="text"] { font: inherit; font-size: 14px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; }
+input.path { font-family: var(--mono); font-size: 13px; }
+.hint { font-size: 12px; color: var(--muted); }
+.hint.bad { color: var(--warn); }
+.item-foot { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; }
+.item-foot label { flex: 1 1 260px; display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.saved { font-size: 12px; color: var(--muted); min-width: 6ch; }
+.linkish { font: inherit; font-size: 13px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; }
+
+.empty, .next { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 18px; color: var(--muted); }
+.next strong { color: var(--ink); }
+.layout-help { margin: 6px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; color: var(--muted); display: grid; gap: 2px; overflow-x: auto; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: no-preference) { .meter i { transition: width 0.3s ease; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">desk · media share · staging</span>
+    <h1>Media Filing Review</h1>
+    <p class="lede">Claude files what it can decide on its own. What it can't is here: pick where each file goes, correct it, or leave it in staging. Answers save as you go.</p>
+  </header>
+
+  <nav class="batches" id="batches" role="tablist" aria-label="Batches"></nav>
+
+  <div class="bar" id="bar" hidden>
+    <div class="filters" role="group" aria-label="Show">
+      <button class="chip" data-filter="todo" aria-pressed="true" id="f-todo">To decide</button>
+      <button class="chip" data-filter="done" aria-pressed="false" id="f-done">Decided</button>
+      <button class="chip" data-filter="all" aria-pressed="false" id="f-all">All</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span class="status" id="progress"></span>
+      <button class="btn quiet" id="accept-all">Accept every suggestion left</button>
+    </div>
+  </div>
+
+  <section class="items" id="items" aria-live="polite"></section>
+
+  <p class="next" id="next" hidden></p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Shown until the store answers, and wherever the page runs without it.
+  var SAMPLE = [{
+    batch: "example", kind: "table", source: "media-stage", created: "",
+    layout: ["rpg/<game>/<title>[ (<variant>)].<ext>", "books/<author>/<title>.<ext>"],
+    items: [{
+      id: "sample1", key: "Arcana.pdf", kind: "pdf", title: "Arcana.pdf", subtitle: "pdf",
+      why: "flagged in the note", note: "check: named from the first page",
+      evidence: [{ label: "Pages", value: "64" }, { label: "First pages", value: "STONETOP · The Arcana · Major and minor arcana for the Stonetop setting" }],
+      options: [{ value: "path:rpg/Stonetop/Stonetop - Arcana.pdf", label: "rpg/Stonetop/Stonetop - Arcana.pdf", detail: "from the PDF's first page", recommended: true }],
+      custom: { kind: "path", label: "Somewhere else in the library", fields: [{ key: "new", label: "Library path", value: "rpg/Stonetop/Stonetop - Arcana.pdf" }] }
+    }]
+  }];
+
+  var state = {
+    db: null, live: false,
+    reviews: SAMPLE.slice(), answers: {}, current: null, filter: "todo",
+    drafts: {}, saving: {}, savedAt: {}, readOnly: false,
+    touched: {}   // decided during this visit: stays in "To decide" until the filter changes
+  };
+  var chains = {};   // one write at a time per answer document
+  var timers = {};
+
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === "text") n.textContent = attrs[k];
+      else if (k === "class") n.className = attrs[k];
+      else if (k.slice(0, 2) === "on") n.addEventListener(k.slice(2), attrs[k]);
+      else if (attrs[k] !== null && attrs[k] !== undefined && attrs[k] !== false) n.setAttribute(k, attrs[k] === true ? "" : attrs[k]);
+    });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function answerId(batch, item) { return batch + "~" + item; }
+  function batchOf(name) { return state.reviews.find(function (r) { return r.batch === name; }); }
+  function answerFor(batch, item) { return state.answers[answerId(batch, item)]; }
+  function decided(batch, item) { var a = answerFor(batch, item); return !!(a && a.choice); }
+
+  // ---- store
+
+  function start() {
+    render();
+    if (!window.claude || !window.claude.use) return;
+    window.claude.use("db").then(function (db) {
+      if (!db) return;
+      state.db = db;
+      db.collection("reviews").onSnapshot(function (snap) {
+        var list = snap.docs.map(function (d) { return d.data(); }).filter(function (r) { return r && r.batch && Array.isArray(r.items); });
+        state.live = true;
+        state.reviews = list.sort(function (a, b) { return String(b.created || "").localeCompare(String(a.created || "")); });
+        render();
+      }, function () { /* keep what is shown */ });
+      db.collection("answers").onSnapshot(function (snap) {
+        var next = {};
+        snap.docs.forEach(function (d) { next[d.id] = d.data(); });
+        state.answers = next;
+        render();
+      }, function () {});
+    });
+  }
+
+  function save(batch, item, body) {
+    var id = answerId(batch.batch, item.id);
+    var doc = Object.assign({ batch: batch.batch, item: item.id, key: item.key, updatedAt: new Date().toISOString() }, body);
+    if (item.match) doc.match = item.match; else delete doc.match;
+    Object.keys(doc).forEach(function (k) { if (doc[k] === undefined) delete doc[k]; });
+    state.touched[id] = true;
+    state.answers[id] = doc;   // shown at once; the snapshot confirms
+    state.saving[id] = true;
+    paintSaved(id);
+    if (!state.db || !state.live) { state.saving[id] = false; state.savedAt[id] = "not saved: preview"; paintSaved(id); return Promise.resolve(); }
+    var ref = state.db.collection("answers").doc(id);
+    chains[id] = (chains[id] || Promise.resolve()).then(function () {
+      return ref.set(doc).then(function () {
+        state.savedAt[id] = "Saved";
+      }, function (e) {
+        state.savedAt[id] = e && e.code === "invalid_argument" ? "You can't change answers on this page" : "Not saved — try again";
+        if (e && e.code === "invalid_argument") state.readOnly = true;
+      }).then(function () { state.saving[id] = false; paintSaved(id); });
+    });
+    return chains[id];
+  }
+
+  function clear(batch, item) {
+    var id = answerId(batch.batch, item.id);
+    delete state.answers[id];
+    delete state.drafts[id];
+    if (state.db && state.live) {
+      chains[id] = (chains[id] || Promise.resolve()).then(function () { return state.db.collection("answers").doc(id).delete().catch(function () {}); });
+    }
+    render();
+  }
+
+  function paintSaved(id) {
+    var n = document.querySelector('[data-saved="' + CSS.escape(id) + '"]');
+    if (n) n.textContent = state.saving[id] ? "Saving…" : (state.savedAt[id] || "");
+  }
+
+  // ---- decisions
+
+  function choose(batch, item, choice, extra) {
+    var id = answerId(batch.batch, item.id);
+    var prev = state.answers[id] || {};
+    var body = { choice: choice, note: prev.note || "" };
+    if (choice === "option") body.value = extra;
+    if (choice === "custom") body.fields = customValues(batch, item);
+    save(batch, item, body).then(render);
+    render();
+  }
+
+  function customValues(batch, item) {
+    var id = answerId(batch.batch, item.id);
+    var a = state.answers[id];
+    var d = state.drafts[id] || {};
+    var out = {};
+    (item.custom && item.custom.fields || []).forEach(function (f) {
+      out[f.key] = d[f.key] !== undefined ? d[f.key] : (a && a.fields && a.fields[f.key] !== undefined ? a.fields[f.key] : (f.value || ""));
+    });
+    return out;
+  }
+
+  function typed(batch, item, key, value) {
+    var id = answerId(batch.batch, item.id);
+    state.drafts[id] = Object.assign({}, state.drafts[id], (function () { var o = {}; o[key] = value; return o; })());
+    clearTimeout(timers[id]);
+    timers[id] = setTimeout(function () {
+      var prev = state.answers[id] || {};
+      save(batch, item, { choice: "custom", fields: customValues(batch, item), note: prev.note || "" });
+    }, 700);
+  }
+
+  function noted(batch, item, value) {
+    var id = answerId(batch.batch, item.id);
+    clearTimeout(timers[id + ":note"]);
+    timers[id + ":note"] = setTimeout(function () {
+      var prev = state.answers[id];
+      if (!prev || !prev.choice) return;   // a note travels with a decision
+      save(batch, item, Object.assign({}, prev, { note: value }));
+    }, 700);
+  }
+
+  function acceptAll() {
+    var b = batchOf(state.current);
+    if (!b) return;
+    var todo = b.items.filter(function (it) { return !decided(b.batch, it.id); });
+    var chain = Promise.resolve();
+    todo.forEach(function (it) {
+      var rec = (it.options || []).find(function (o) { return o.recommended; });
+      if (!rec) return;
+      chain = chain.then(function () { return save(b, it, { choice: "option", value: rec.value, note: "" }); });
+    });
+    chain.then(render);
+    render();
+  }
+
+  // ---- path check (the layout, loosely; media-stage check is the authority)
+
+  var TOPS = ["movies/", "tv/", "youtube/", "books/", "rpg/", "music/"];
+  function pathProblem(key, value) {
+    if (!value) return "Empty: pick an option above or leave it in staging.";
+    if (!TOPS.some(function (t) { return value.indexOf(t) === 0; })) return "Starts outside the library: " + TOPS.join(" ");
+    if (/[:*?"<>|\\]/.test(value)) return 'Has a character Windows can\'t store: : * ? " < > | \\';
+    var ext = function (p) { var m = /\.([^./]+)$/.exec(p); return m ? m[1].toLowerCase() : ""; };
+    if (ext(key) && ext(value) !== ext(key)) return "Extension changes from ." + ext(key) + " — keep it the same.";
+    return "";
+  }
+
+  // ---- render
+
+  function render() {
+    // A snapshot re-renders while someone types: put the caret back.
+    var act = document.activeElement, focusId = act && act.id, sel = null;
+    if (focusId && act.tagName === "INPUT" && act.type === "text") sel = [act.selectionStart, act.selectionEnd];
+    paint();
+    if (focusId) {
+      var again = document.getElementById(focusId);
+      if (again && again !== document.activeElement) {
+        again.focus({ preventScroll: true });
+        if (sel) try { again.setSelectionRange(sel[0], sel[1]); } catch (e) {}
+      }
+    }
+  }
+
+  function paint() {
+    renderBatches();
+    var b = batchOf(state.current) || state.reviews[0];
+    state.current = b ? b.batch : null;
+    var bar = $("bar"), list = $("items"), next = $("next");
+    list.textContent = "";
+    if (!b) {
+      bar.hidden = true; next.hidden = true;
+      list.appendChild(el("p", { class: "empty", text: "Nothing to review. Claude adds a batch here when it has files it can't place on its own." }));
+      return;
+    }
+    bar.hidden = false;
+    var total = b.items.length;
+    var done = b.items.filter(function (it) { return decided(b.batch, it.id); }).length;
+    $("progress").textContent = done + " of " + total + " decided";
+    var hasSuggestions = b.items.some(function (it) { return !decided(b.batch, it.id) && (it.options || []).some(function (o) { return o.recommended; }); });
+    $("accept-all").disabled = !hasSuggestions || state.readOnly;
+    ["todo", "done", "all"].forEach(function (f) { $("f-" + f).setAttribute("aria-pressed", String(state.filter === f)); });
+
+    var shown = b.items.filter(function (it) {
+      var d = decided(b.batch, it.id);
+      if (state.filter === "todo" && state.touched[answerId(b.batch, it.id)]) return true;
+      return state.filter === "all" || (state.filter === "done" ? d : !d);
+    });
+    if (!shown.length) {
+      list.appendChild(el("p", { class: "empty", text: state.filter === "todo" ? "Every item in this batch is decided." : "No decided items yet." }));
+    }
+    shown.forEach(function (it) { list.appendChild(renderItem(b, it)); });
+
+    next.hidden = false;
+    next.textContent = "";
+    if (b.closed) {
+      next.appendChild(el("span", { text: "Filed " + (b.closed === true ? "" : String(b.closed)) + ". These answers have been applied." }));
+    } else if (done === total) {
+      next.appendChild(el("strong", { text: "All " + total + " decided. " }));
+      next.appendChild(document.createTextNode("Tell Claude the " + b.batch + " batch is reviewed. It applies these answers, files the batch and runs media-stage lint."));
+    } else {
+      next.appendChild(document.createTextNode((total - done) + " left. Undecided items stay in staging when the batch is filed; you can come back to them."));
+    }
+    if (b.layout && b.layout.length) {
+      next.appendChild(el("ul", { class: "layout-help", "aria-label": "Library layout" }, b.layout.map(function (l) { return el("li", { text: l }); })));
+    }
+  }
+
+  function renderBatches() {
+    var nav = $("batches");
+    nav.textContent = "";
+    state.reviews.forEach(function (r) {
+      var total = r.items.length;
+      var done = r.items.filter(function (it) { return decided(r.batch, it.id); }).length;
+      var pct = total ? Math.round(100 * done / total) : 100;
+      var kind = r.source === "beets" ? "albums" : "files";
+      nav.appendChild(el("button", {
+        class: "batch-tab", role: "tab", id: "tab-" + r.batch,
+        "aria-selected": String(r.batch === (state.current || (state.reviews[0] || {}).batch)),
+        onclick: function () { state.current = r.batch; state.filter = "todo"; render(); }
+      }, [
+        el("span", { class: "name", text: r.batch + (state.live ? "" : " (example)") }),
+        el("span", { class: "count", text: (r.closed ? "filed · " : "") + done + "/" + total + " " + kind + " decided" }),
+        el("span", { class: "meter", "aria-hidden": "true" }, [el("i", { style: "width:" + pct + "%" })])
+      ]));
+    });
+  }
+
+  function renderItem(b, it) {
+    var id = answerId(b.batch, it.id);
+    var a = state.answers[id];
+    var choice = a && a.choice;
+    var dis = state.readOnly || !!b.closed;
+    var group = "g-" + id.replace(/[^A-Za-z0-9_-]/g, "_");
+
+    var pill = choice === "skip" ? el("span", { class: "pill skip", text: "Stays in staging" })
+      : choice ? el("span", { class: "pill done", text: "Decided" })
+      : el("span", { class: "pill why", text: it.why || "needs a look" });
+
+    var head = el("div", { class: "item-head" }, [
+      el("div", null, [el("h2", { class: "item-title", id: group + "-t", text: it.title }), el("div", { class: "item-sub", text: it.subtitle || "" })]),
+      pill
+    ]);
+
+    var ev = el("dl", { class: "evidence" });
+    (it.evidence || []).forEach(function (e) {
+      ev.appendChild(el("dt", { text: e.label }));
+      var v = String(e.value == null ? "" : e.value);
+      if (v.length > 240 || v.split("\n").length > 4) {
+        ev.appendChild(el("dd", null, [el("details", null, [el("summary", { text: v.split("\n")[0].slice(0, 90) + "…" }), document.createTextNode(v)])]));
+      } else ev.appendChild(el("dd", { text: v }));
+    });
+    if (it.note) { ev.appendChild(el("dt", { text: "Claude's note" })); ev.appendChild(el("dd", { text: it.note })); }
+
+    var fs = el("fieldset", null, [el("legend", { class: "eyebrow", text: "Where it goes" })]);
+    (it.options || []).forEach(function (o, n) {
+      var checked = choice === "option" && a.value === o.value;
+      var isPath = String(o.value).indexOf("path:") === 0;
+      var meta = el("div", { class: "meta" }, [
+        o.recommended ? el("span", { class: "suggested", text: "Suggested" }) : null,
+        typeof o.score === "number" ? el("span", { class: "score", text: o.score + "% match" }) : null,
+        o.url ? el("a", { href: o.url, target: "_blank", rel: "noopener", text: "MusicBrainz ↗" }) : null
+      ]);
+      fs.appendChild(el("label", { class: "choice" }, [
+        el("input", { type: "radio", name: group, id: group + "-o" + n, checked: checked, disabled: dis,
+          onchange: function () { choose(b, it, "option", o.value); } }),
+        el("span", null, [
+          el("div", { class: "label" + (isPath ? " path" : ""), text: o.label }),
+          o.detail ? el("div", { class: "detail", text: o.detail }) : null,
+          meta.childNodes.length ? meta : null
+        ])
+      ]));
+    });
+
+    if (it.custom) {
+      var vals = customValues(b, it);
+      var fields = el("div", { class: "custom-fields" });
+      (it.custom.fields || []).forEach(function (f) {
+        var isPath = it.custom.kind === "path";
+        var input = el("input", {
+          type: "text", id: group + "-f-" + f.key, value: vals[f.key] || "", class: isPath ? "path" : "",
+          disabled: dis, spellcheck: "false", autocomplete: "off",
+          onfocus: function () { if (choice !== "custom") { var r = document.getElementById(group + "-custom"); if (r && !r.checked) { r.checked = true; choose(b, it, "custom"); } } },
+          oninput: function (ev) {
+            typed(b, it, f.key, ev.target.value);
+            if (isPath) { var h = document.getElementById(group + "-hint"); var p = pathProblem(it.key, ev.target.value.trim()); h.textContent = p || "Looks like the layout."; h.className = "hint" + (p ? " bad" : ""); }
+          }
+        });
+        fields.appendChild(el("label", { for: group + "-f-" + f.key }, [f.label, input]));
+        if (isPath) {
+          var p = choice === "custom" ? pathProblem(it.key, (vals[f.key] || "").trim()) : "";
+          fields.appendChild(el("span", { class: "hint" + (p ? " bad" : ""), id: group + "-hint", text: p || "Library path, from the top: " + TOPS.join(" ") }));
+        }
+      });
+      fs.appendChild(el("label", { class: "choice" }, [
+        el("input", { type: "radio", name: group, id: group + "-custom", checked: choice === "custom", disabled: dis,
+          onchange: function () { choose(b, it, "custom"); } }),
+        el("span", null, [el("div", { class: "label", text: it.custom.label || "Something else" }), fields])
+      ]));
+    }
+
+    fs.appendChild(el("label", { class: "choice" }, [
+      el("input", { type: "radio", name: group, id: group + "-skip", checked: choice === "skip", disabled: dis,
+        onchange: function () { choose(b, it, "skip"); } }),
+      el("span", null, [el("div", { class: "label", text: "Leave it in staging" }),
+        el("div", { class: "detail", text: "Not filed now. It stays in staging/" + b.batch + " for later." })])
+    ]));
+
+    var foot = el("div", { class: "item-foot" }, [
+      el("label", { for: group + "-note" }, ["Note for Claude (optional)",
+        el("input", { type: "text", id: group + "-note", value: (a && a.note) || "", disabled: dis || !choice,
+          placeholder: choice ? "e.g. this is the second printing" : "Decide first, then add a note",
+          oninput: function (ev) { noted(b, it, ev.target.value); } })]),
+      el("span", { style: "display:flex;gap:12px;align-items:center" }, [
+        el("span", { class: "saved", "data-saved": id, text: state.saving[id] ? "Saving…" : (state.savedAt[id] || "") }),
+        choice && !dis ? el("button", { class: "linkish", type: "button", text: "Undo", onclick: function () { clear(b, it); } }) : null
+      ])
+    ]);
+
+    return el("article", { class: "item" + (choice ? " decided" : ""), "aria-labelledby": group + "-t" }, [head, ev, fs, foot]);
+  }
+
+  document.querySelectorAll(".chip").forEach(function (c) {
+    c.addEventListener("click", function () { state.filter = c.getAttribute("data-filter"); state.touched = {}; render(); });
+  });
+  $("accept-all").addEventListener("click", acceptAll);
+
+  start();
+})();
+</script>

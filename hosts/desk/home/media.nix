@@ -33,9 +33,18 @@
         comp = default;
       };
       item_fields.multidisc = "1 if disctotal > 1 else 0";
+      # musicbrainz: the metadata source. A plugin like any other since beets
+      # 2.x — without it in this list, nothing is ever matched.
       # chroma: AcoustID fingerprints, for files with no usable tags.
       # duplicates, info: the checks before and after an import.
-      plugins = [ "chroma" "duplicates" "info" "inline" ];
+      # stagereview: `beet stage-review`, the import without prompts that
+      # media-stage batches use (pkgs/media-stage/beetsplug/stagereview.py).
+      plugins = [ "musicbrainz" "chroma" "duplicates" "info" "inline" "stagereview" ];
+      pluginpath = [ "${../../../pkgs/media-stage/beetsplug}" ];
     };
   };
+
+  # beets asks before creating its library's directory, and a prompt is
+  # fatal to `beet stage-review`, which runs without a terminal.
+  xdg.dataFile."beets/.keep".text = "";
 }

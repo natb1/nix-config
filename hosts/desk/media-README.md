@@ -30,12 +30,18 @@ metadata. Music is imported by `beet` instead.
 1. Copy the files as they are into `media-staging/<batch>/`.
 2. `ssh desk media-stage scan --hash /srv/media/staging/<batch>`
 3. `ssh desk media-stage draft /srv/media/staging/<batch>`
+   Music instead: `media-stage group`, then `beet stage-review`, which files
+   every album MusicBrainz is sure of.
 4. Fill in and correct `media-staging/<batch>.tsv`. Its `new` column is the
    path in the library; use `skip` to leave a file in staging.
 5. `ssh desk media-stage check /srv/media/staging/<batch>`
-6. `ssh desk media-stage apply /srv/media/staging/<batch>`
-   (music: `ssh -t desk beet import --group-albums /srv/media/staging/<batch>`)
-7. `media-stage lint`
+6. What isn't certain goes to the Media Filing Review page (Claude publishes
+   it), and waits there for a person to decide.
+7. `ssh desk media-stage apply /srv/media/staging/<batch>`
+8. `media-stage lint`
+
+Claude Code on desk and the Mac has this as its `media-share` skill, and runs
+every step except the decisions on the review page.
 
 `media-stage --help` has the details. The full procedure is "Filing a batch"
 in docs/desktop-migration.md. Renaming or deleting inside the library is done

@@ -512,6 +512,197 @@ def draft(a):
 
 
 # --------------------------------------------------------------------------
+# group: a flat folder of audio into one folder per album, for beets
+# (`beet stage-review` imports folder by folder, so each answer names one).
+
+# "Artist - Album - 04 Title.mp3", "Artist - Album (2000) - 04 - Title.mp3"
+AUDIO_NAME = re.compile(r"^(?P<artist>.+?) - (?P<album>.+) - (?P<track>\d{1,3})(?: - |\.? )(?P<title>.+)\.[^.]+$")
+
+
+def cmd_group(a):
+    with batch_lock(a.staging, "group"):
+        group(a)
+
+
+def group(a):
+    staging = Path(a.staging)
+    recs = load_manifest(staging)
+    if recs is None:
+        sys.exit(f"{staging}: no manifest; run `media-stage scan` first")
+    moved = 0
+    for rel, r in sorted(recs.items()):
+        if r["kind"] != "audio" or "/" in rel:
+            continue
+        tags = (r.get("meta") or {}).get("tags", {})
+        m = AUDIO_NAME.match(Path(rel).name)
+        album = tags.get("album") or (m and m.group("album")) or "_loose"
+        folder = clean(album) or "_loose"
+        (staging / folder).mkdir(exist_ok=True)
+        move_noclobber(staging / rel, staging / folder / Path(rel).name)
+        moved += 1
+    print(f"grouped {moved} files into album folders")
+    a.hash = False
+    scan(a)
+
+
+# --------------------------------------------------------------------------
+# review: what a person decides, as a file the review page shows, and back.
+# The shape is shared with beets' `stage-review` (beetsplug/stagereview.py).
+
+REVIEW_FLAG = re.compile(r"\b(check|guess|guessed|likely|unsure|unknown)\b|\?", re.I)
+
+
+def review_id(key):
+    return hashlib.sha1(key.encode()).hexdigest()[:12]
+
+
+def read_table_full(table):
+    with open(table) as f:
+        header = f.readline().rstrip("\n").split("\t")
+        rows = []
+        for line in f:
+            if line.strip():
+                cols = line.rstrip("\n").split("\t")
+                rows.append(dict(zip(header, cols + [""] * (len(header) - len(cols)))))
+    return header, rows
+
+
+def write_table(table, header, rows):
+    tmp = table.with_name(f".{table.name}.{os.getpid()}")
+    with open(tmp, "w") as out:
+        out.write("\t".join(header) + "\n")
+        for r in rows:
+            out.write("\t".join(str(r.get(h, "")).replace("\t", " ").replace("\n", " ") for h in header) + "\n")
+    os.replace(tmp, table)
+
+
+def needs_review(row):
+    new, conf, note = row.get("new", ""), row.get("confidence", ""), row.get("note", "")
+    if conf == "reviewed" or new == "beets":
+        return False
+    return (not new or new == "skip" or (conf and conf != "high") or bool(REVIEW_FLAG.search(note)))
+
+
+def evidence(rec):
+    ev = [{"label": "Size", "value": f"{rec.get('size', 0) / 1e6:.1f} MB"}]
+    m = rec.get("meta") or {}
+    if rec["kind"] in ("pdf", "cbz", "document"):
+        for k in ("Title", "Author", "Creator", "Producer", "Pages", "Page size"):
+            if m.get(k):
+                ev.append({"label": k, "value": str(m[k])})
+    elif rec["kind"] == "epub":
+        for k in ("title", "creators", "publisher", "language", "identifiers"):
+            if m.get(k):
+                ev.append({"label": k.capitalize(), "value": ", ".join(m[k]) if isinstance(m[k], list) else str(m[k])})
+    elif rec["kind"] == "video":
+        for k in ("duration", "width", "height", "title"):
+            if m.get(k):
+                ev.append({"label": k.capitalize(), "value": str(m[k])})
+        if rec.get("guess"):
+            ev.append({"label": "Name reads as", "value": ", ".join(f"{k} {v}" for k, v in rec["guess"].items()
+                                                                  if k in ("title", "year", "season", "episode", "type", "edition"))})
+        ij = rec.get("info_json") or {}
+        if ij:
+            ev.append({"label": "yt-dlp", "value": f"{ij.get('channel') or ij.get('uploader')}: {ij.get('title')} ({ij.get('upload_date')})"})
+    if rec.get("text"):
+        ev.append({"label": "First pages", "value": re.sub(r"\s+", " ", rec["text"])[:700]})
+    return ev
+
+
+def cmd_review(a):
+    staging = Path(a.staging)
+    _, table, _ = sidecar_paths(staging)
+    if a.action == "export":
+        return review_export(a, staging, table)
+    with batch_lock(staging, "review import"):
+        review_import(a, staging, table)
+
+
+def review_export(a, staging, table):
+    header, rows = read_table_full(table)
+    recs = load_manifest(staging) or {}
+    items = []
+    for r in rows:
+        if not needs_review(r):
+            continue
+        old, new, note = r["old"], r.get("new", ""), r.get("note", "")
+        rec = recs.get(old, {"kind": kind_of(old), "size": 0})
+        why = "no place proposed" if not new else "set aside (skip)" if new == "skip" else \
+            f"confidence {r['confidence']}" if r.get("confidence") and r["confidence"] != "high" else "flagged in the note"
+        options = [] if new in ("", "skip") else [
+            {"value": "path:" + new, "label": new, "detail": note, "recommended": True}]
+        items.append({
+            "id": review_id(old), "key": old, "kind": rec["kind"],
+            "title": Path(old).name, "subtitle": rec["kind"] + (f" · {Path(old).parent}" if "/" in old else ""),
+            "why": why, "note": note, "evidence": evidence(rec), "options": options,
+            "custom": {"kind": "path", "label": "Somewhere else in the library", "fields": [
+                {"key": "new", "label": "Library path", "value": "" if new == "skip" else new}]},
+        })
+    out = Path(str(staging).rstrip("/") + ".review.json")
+    out.write_text(json.dumps({
+        "batch": staging.name, "kind": "table", "source": "media-stage",
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "layout": LAYOUT_HELP, "items": items,
+    }, indent=1, ensure_ascii=False))
+    print(f"for review: {len(items)} of {len(rows)} rows -> {out}")
+
+
+LAYOUT_HELP = [
+    "movies/<Title> (<Year>)/<Title> (<Year>)[ - <edition>].<ext>",
+    "tv/<Show> (<Year>)/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>",
+    "youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>",
+    "books/<author>/<title>.<ext>",
+    "rpg/<game>/<title>[ (<variant>)].<ext>",
+]
+
+
+def load_answers(where, batch):
+    """Answer documents under `where` (a file or a directory of exported
+    documents) for this batch, keyed by item id. A document may be wrapped
+    in {"data": ...}, as an export may write it."""
+    p = Path(where)
+    files = [p] if p.is_file() else sorted(p.rglob("*.json"))
+    out = {}
+    for f in files:
+        doc = json.loads(f.read_text())
+        for d in doc if isinstance(doc, list) else [doc]:
+            if isinstance(d.get("data"), dict):
+                d = d["data"]
+            if d.get("batch") == batch and d.get("item") and d.get("choice"):
+                out[d["item"]] = d
+    return out
+
+
+def review_import(a, staging, table):
+    header, rows = read_table_full(table)
+    answers = load_answers(a.answers, staging.name)
+    if "confidence" not in header:
+        header.insert(header.index("new") + 1, "confidence")
+    done = 0
+    for r in rows:
+        ans = answers.get(review_id(r["old"]))
+        if not ans:
+            continue
+        if ans["choice"] == "skip":
+            new = "skip"
+        elif ans["choice"] == "custom":
+            new = ((ans.get("fields") or {}).get("new") or "").strip()
+        else:
+            new = str(ans.get("value", ""))
+            new = new[5:] if new.startswith("path:") else new
+        if not new:
+            print(f"  {r['old']}: answer has no path; left as it was")
+            continue
+        r["new"], r["confidence"] = new, "reviewed"
+        if ans.get("note"):
+            r["note"] = (r.get("note", "") + " · reviewer: " + ans["note"]).strip(" ·")
+        done += 1
+    write_table(table, header, rows)
+    left = sum(1 for r in rows if needs_review(r))
+    print(f"answers applied: {done}; still to review: {left} -> {table}")
+
+
+# --------------------------------------------------------------------------
 # check / apply
 
 def read_table(table):
@@ -660,7 +851,8 @@ def load_manifest(staging):
     manifest, _, _ = sidecar_paths(staging)
     if not manifest.exists():
         return None
-    return {r["path"]: r for r in map(json.loads, open(manifest))}
+    recs = [json.loads(l) for l in manifest.read_text().splitlines() if l.strip()]
+    return {r["path"]: r for r in recs}
 
 
 def validate(staging, library):
@@ -974,6 +1166,14 @@ def main(argv=None):
     s.add_argument("--force", action="store_true",
                    help="rewrite the table from scratch (default: keep its rows, add new files)")
     s.set_defaults(fn=cmd_draft)
+    s = sub.add_parser("group", help="move a flat folder of audio into one folder per album (then rescans)")
+    s.add_argument("staging")
+    s.set_defaults(fn=cmd_group)
+    s = sub.add_parser("review", help="export the rows a person must decide; import their answers")
+    s.add_argument("action", choices=["export", "import"])
+    s.add_argument("staging")
+    s.add_argument("--answers", help="import: exported answer documents (a file or a directory)")
+    s.set_defaults(fn=cmd_review)
     s = sub.add_parser("check", help="validate STAGING.tsv")
     s.add_argument("staging")
     s.set_defaults(fn=cmd_check)
