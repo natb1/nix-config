@@ -3729,9 +3729,14 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       `Photos from 2012` … `2022` (no `-edited`, no `.json`) plus 124 under
       `Archive`. The library ends in 2022, and photos.google.com agrees —
       confirmed the same evening, so the archive is the whole library*
-- [ ] Pull the `print` and `audio` shared drives into `/srv/media/staging/print/`
+- [x] Pull the `print` and `audio` shared drives into `/srv/media/staging/print/`
       and `/srv/media/staging/audio/`; `rclone check --one-way` each. Not gated: the
-      Drive originals stay until the restore proof
+      Drive originals stay until the restore proof — *2026-09-25: `print` 182
+      files, 2.8 GB; `audio` 800 files, 6.2 GB; `rclone check` 0 differences on
+      both. Scanned: `print.tsv` checks clean against the real files (181 to
+      move; the 182nd is `.commons-print/index.json`, not carried over).
+      `audio` tag coverage: artist 736/800, album 764, title 765, track 742,
+      album artist 591, date 631*
 - [ ] `print`: `media-stage scan`, then review `staging/print.tsv` (the
       `check` rows first), `check`, `apply`; `staging/print/` ends empty
 - [ ] `audio`: `media-stage scan` for the tag-coverage summary, then
