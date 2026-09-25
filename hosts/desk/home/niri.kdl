@@ -159,4 +159,7 @@ binds {
 
     // No screen locker by design, so this is the only way out of the session.
     Mod+Shift+E { quit; }
+    // Suspend / reboot (into the boot menu, firmware setup, Windows, MemTest)
+    // / power off / log out — hosts/desk/power-menu.nix.
+    Mod+Shift+Escape hotkey-overlay-title="Power menu" { spawn "power-menu"; }
 }
