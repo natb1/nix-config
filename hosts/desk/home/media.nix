@@ -6,11 +6,16 @@
 # can be rebuilt from the tags with `beet import -A -C /srv/media/music`
 # (as-is, no copy/move), since `write` puts everything it knows in the files.
 
-{ ... }:
+{ pkgs, ... }:
 
 {
   # media-stage, and the Claude Code guidance that makes an agent use it.
   imports = [ ../../../modules/home/media-share.nix ];
+
+  # The music player: a client of desk's own Navidrome (hosts/desk/music.nix),
+  # so desk and the phone share favourites, playlists and play counts. First
+  # run: server http://localhost:4533, the Navidrome account.
+  home.packages = [ pkgs.feishin ];
 
   programs.beets = {
     enable = true;

@@ -174,6 +174,10 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   Unix accounts; set it with `sudo smbpasswd -a n8`. On `mba` the same
   password sits in the login keychain, saved the first time
   `hosts/mba/desk.nix` mounts the share ("Remember this password").
+- `desk`'s Navidrome accounts (`hosts/desk/music.nix`): the admin is created
+  on the first visit to `http://desk:4533`, and Feishin on desk and Amperfy on
+  the phone log in with it. The database in `/var/lib/navidrome` is rebuilt
+  by a rescan if lost, except playlists, favourites and play counts.
 - `desk`'s restic credentials for the media backup in `hosts/desk/media.nix`,
   in `/etc/restic/` (root, dir 0700, files 0600). `media.password` is the
   repository's **encryption key**: there is no reset, and without it the

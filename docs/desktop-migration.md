@@ -3573,6 +3573,28 @@ this on desk". Downloads folders hold more than films: anything that is not a
 movie, an episode or a YouTube video has no place in the layout yet. Leave it
 `skip`, and decide where it goes before inventing a folder for it.
 
+#### Listening
+
+Added 2026-09-25. One server, clients everywhere:
+[Navidrome](https://www.navidrome.org) on desk
+([`hosts/desk/music.nix`](../hosts/desk/music.nix)) reads `music/` by its
+tags and serves it over the Subsonic API, tailnet-only at `http://desk:4533`.
+A server beats players reading the share directly, for four reasons. beets
+wrote full tags and MusicBrainz ids, so albums, box-set discs and
+compilations come out as MusicBrainz has them. The phone gets streaming,
+offline downloads and CarPlay without mounting SMB. Favourites, playlists
+and play counts are kept once for every device. And the files stay
+read-only to everything but beets.
+
+| Where | Player | Why |
+| --- | --- | --- |
+| iPhone | **Amperfy** (App Store, free, open source) | Subsonic client with offline caching, CarPlay, gapless; logs in to `http://desk:4533` over Tailscale. play:Sub (paid) is the alternative if Amperfy's UI grates |
+| desk (NixOS) | **Feishin** (`pkgs.feishin`, [`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)) | A full desktop client for Navidrome: album-artist and multi-disc views, lyrics, queue management; the same library and state as the phone |
+| anywhere else | Navidrome's own web player | `http://desk:4533` in a browser on the tailnet, the Mac included |
+
+Nothing needs a rescan after an import: Navidrome watches the folder, with a
+six-hourly scan as the backstop.
+
 **Keeping Claude on the procedure.** Added 2026-09-25. A Claude Code session on
 the Mac starts knowing nothing of this plan. Three layers, from soft to hard:
 
@@ -3721,6 +3743,9 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       `media-staging` writable in `testparm`, `media-readme` active, README on
       both, `~/.claude/CLAUDE.md` and the skill linked (and listed by a running
       session). The Mac's half not yet: it was offline*
+- [ ] Listening: after the switch, create the Navidrome admin at
+      `http://desk:4533`; Feishin on desk and Amperfy on the phone log in and
+      play an album filed by beets
 - [ ] **Postponed** (decided 2026-09-25): the Mac's Downloads videos, by
       [Filing a batch](#filing-a-batch). Not before `print` and `audio` are
       filed and `lint` is clean, so the procedure has been through one real
