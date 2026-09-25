@@ -141,7 +141,9 @@
       OnCalendar = "daily";
       RandomizedDelaySec = "2h";
       Persistent = true; # catch up after downtime
-      WakeSystem = true; # for when suspend lands (Phase 8)
+      # No WakeSystem: this board's RTC has no alarm (rtc_cmos: "IRQ index 0
+      # not found", "no alarms"), and with it set the timer fails to load —
+      # "Failed to add realtime event source: Operation not supported".
     };
   };
 

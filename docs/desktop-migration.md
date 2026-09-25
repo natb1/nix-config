@@ -2686,9 +2686,15 @@ networking.networkmanager.settings.connection."wifi.wake-on-wlan" = "magic";
   suspending, and why suspend is blocked on the
   [remote wake relay](#second-gate-a-wake-relay-that-works-from-off-the-lan)
   below — away from home is exactly when the share is wanted.
-- **The nightly backup wakes the machine itself**: the restic timer has
-  `WakeSystem = true`, so the RTC wakes it, restic runs, and swayidle suspends
-  it again after 15 idle minutes.
+- **The nightly backup cannot wake the machine itself** — *found
+  2026-09-25.* The plan was `WakeSystem = true` on the restic timer. But this
+  board's RTC has no alarm: at boot `rtc_cmos PNP0B00:00` logs `IRQ index 0 not
+  found` and `no alarms`, and a timer with `WakeSystem` fails to load
+  (`Failed to add realtime event source: Operation not supported`). The unit
+  runs without it, and `Persistent = true` catches up on the first wake. So
+  once suspend is on, a machine that sleeps all night backs up in the morning,
+  not at night. If that matters, look for a firmware or ACPI fix for the RTC
+  IRQ, or wake it by the relay
 - **Wake source:** AM5 has no firmware switch for PCIe wake (see the
   [firmware checklist](#firmware-update)), so the Wi-Fi card's
   `power/wakeup` must read `enabled` in sysfs, and its root port must be
@@ -3267,7 +3273,7 @@ invocation, second repository — not a migration.
       OnCalendar = "daily";
       RandomizedDelaySec = "2h";
       Persistent = true;                                # catch up after downtime
-      WakeSystem = true;   # RTC-wake from suspend to run — see The desktop session's Idle
+      # No WakeSystem: the RTC has no alarm — see The desktop session's Idle
     };
   };
 
