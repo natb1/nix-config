@@ -3703,6 +3703,11 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       footgun, again), `--read-data-subset=2%%` (`%` is a systemd specifier in
       `ExecStart`), and a `notify-send` `OnFailure` into n8's session. After
       the first switch, remove the test-only `/etc/restic/known_hosts`*
+- [x] First unit run — *2026-09-25: snapshot `088061a5`, 7 files / 7.608 GiB
+      (the Takeout part, the iCloud tree, staging) in 19:54, about 6.4 MB/s
+      up over Wi-Fi; `check --read-data-subset=2%` found no errors; next run
+      from the timer. The first switch failed the timer on `WakeSystem` (the
+      RTC has no alarm — see The desktop session's Idle), now dropped*
 - [ ] Offline prune key, recorded somewhere that is not this machine —
       postponed to the [retirement gate](#before-any-original-is-retired)
 - [ ] The four restore proofs above — run once on a small test set before
