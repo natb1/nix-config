@@ -3595,6 +3595,14 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       `/etc/restic/id_ed25519` (root, 0600; dir 0700), comment `desk-restic`,
       `SHA256:pbsrEaftbebgxXiaB5rilJRzo5o4oaMr9uXKS1S0AFM`. Goes on the box only
       as the append-only forced-command line, never through the Console's key field*
+- [ ] Shred the Hetzner 2FA recovery codes from `desk` — since 2026-09-25 they
+      sit in `~/Downloads/Two-factor authentication - Hetzner Online.pdf`. **Only
+      after** they are stored where the recovery plan (open decisions) says —
+      password manager and/or on paper; shredding the only copy loses the 2FA
+      fallback. Then `shred -u` the PDF and `sudo fstrim -v /`: the root is
+      unencrypted ext4 on an SSD, where `shred` overwrites the logical blocks
+      but the controller keeps the old cells until TRIM. Also empty any Trash copy
+      and clear the entry from Chrome's download history
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
       added to the README's unmanaged-state list
 - [ ] Append-only forced command, plus the offline prune key recorded somewhere
