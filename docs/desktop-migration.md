@@ -771,9 +771,8 @@ two changes later cannot be attributed.
    falls back by itself — `bootCounting`, `panic=10` and the SP5100 watchdog
    in `hosts/desk/default.nix`. Setup, Windows and MemTest86+ are then
    entries in the power menu (Mod+Shift+Escape), and a CMOS clear plus the
-   saved profile is the way back. Try Enabled first, note `systemd-analyze`,
-   then Ultra Fast, and keep it only if it is measurably faster; the text
-   below is the original reasoning.*
+   saved profile is the way back. Decided 2026-09-25: straight to Ultra
+   Fast, no Enabled trial. The text below is the original reasoning.*
    Ultra Fast leaves USB off until the OS loads. That kills the keyboard at
    the systemd-boot menu, which is how this machine chooses between NixOS and
    Windows, and it stops the machine booting a USB stick. That rules out the
@@ -854,7 +853,11 @@ after it passes everything.
 - [x] C. Save Profile to USB and to a board slot as "XMP-baseline". *Copied
       to [`hosts/desk/bios/XMP-baseline-2026-09-25`](../hosts/desk/bios/)*
 - [ ] D. MemTest86+ from the power menu: 4 full passes, zero errors;
-      overnight. *Tonight, 2026-09-25*
+      overnight. *Tonight, 2026-09-25. Checked first: the menu's
+      `memtest86.conf` is the entry `bootctl list` shows, and the SP5100
+      watchdog, which systemd leaves armed for 10 min across a reboot,
+      does not survive into firmware: firmware sessions of 16 and 27 min
+      that morning were not reset*
 - [ ] E. Bare-metal Windows (power menu → *Reboot → Windows*):
   - [ ] TestMem5, anta777 *extreme*: 3 cycles, zero errors
   - [ ] y-cruncher, all stress tests: 1 hour, no errors
@@ -880,9 +883,9 @@ where.
       settings forces a retrain anyway
 - [ ] Curve Optimizer: optional, skipping is fine; would lower temperatures
       a little
-- [ ] Fast Boot last: *Enabled* with USB Support = Full Initial first, note
-      `systemd-analyze`; then *Ultra Fast*, kept only if measurably faster.
-      If it won't boot at all: clear CMOS, reload the USB profile
+- [ ] Fast Boot last: straight to *Ultra Fast* when the rest is done (decided
+      2026-09-25; no *Enabled* trial). Note `systemd-analyze` before and
+      after. If it won't boot at all: clear CMOS, reload the USB profile
 
 **Record it:** Save Profile to USB and a board slot, photos of changed pages,
 values into `hosts/desk/bios.md`.
@@ -938,8 +941,8 @@ BIOS settings are not declarative, so the record is the declaration:
       is fast and warm reboots do not retrain
 - [ ] Curve Optimizer validated per-core (or explicitly skipped)
 - [ ] Fan curves re-checked; hot run clean, DIMMs under ~55 °C
-- [ ] Fast Boot Enabled (USB Full Initial), then Ultra Fast only if measurably
-      faster; systemd-boot menu and the power menu's reboot targets still work
+- [ ] Fast Boot Ultra Fast; the power menu's reboot targets (setup, Windows,
+      MemTest86+, boot menu) still work
 - [x] SVM, IOMMU, IGD, Above 4G, CSM, ReBAR re-checked — *2026-09-25, with XMP*
 - [ ] `hosts/desk/bios.md` committed; profile saved to USB
 - [ ] Each step validated before it runs with the media on board; after
