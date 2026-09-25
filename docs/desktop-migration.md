@@ -3434,12 +3434,25 @@ also holding the other four sources un-de-duplicated.
       unencrypted ext4 on an SSD, where `shred` overwrites the logical blocks
       but the controller keeps the old cells until TRIM. Also empty any Trash copy
       and clear the entry from Chrome's download history
-- [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
-      added to the README's unmanaged-state list
-- [ ] Append-only forced command, plus the offline prune key recorded somewhere
-      that is not this machine. Prove the forced command from a shell first —
-      `restic -r rclone: -o rclone.program='ssh -p 23 …' snapshots` from `desk`,
-      then a `restic forget` that must **fail** — before wiring the unit
+- [x] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
+      added to the README's unmanaged-state list — *2026-09-25. The
+      off-`desk` copy of the password is postponed to the
+      [retirement gate](#before-any-original-is-retired)*
+- [x] Append-only forced command, proved from a shell before wiring the unit —
+      *2026-09-25: repository `c3ed5df2` created over `rclone:`, test snapshot
+      `2907817a` (`/etc/hostname`) saved and listed; `forget latest` got
+      **403 Forbidden** from the box (exit 3), and the snapshot was still there.
+      Gotcha: root's first ssh stopped at a host-key prompt it could not
+      answer inside restic's pipe, which surfaced as `context deadline
+      exceeded`. The unit pins the key and adds `BatchMode=yes`. The test
+      snapshot stays until the first manual prune*
+- [x] Unit wired in `hosts/desk/media.nix` — *2026-09-25, the plan's block
+      with append-only applied, plus: `requires` `srv-media.mount` (Samba's
+      footgun, again), `--read-data-subset=2%%` (`%` is a systemd specifier in
+      `ExecStart`), and a `notify-send` `OnFailure` into n8's session. After
+      the first switch, remove the test-only `/etc/restic/known_hosts`*
+- [ ] Offline prune key, recorded somewhere that is not this machine —
+      postponed to the [retirement gate](#before-any-original-is-retired)
 - [ ] The four restore proofs above — run once on a small test set before
       ingest, and again after
 - [ ] Measure the total size of the five sources (plus both iCloud libraries,
