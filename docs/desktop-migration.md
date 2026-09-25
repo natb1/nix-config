@@ -958,9 +958,9 @@ since the next firmware update resets them too.
 
 #### Fan control checklist
 
-- [ ] Loud source identified: which header, or the GPU / PSU — *suspect: fan3,
-      ~7400 RPM at 25 % duty (read via the out-of-tree `it87`, 2026-09-24).
-      Match it to a header in Smart Fan 6*
+- [x] Loud source identified: which header, or the GPU / PSU — *fan3, the
+      case fan: ~7400 RPM on 2026-09-24, ~3500 RPM on its new 40 % floor
+      after the 2026-09-25 curves ([`hosts/desk/bios.md`](../hosts/desk/bios.md))*
 - [ ] Each header's mode matches its fan (PWM for 4-pin, Voltage for 3-pin)
 - [ ] Curves set, Temperature Interval raised; quiet at idle and browsing —
       *2026-09-25: set. CPU fan left on its firmware default (it already ran
@@ -968,7 +968,13 @@ since the next firmware update resets them too.
       the case fan's curve adjusted. Saved with F3 as `fan-profile` — which
       landed on the stick's 3 MB `EFIBOOT` partition, not `BIOS`; copied to
       [`hosts/desk/bios/fan-profile-2026-09-25`](../hosts/desk/bios/) and to
-      the `BIOS` partition. Values to transcribe from the photos*
+      the `BIOS` partition. Values decoded from that file into
+      [`hosts/desk/bios.md`](../hosts/desk/bios.md). **Load test the same
+      day:** the CPU fan goes to full speed about 10 s into load and holds
+      steady (no hunting); load temperatures unchanged (95.4 °C stock, 91 °C
+      Eco), because the default CPU curve was already at full speed under
+      load. The cooler is the limit, not the curves. Idle and browsing
+      noise is the user's call*
 - [ ] Eco Mode tried; kept or rejected on compile time vs noise — *2026-09-25:
       switchable from NixOS instead of firmware setup: `eco on` / `eco off` /
       `eco status` ([`hosts/desk/eco.nix`](../hosts/desk/eco.nix), ryzen_smu
@@ -983,7 +989,7 @@ since the next firmware update resets them too.
       the lever here, not Eco. Also in the power menu (`eco@on`/`eco@off`
       units, polkit). Originally: `eco on`
       makes it 88/75/150, and an all-core build holds package power near 88 W*
-- [ ] Recorded in `hosts/desk/bios.md`; fan profile saved to USB
+- [x] Recorded in `hosts/desk/bios.md`; fan profile saved to USB — *curves decoded from the saved profile; Temperature Interval, mode and the case fan's input aren't stored in a readable form in it*
 - [x] Phase 0: fans visible in `sensors` — *not with mainline `it87` (ITE `0x8689` unclaimed); yes with the out-of-tree fork plus `ignore_resource_conflict=1`, read-only in practice (2026-09-24). Curves stay in firmware*; [ ] Phase 4: dGPU fan sane under vfio-pci
 
 ---
