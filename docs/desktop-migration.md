@@ -3352,7 +3352,13 @@ A backup is a claim until it is restored. All four, before trusting it:
 - [ ] `restic snapshots` **from the MacBook**, not from `desk` — proves the repo
       opens with only the password and key, and does not depend on the machine
       that made it
-- [ ] Restore one large file to `/tmp` and `cmp` it byte-for-byte against the original
+- [x] Restore one large file to `/tmp` and `cmp` it byte-for-byte against the original
+      — *2026-09-25, test set: `sudo restic-media restore latest --include
+      …/takeout-20260924T222726Z-1-001.tgz --target /var/tmp/restore` from
+      snapshot `088061a5`, 7.601 GiB in 13:18 (about 9.5 MB/s down over
+      Wi-Fi), and `cmp` against `/srv/media/takeout/` was identical. The switch
+      installs `restic-media`, which is restic with the unit's repository,
+      password and ssh. Repeat on the full set before the retirement gate*
 - [ ] Simulate the real failure: unplug the bulk SSD, boot, and confirm Samba
       refuses to serve rather than exposing an empty share — then restore into a
       fresh filesystem and time it
