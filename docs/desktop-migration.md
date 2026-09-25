@@ -3450,11 +3450,16 @@ once, for the one-time copy, and never again.
 1. On the paying account's iPhone: Settings → Photos → *Shared Library* → set
    up, and invite the other Apple ID. It is limited to 6 participants, and each
    person can be in only one.
-2. **When the setup asks which existing photos to move, choose to move them
-   manually and then move none.** The personal libraries stay intact for the
-   one-time copy below. Moving everything in would also work, but it spends the
-   creator's quota on the other person's back catalogue and splits the
-   verification counts across two libraries.
+2. **Each person is asked which existing photos to move, and should move
+   none.** The creator is asked during setup, after adding participants. The
+   invitee is asked when accepting the invite, which opens the same setup on
+   their phone. The choices are *All My Photos and Videos*, *Choose by People or
+   Date* and *Choose Manually*. Pick **Choose Manually** and continue without
+   selecting anything, so both personal libraries stay intact for the one-time
+   copy below. Moving everything in would also work, but it spends the creator's
+   quota on the other person's back catalogue and splits the verification
+   counts across two libraries. A photo moved in by mistake can be moved back
+   to the personal library afterwards.
 3. On **both** phones: Settings → Photos → Shared Library → *Sharing from
    Camera* → **Share Automatically** on, and **Share When at Home** off, so
    sharing does not depend on where the phone is.
@@ -3562,8 +3567,9 @@ becomes an `OnFailure` alert.
 - [ ] Decide which account creates the Shared Library (it pays the storage);
       read each personal library's size from Settings → *Apple Account* →
       iCloud and add both to the ~730 GB budget
-- [ ] Create the Shared Library, invite the other account, move **no**
-      existing photos
+- [ ] Create the Shared Library and invite the other account. Both the
+      creator (at setup) and the invitee (on accepting) choose *Choose
+      Manually* and move **no** existing photos
 - [ ] Both phones: *Share Automatically* on, *Share When at Home* off, Camera's
       Shared Library button on. Take a test photo on each and confirm it shows
       up under the Shared Library on the *other* phone. Record the switch date
