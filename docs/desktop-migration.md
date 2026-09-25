@@ -3614,7 +3614,8 @@ switch, so each snapshot is complete up to the date recorded above.
       from both phones landed in `/srv/media/icloud/shared/` — *2026-09-25:
       the first run succeeded and downloaded one Live Photo (`IMG_4482.HEIC`
       plus `_HEVC.MOV`), owned by `n8:users` with mode 0644. A second run
-      downloaded nothing. Still needed: a test shot from the other phone*
+      downloaded nothing. That photo is from the wife's camera, so that phone's
+      path is proven. Still needed: a test shot from n8's phone*
 - [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the pop-up; restore it
 - [ ] [BIOS tuning](#bios-tuning) validated
 - [ ] Backfill `icloudpd@n8`, then `icloudpd@<FILL_ME_wife>`. Counts match;
