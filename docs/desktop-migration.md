@@ -569,7 +569,7 @@ the text was wrong about how the machine behaves.
 | Which Apple ID creates the Shared Library | [Step 4](#step-4--iphone-photos-from-icloud) | The creator's iCloud plan stores every Camera photo from both phones from then on. Pick the account with the larger plan, or the one on a Family Sharing iCloud+ plan |
 | iCloud session lapse | [Step 4](#step-4--iphone-photos-from-icloud) | The ongoing backup needs an interactive 2FA re-auth roughly every two months. Until ntfy exists, the `OnFailure` alert only reaches the desk |
 | Windows Hello sign-in method | Before the first guest boot | Bare metal and the guest use different TPMs, so a TPM-backed PIN is invalidated on every crossing — [Two TPMs, one install](#two-tpms-one-install). Decide: password sign-in, PIN re-created per crossing, or test fTPM passthrough |
-| Fate of the Drive/Photos/GCS/MacBook/Flickr copies (not iCloud: the phones keep using it) | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
+| Fate of the Drive/Photos/GCS/MacBook/Flickr copies (not iCloud: the phones keep using it) | After the restore test and the [retirement gate](#before-any-original-is-retired) | Keep, or retire in favour of `/srv/media` + Hetzner. Not before both, either way |
 | ~~Stale NVRAM entry for the old ESP~~ | ~~Phase 2~~ | **Closed 2026-09-24.** disko wiped the 1 TB drive and `Boot0004` (PARTUUID `f968dba4…`) was left pointing at nothing; verified that GUID exists on no partition, then removed it with `efibootmgr -b 0004 -B`. One Windows entry remains, on the 2 TB ESP |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
@@ -578,7 +578,7 @@ the text was wrong about how the machine behaves.
 | Printer's USB URI | [Printer sharing](#printer-sharing) | The serial-keyed `usb://Brother/HL-L2305%20series?serial=U66480F3N341782` is built from what Windows reports; `lpinfo -v` after Phase 2 is authoritative |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet. The intended answer is ntfy, deferred to [Optional follow-ups](#optional-follow-ups); until then the unit is a desktop pop-up via swaync, which only helps if you are at the desk |
 | Storage Box and Hetzner account credentials | [Media storage](#media-storage) | **Interim, 2026-09-25:** the box's main-account password is the Hetzner account password, kept in Chrome's password manager. Two problems to fix before the backup is trusted. (1) Reuse: the box password is sent to the box and also works for SMB/WebDAV/FTP if they are on, and the account login can reset everything, including snapshots. They should be two different passwords. (2) The append-only design assumes a compromised `desk` cannot reach an unrestricted credential. Chrome on `desk` can. Evaluating Vaultwarden and KeePassXC. Either works if the vault stays locked on `desk` and is unlocked only on the phone or laptop |
-| Storage Box hardening steps | [Media storage](#media-storage) | To write: 2FA on the Hetzner account; SMB/WebDAV/FTP off; password login on port 22 off where the Console allows it; automatic snapshots (Console-managed, read-only over SSH, count against the 1 TB); later, replace the box password with the offline prune key. The restic repository password (`/etc/restic/media.password`) is an encryption key, not a login: there is no reset, and losing it makes the backup unreadable. The unattended unit needs it in plain text on `desk`, so the hardening is about how it is kept: root-owned, mode 0600; never in the repo or the Nix store (`passwordFile` is a path); never echoed to a terminal or chat; not reused anywhere. Copy it off `desk` immediately (password manager, plus paper in the recovery plan). Optionally, `restic key add` a second repository key for the trusted person, so theirs can be revoked without touching yours |
+| Storage Box hardening steps | [Media storage](#media-storage) | To write: 2FA on the Hetzner account; SMB/WebDAV/FTP off; password login on port 22 off where the Console allows it; automatic snapshots (Console-managed, read-only over SSH, count against the 1 TB); later, replace the box password with the offline prune key. The restic repository password (`/etc/restic/media.password`) is an encryption key, not a login: there is no reset, and losing it makes the backup unreadable. The unattended unit needs it in plain text on `desk`, so the hardening is about how it is kept: root-owned, mode 0600; never in the repo or the Nix store (`passwordFile` is a path); never echoed to a terminal or chat; not reused anywhere. Copy it off `desk` (password manager, plus paper in the recovery plan) before any original is retired: *postponed 2026-09-25* while every file still exists at its source or can be downloaded again. See [Before any original is retired](#before-any-original-is-retired). Optionally, `restic key add` a second repository key for the trusted person, so theirs can be revoked without touching yours |
 | Written recovery plan (dead man's switch, digital estate) | [Media storage](#media-storage) | To write. Someone other than you has to be able to get the media back: where the Hetzner login, the restic repository password (`/etc/restic/media.password`) and the prune key are held, and how a trusted person gets them if you cannot. Without the restic password the backup is unreadable ciphertext. The paper copy also holds what the custody rule (below) marks for paper, and the memorized passwords |
 | Credential custody rule | Before the vault is chosen | Every credential gets one of three homes, and none is reused. **Memorized** (typed often enough to remember): the vault's master password, `mba`'s login password and `desk`'s gnome-keyring password. **Vault only** (random, pasted, rarely typed): Samba, `desk` root, the Hetzner account password and the box password. **Vault plus paper** (needed when a device, or the vault itself, is gone): the Hetzner 2FA recovery codes, `mba`'s FileVault recovery key, the vault's own recovery kit, the restic password and the prune key. None of it goes in git, not even as a hash. `desk`'s root disk is unencrypted, so every hash on it can be cracked offline by whoever holds the disk. Only a random password, used nowhere else, makes that harmless. **Decide:** the Hetzner row above keeps the vault locked on `desk`, which means no vault autofill in `desk`'s Chrome. Either accept that, or split into two vaults: an everyday one for web logins that `desk` may unlock, and an infrastructure one that it never unlocks (Hetzner, box, prune key, restic, root, recovery codes). With KeePassXC that is two `.kdbx` files; with Bitwarden/Vaultwarden, two accounts |
 | `desk` root password | [After the reboot](#after-the-reboot--do-these-in-order), item 5 | Break-glass only: `n8` has passwordless sudo. It does not stop anyone with physical access. The disk is unencrypted and the systemd-boot editor is on (the NixOS default), so `init=/bin/sh` at the boot menu gives a root shell without it. That is consistent with the autologin threat model, and it is also the way back if this password is lost. It is needed exactly when `desk` is broken, so a copy only on `desk` is useless: keep it in the vault (readable from the phone). Random, but typeable at a console with no paste: 5–6 diceware words. Set with `passwd root`, not `hashedPassword` in the repo. `boot.loader.systemd-boot.editor = false` is only worth setting together with disk encryption. Until then it closes nothing and removes the recovery path |
@@ -3328,6 +3328,44 @@ the MacBook and Flickr are the backup. Google Photos earns extra caution here:
 deleting from it is the one retirement that is **not** reversible on a whim,
 because the Takeout copy is the only remaining original once the library is
 emptied and the trash ages out at 60 days.
+
+#### Before any original is retired
+
+*Recorded 2026-09-25.* Until a source is retired, losing the backup's secrets
+costs only a re-upload, because every file still exists at its source or can be
+downloaded again. So the credential and recovery work is **deferred to this
+point, not skipped**. Once one original is gone, the backup is the only other
+copy, and all of the items below must be closed. Each links to its open
+decision.
+
+- [ ] **Restore proofs passed** on the full ingested set, not only the test set
+      ([Prove it works](#prove-it-works))
+- [ ] **Vault chosen**, Vaultwarden or KeePassXC, and the one-vault versus
+      two-vault split decided (custody rule, open decisions)
+- [ ] **Hetzner account and box passwords separated**, both random and in the
+      vault. Chrome on `desk` no longer holds either, so a compromised `desk`
+      reaches no unrestricted credential
+- [ ] **restic repository password off `desk`**: in the vault, and on paper
+- [ ] **Hetzner 2FA recovery codes** in the vault and on paper. Only then
+      shred the Downloads PDF (checklist above)
+- [ ] **Prune key** generated off `desk`, added to the box, and held in the
+      vault and on paper. Decide who runs retention (`forget` / `prune`), from
+      which machine and how often, and write the procedure down. The repository
+      only grows until then
+- [ ] **Remaining box hardening** decided: port-22 password login off where
+      the Console allows it; whether the box password is kept at all once the
+      prune key exists
+- [ ] **Failure alerting reaches you away from the desk** (ntfy or similar).
+      Once the originals are gone, a nightly failure nobody sees means the
+      backup has silently stopped
+- [ ] **Written recovery plan**: who the trusted person is, where the paper
+      copy lives, and what triggers their access (dead man's switch or
+      estate instructions). Decide whether they get their own `restic key add`
+      key. Tested once by restoring from a machine other than `desk` using only
+      what the plan hands them
+- [ ] **Account continuity**: the Hetzner payment method and contact email.
+      If billing lapses, the box and its snapshots are deleted, and the trusted
+      person needs a way to keep it paid
 
 #### Three Google Takeout traps
 
