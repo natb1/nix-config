@@ -3634,8 +3634,10 @@ switch, so each snapshot is complete up to the date recorded above.
 Added 2026-09-25. **Goal: iCloud holds only recent photos, and `/srv/media`
 plus Hetzner holds everything.** The daily `shared` run gets a second job:
 after downloading, it deletes from iCloud whatever is older than
-`<FILL_ME_keep_days>` days (suggested: **90**). That leaves the recent months
-on the phones and frees the rest of the iCloud quota. It is the one part of
+**365** days. That leaves the last year on the phones and frees the rest of
+the iCloud quota. *Decided 2026-09-25:* 365 is the default, and it may be
+trimmed further depending on iCloud usage. Shortening it is one number in the
+env file, and each run then deletes more. It is the one part of
 this section that **destroys a copy**, so it is gated harder than anything
 else here, and it ships switched off.
 
@@ -3665,11 +3667,11 @@ each of which must pass in the same unit run:
    run stops there and alerts.
 3. **Everything is offsite.** `restic-backups-media` last succeeded less than
    36 hours ago (`systemctl show -p Result,ExecMainExitTimestamp`). A
-   90-day window then means every deleted photo spent roughly 90 days in
+   365-day window then means every deleted photo spent roughly a year in
    daily snapshots before its iCloud copy went. Checking each file against
    `restic find` would be stronger, but the window already makes the same
    argument cheaply.
-4. **Delete pass**, with `--keep-icloud-recent-days <FILL_ME_keep_days>`. It
+4. **Delete pass**, with `--keep-icloud-recent-days "$KEEP_ICLOUD_DAYS"` (365). It
    re-enumerates, downloads nothing (step 2 just proved that), and moves
    items older than the window to iCloud's *Recently Deleted*.
 
@@ -3678,7 +3680,7 @@ defence is Apple's, not ours. The quota is freed once they leave it.
 
 #### Shape, when it lands
 
-- **Opt-in per instance** through the env file (`KEEP_ICLOUD_DAYS=90`).
+- **Opt-in per instance** through the env file (`KEEP_ICLOUD_DAYS=365`).
   Without it the unit behaves exactly as today: add-only. The module comment's
   "add-only, deliberately" becomes "add-only unless `KEEP_ICLOUD_DAYS` is
   set, and then only behind the checks".
