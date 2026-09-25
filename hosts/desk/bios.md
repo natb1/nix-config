@@ -66,3 +66,27 @@ reading to trust.
 - **DIMMs:** under 49 °C throughout, well inside 55 °C. A CPU-only load
   doesn't stress them; the GPU's exhaust is what matters, so the hot run in
   BIOS tuning still has to check them.
+
+## Memory (XMP baseline), confirmed 2026-09-25
+
+Saved with Save Profile as
+[`bios/XMP-baseline-2026-09-25`](bios/XMP-baseline-2026-09-25) (also in a
+board slot). The file is a one-row greyscale PNG whose 9741 pixels are the
+raw setup values, tagged `F43c`. It only loads on this firmware, so the
+settings below are what counts.
+
+| Setting | Value | Where |
+|---|---|---|
+| XMP/EXPO Profile | the kit's XMP: DDR5-6000 36-36-36-76, 1.35 V | Tweaker |
+| UCLK DIV1 MODE | UCLK=MEMCLK (1:1) | Settings → AMD Overclocking → AMD Overclocking → DDR and Infinity Fabric Frequency/Timings → Infinity Fabric Frequency and Dividers |
+| FCLK | Auto; runs 2000 MHz | same page. No frequency option by that name; `Fclk VDCI Mode Pref` = Auto |
+| VCORE SOC | ≤ 1.30 V (checked in Tweaker) | Tweaker |
+| SVM, IOMMU, Initial Display Output, CSM, Above 4G, Resizable BAR | on, enabled, IGD, off, on, on | unchanged |
+
+The clocks as the CPU reports them (`ryzen_smu` PM table 0x540004, words 70,
+74, 78): FCLK 2000, UCLK 3000, MEMCLK 3000 MHz, so 1:1 at DDR5-6000.
+
+Validation: stressapptest passed 2026-09-24; MemTest86+ overnight
+2026-09-25; the Windows tests and the error-log check are still to do
+([docs/desktop-migration.md](../../docs/desktop-migration.md), BIOS tuning,
+the session plan).

@@ -667,7 +667,9 @@ A firmware update resets settings to defaults. Afterwards, re-check:
 
 ### BIOS tuning
 
-**Deferred 2026-09-23 — later, unscheduled.** The machine runs the F43c
+**Under way since 2026-09-25** — fans done, XMP settings confirmed, its
+validation in progress; see [the session plan](#the-session-plan-bios-email-v4-2026-09-25).
+*Originally deferred 2026-09-23.* The machine runs the F43c
 defaults plus the kit's XMP profile meanwhile. Nothing in this plan waits on
 tuning, except that the XMP profile is validated before media Step 3. Whenever it happens, each change is validated before the machine
 runs with the media on board ([Step 3](#step-3--bring-the-media-in)). If it
@@ -767,11 +769,11 @@ two changes later cannot be attributed.
    Use **Enabled, with *USB Support* = Full Initial — never Ultra Fast.**
    *Revised 2026-09-25: Ultra Fast is acceptable now that a bad generation
    falls back by itself — `bootCounting`, `panic=10` and the SP5100 watchdog
-   in `hosts/desk/default.nix`. Setup is then `systemctl reboot
-   --firmware-setup`, Windows `sudo efibootmgr --bootnext <its entry>`, and a
-   CMOS clear plus the saved profile is the way back. Measure it against
-   Enabled with `systemd-analyze` before keeping it; the text below is the
-   original reasoning.*
+   in `hosts/desk/default.nix`. Setup, Windows and MemTest86+ are then
+   entries in the power menu (Mod+Shift+Escape), and a CMOS clear plus the
+   saved profile is the way back. Try Enabled first, note `systemd-analyze`,
+   then Ultra Fast, and keep it only if it is measurably faster; the text
+   below is the original reasoning.*
    Ultra Fast leaves USB off until the OS loads. That kills the keyboard at
    the systemd-boot menu, which is how this machine chooses between NixOS and
    Windows, and it stops the machine booting a USB stick. That rules out the
@@ -792,6 +794,102 @@ the one setting that interacts with passthrough, so the Phase 8 guest checks
 (no Code 43, frame times) are also its test, and turning it off is the first
 thing to try if the guest's dGPU misbehaves.
 
+#### The session plan (BIOS email v4, 2026-09-25)
+
+The steps above, put in the order the sittings run them. Values found go in
+[`hosts/desk/bios.md`](../hosts/desk/bios.md).
+
+**Getting around** — the power menu (Mod+Shift+Escape,
+[`hosts/desk/power-menu.nix`](../hosts/desk/power-menu.nix)) replaces the
+POST keys: *Reboot → firmware setup* (Del), *Reboot → Windows* (F12),
+*Reboot → MemTest86+*, *Reboot → boot menu* (the hidden systemd-boot menu,
+once), and the one Eco Mode switch that applies. Del and F12 at POST still
+work too.
+
+**Before starting.** Leave the USB stick in: its FAT32 `BIOS` partition is
+for profiles. *Gigabyte's save dialog defaults to the 3 MB `EFIBOOT`
+partition; both saves on 2026-09-25 landed there and were copied across by
+hand.* A failed boot is harmless while no Secure Boot keys are enrolled:
+clear CMOS and reload the saved profile. One change at a time. Menu names are
+Gigabyte's usual ones; on F43c go by the meaning.
+
+**Part 1 — fans** (see [Fan control](#fan-control); done 2026-09-25):
+
+- [x] 1. Find the loud fan and the CPU cooler's fan (header, RPM, what is
+      plugged in). *fan3, the case fan*
+- [ ] 2. Mode per header: PWM for 4-pin, Voltage for 3-pin. *Not read back
+      yet; not stored readably in the fan profile*
+- [x] 3. No header on Full Speed; Fan Speed Control = Manual
+- [x] 4. CPU_FAN: input CPU, FAN Stop off. Proposed 40 → 30 %, 60 → 40 %,
+      75 → 60 %, 85 → 80 %, 90 → 100 %, Temperature Interval 3 °C. *Kept the
+      firmware default instead (more aggressive)*
+- [x] 5. Case fans: input PCIEX16 or System 1 if offered, curve 40 → 30 %,
+      55 → 40 %, 65 → 55 %, 75 → 75 %, 85 → 100 % (with CPU input:
+      60/70/80/88/95 °C → 30/40/55/75/100 %). Largest Temperature Interval
+      offered, minimum 30 % (25 % at the lowest), FAN Stop off, a few seconds
+      of step-up/down time if offered. *Set to ≤55 → 40 %, 63 → 48 %,
+      78 → 100 % on a non-CPU input*
+- [x] 6. Check in NixOS: quiet at idle and browsing; under `stress-ng --cpu
+      12`, `sudo eco status`, `sensors | grep Tctl`, `sensors | grep -A2
+      spd5118`; fans rise steadily. *Load test in bios.md*
+- [x] 7. Save Fan Profile (F3) to USB and photograph each header
+
+**Eco Mode:** off in firmware. Switch it from NixOS (`eco on`/`eco off`,
+power menu).
+
+**Part 2 — memory** (hours; MemTest overnight). The kit's XMP profile has
+been on since 2026-09-23; this finishes validating it. Tighter timings only
+after it passes everything.
+
+- [x] A. Tweaker: XMP profile selected; FCLK 2000 MHz; UCLK = MEMCLK (1:1,
+      fix it if 1:2); VCORE SOC ≤ 1.30 V, never raised above. *2026-09-25:
+      UCLK DIV1 MODE = UCLK=MEMCLK. No FCLK frequency setting found by that
+      name (search "fclk" finds only Fclk VDCI Mode Pref = Auto, under AMD
+      Overclocking → DDR and Infinity Fabric Frequency/Timings → Infinity
+      Fabric Frequency and Dividers). It runs 2000 anyway: the SMU's PM table
+      reads FCLK 2000, UCLK 3000, MEMCLK 3000 MHz (words 70, 74, 78 of table
+      0x540004)*
+- [x] B. Leave alone, re-check after any change: SVM on, IOMMU enabled,
+      Initial Display Output IGD, CSM off, Above 4G on, Resizable BAR on
+- [x] C. Save Profile to USB and to a board slot as "XMP-baseline". *Copied
+      to [`hosts/desk/bios/XMP-baseline-2026-09-25`](../hosts/desk/bios/)*
+- [ ] D. MemTest86+ from the power menu: 4 full passes, zero errors;
+      overnight. *Tonight, 2026-09-25*
+- [ ] E. Bare-metal Windows (power menu → *Reboot → Windows*):
+  - [ ] TestMem5, anta777 *extreme*: 3 cycles, zero errors
+  - [ ] y-cruncher, all stress tests: 1 hour, no errors
+  - [ ] Hot run: a long game session plus a build, HWiNFO open; DIMMs (SPD
+        hub) under ~55 °C. Also readable in Linux during a long build:
+        `sensors | grep -A2 spd5118`
+  - [ ] Event Viewer → Windows Logs → System, source WHEA-Logger: empty. A
+        corrected WHEA-19 is a failure
+- [ ] F. Back on NixOS: `journalctl -k -g 'mce|EDAC|Hardware Error'` shows
+      only the startup banners
+
+If anything fails: XMP off (JEDEC defaults), and record what failed and
+where.
+
+**Only after XMP passes everything** (another day), steps 3–7 above:
+
+- [ ] Timings one at a time, re-validating each: tRFC, then tREFI (back it off
+      first if errors appear only warm), then tRRD/tFAW/tWR. VSOC ≤ 1.30 V
+- [ ] Memory Context Restore with Power Down Enable, once timings are final;
+      re-validate with it on (MemTest, TestMem5, a few cold boots). Firmware
+      time is 15–41 s now, mostly training, which MCR removes. If boots turn
+      flaky, it is the first thing to turn off. Changing DIMMs or memory
+      settings forces a retrain anyway
+- [ ] Curve Optimizer: optional, skipping is fine; would lower temperatures
+      a little
+- [ ] Fast Boot last: *Enabled* with USB Support = Full Initial first, note
+      `systemd-analyze`; then *Ultra Fast*, kept only if measurably faster.
+      If it won't boot at all: clear CMOS, reload the USB profile
+
+**Record it:** Save Profile to USB and a board slot, photos of changed pages,
+values into `hosts/desk/bios.md`.
+
+**Sittings:** first, Part 1 with its load test, then Part 2 A–D with MemTest
+overnight. The Windows tests (E, F) are the next sitting.
+
 #### Validation — the definition of "stable"
 
 Each step passes all of these, or it is reverted:
@@ -811,11 +909,11 @@ temperature, and tREFI is where they show first. A mini-ITX case with the RX
 6600 XT exhausting across the DIMMs is the worst case, and a synthetic memory
 test with the GPU idle does not reproduce it. Watch the SPD hub sensors
 during the hot run; keep the DIMMs under ~55 °C, and back tREFI off before
-anything else if errors appear only when warm. **Read them in HWiNFO under
-bare-metal Windows** — on this board Linux cannot: `spd5118` binds nothing
-(2026-09-24), so `sensors` reports no DIMM temperature at all. That makes the
-hot run a Windows-side test here, which is convenient anyway, since the
-"long game session" half of it is a Windows workload.
+anything else if errors appear only when warm. Read them in HWiNFO under
+bare-metal Windows during the game half of the hot run, and in Linux during
+the build half: `sensors | grep -A2 spd5118` shows both DIMMs since
+2026-09-25 ([`hosts/desk/sensors.nix`](../hosts/desk/sensors.nix); on
+2026-09-24 Linux could not read them).
 
 #### Where it is written down
 
@@ -832,14 +930,17 @@ BIOS settings are not declarative, so the record is the declaration:
 #### BIOS tuning checklist
 
 - [ ] Baseline recorded; validation set passes at defaults
-- [ ] XMP profile on (or its values by hand), FCLK 2000, UCLK = MEMCLK; validated
+- [ ] XMP profile on (or its values by hand), FCLK 2000, UCLK = MEMCLK; validated —
+      *settings confirmed and saved as XMP-baseline 2026-09-25; validation
+      is Part 2 D–F of [the session plan](#the-session-plan-bios-email-v4-2026-09-25)*
 - [ ] Timings tightened (or explicitly stopped at the rated profile); VSOC ≤ 1.30 V; validated
 - [ ] Memory Context Restore + Power Down Enable on; re-validated; cold boot
       is fast and warm reboots do not retrain
 - [ ] Curve Optimizer validated per-core (or explicitly skipped)
 - [ ] Fan curves re-checked; hot run clean, DIMMs under ~55 °C
-- [ ] Fast Boot Enabled (USB Full Initial); systemd-boot menu and F12 USB boot still work
-- [ ] SVM, IOMMU, IGD, Above 4G, CSM, ReBAR re-checked
+- [ ] Fast Boot Enabled (USB Full Initial), then Ultra Fast only if measurably
+      faster; systemd-boot menu and the power menu's reboot targets still work
+- [x] SVM, IOMMU, IGD, Above 4G, CSM, ReBAR re-checked — *2026-09-25, with XMP*
 - [ ] `hosts/desk/bios.md` committed; profile saved to USB
 - [ ] Each step validated before it runs with the media on board; after
       Phase 2b, Secure Boot keys re-enrolled if a CMOS clear dropped them
@@ -896,12 +997,10 @@ louder curve.
 **What the firmware cannot see:**
 
 - **The DIMMs.** They sit in the GPU's exhaust, and BIOS tuning wants them
-  under ~55 °C. No header curve can follow a DIMM sensor. *And on this board
-  neither can Linux* — `spd5118` binds nothing (2026-09-24), so the
-  `programs.coolercontrol.enable` escape hatch this bullet used to offer does
-  not exist: there is no DIMM reading for it to follow, and no fan for it to
-  drive. If the hot run shows warm DIMMs the remaining levers are firmware
-  ones — raise the case fans' floor, or back tREFI off.
+  under ~55 °C. No header curve can follow a DIMM sensor. Linux can read
+  them since 2026-09-25 (below), but an OS-side curve still has no fan it can
+  reliably drive (`it87` below). If the hot run shows warm DIMMs the levers
+  are firmware ones — raise the case fans' floor, or back tREFI off.
 - **The dGPU while it is bound to vfio-pci with no guest running.** No driver
   manages its fans then. Most cards fall back to a quiet firmware default,
   but some sit at a fixed high speed until a driver loads. Check it in
@@ -950,9 +1049,9 @@ louder curve.
   though — the kernel probes 0x50 + slot index, and channel B's DIMM is at
   0x52 (read-only `i2cdetect -r`); a boot-time unit in `sensors.nix`
   registers it, and it read 48.2 °C. Both under the 55 °C bar at idle, so
-  the hot run can be watched from Linux too.* The "under ~55 °C" check in
-  [BIOS tuning](#bios-tuning) therefore has to be read from **HWiNFO under
-  bare-metal Windows**, not from `sensors` as that section assumes.
+  the hot run can be watched from Linux too.* *Originally:* the "under
+  ~55 °C" check in [BIOS tuning](#bios-tuning) therefore had to be read from
+  HWiNFO under bare-metal Windows.
 
 **Written down** with the rest: the curve points and each header's mode go in
 `hosts/desk/bios.md`, plus Smart Fan 6's own *Save Fan Profile* (F3) to USB,
