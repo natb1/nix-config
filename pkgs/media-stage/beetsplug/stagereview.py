@@ -81,15 +81,20 @@ class StageSession(TerminalImportSession):
         artist = first.albumartist or first.artist or guess.get("artist", "")
         album = first.album or guess.get("album", "")
         tagged = sum(1 for i in items if i.title and i.artist and i.album)
+        # beets merges sibling folders that differ only by a disc marker
+        # ("… CD1", "… CD2") into one album; say so, since it can be wrong.
+        folders = [os.path.relpath(displayable_path(p), self.staging) for p in task.paths]
         self.review.append({
             "id": item_id(key),
             "key": key,
             "kind": "album",
             "title": f"{artist or 'Unknown artist'} – {album or key}",
-            "subtitle": f"{len(items)} tracks · {tagged} tagged",
+            "subtitle": f"{len(items)} tracks · {tagged} tagged" +
+                        (f" · {len(folders)} folders taken as one multi-disc album" if len(folders) > 1 else ""),
             "why": why,
+            "folders": folders,
             "evidence": [
-                {"label": "Folder", "value": key},
+                {"label": "Folders" if len(folders) > 1 else "Folder", "value": "\n".join(folders)},
                 {"label": "Tags now", "value": f"album artist {first.albumartist or '—'}; artist {first.artist or '—'}; "
                                                f"album {first.album or '—'}; year {first.year or '—'}"},
                 {"label": "Tracks", "value": "\n".join(
@@ -107,6 +112,7 @@ class StageSession(TerminalImportSession):
 
     @staticmethod
     def candidate(m, best=False):
+        score = round(100 * (1 - float(m.distance)))
         i = m.info
         bits = [b for b in (i.label, i.country, i.media, str(i.year or "") or None,
                             f"{len(i.tracks)} tracks", i.albumdisambig) if b]
@@ -119,9 +125,11 @@ class StageSession(TerminalImportSession):
             "value": f"mb:{i.album_id}",
             "label": f"{i.artist} – {i.album}" + (f" ({i.year})" if i.year else ""),
             "detail": " · ".join(bits),
-            "score": round(100 * (1 - float(m.distance))),
+            "score": score,
             "url": i.data_url or f"https://musicbrainz.org/release/{i.album_id}",
-            "recommended": best,
+            # Only a match worth accepting unread is "Suggested": the page's
+            # "accept every suggestion" takes these.
+            "recommended": best and score >= 60,
         }
 
     # -- decisions beets would have prompted for
@@ -131,11 +139,10 @@ class StageSession(TerminalImportSession):
             return self.answered(task)
         if task.rec == Recommendation.strong and task.candidates:
             return task.candidates[0]
-        why = {Recommendation.none: "no MusicBrainz match",
-               Recommendation.low: "weak MusicBrainz match",
-               Recommendation.medium: "possible MusicBrainz match"}.get(task.rec, "needs a look")
-        if task.candidates:
-            why += f" (best {round(100 * (1 - float(task.candidates[0].distance)))}%)"
+        why = {Recommendation.none: "no match beets would accept",
+               Recommendation.low: "weak match",
+               Recommendation.medium: "close match"}.get(task.rec, "needs a look")
+        why += f" (best {round(100 * (1 - float(task.candidates[0].distance)))}%)" if task.candidates else ": nothing found"
         self.record(task, why, [self.candidate(m, n == 0) for n, m in enumerate(task.candidates[:5])])
         return Action.SKIP
 
@@ -201,15 +208,11 @@ class StageReview(BeetsPlugin):
         staging = os.path.abspath(args[0])
         batch = opts.batch or os.path.basename(staging)
         answers = load_answers(opts.answers, batch) if opts.answers else None
-        if answers is not None:
-            ids = set(answers)
-            paths = [os.path.join(staging, d) for d in sorted(os.listdir(staging))
-                     if os.path.isdir(os.path.join(staging, d)) and item_id(d) in ids]
-            if not paths:
-                ui.print_("stage-review: no answered album is still in staging")
-                return
-        else:
-            paths = [staging]
+        # The whole batch every time, answers or not, so that beets groups the
+        # folders into albums exactly as it did for the review: an answer is
+        # keyed by an album's first folder, and a multi-disc album's other
+        # folders are only imported with it. Unanswered albums are skipped.
+        paths = [staging]
         config["import"]["quiet"] = False
         config["import"]["timid"] = False
         config["import"]["resume"] = False
