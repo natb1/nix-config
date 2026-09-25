@@ -761,6 +761,13 @@ two changes later cannot be attributed.
    Disabled / Enabled / Ultra Fast. On AM5, Memory Context Restore (step 4)
    is most of the boot-time win; Fast Boot trims device enumeration on top.
    Use **Enabled, with *USB Support* = Full Initial — never Ultra Fast.**
+   *Revised 2026-09-25: Ultra Fast is acceptable now that a bad generation
+   falls back by itself — `bootCounting`, `panic=10` and the SP5100 watchdog
+   in `hosts/desk/default.nix`. Setup is then `systemctl reboot
+   --firmware-setup`, Windows `sudo efibootmgr --bootnext <its entry>`, and a
+   CMOS clear plus the saved profile is the way back. Measure it against
+   Enabled with `systemd-analyze` before keeping it; the text below is the
+   original reasoning.*
    Ultra Fast leaves USB off until the OS loads. That kills the keyboard at
    the systemd-boot menu, which is how this machine chooses between NixOS and
    Windows, and it stops the machine booting a USB stick. That rules out the
@@ -2753,7 +2760,14 @@ What to expect:
       mirroring back by 08:30). So the wedge is set **on the way out**, while
       crossing the edge of range, and time in range does not clear it: two
       departures, two wedges. Next: an iOS automation that cycles Bluetooth
-      when the phone joins the home Wi-Fi, and the upstream report. *2026-09-25:
+      when the phone joins the home Wi-Fi. *No upstream report: this is the
+      wedge Tether's BLUETOOTH.md already documents, and a phone-side cycle
+      fixes it — the case Tether asks about is one a cycle does not fix. The
+      kernel's `hci_conn_timeout` refcount WARNING and the "Unable to disable
+      Address Resolution: -16" lines were checked on 2026-09-25 and are not a
+      desk-side cause: the latter come from Tether's own StartDiscovery calls
+      (the log timestamps match), the former from the same connect/drop churn.*
+      *2026-09-25:
       the alert did fire overnight and was waiting in the panel. The
       automation is declined — a manual cycle on seeing the alert is enough —
       so the alert now withdraws itself once notifications flow again*

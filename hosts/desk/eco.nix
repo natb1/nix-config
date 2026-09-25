@@ -16,7 +16,9 @@
 # mW/mA). Not ryzen_smu's own README numbers, which are Zen 3's. The only
 # values this script ever sends are the two sets above, both AMD's own.
 #
-# Limits set this way do not survive a reboot or, possibly, a suspend; the
+# The driver loads at boot, so after the switch that adds it `eco` works only
+# from the next boot. Limits set this way do not survive a reboot or,
+# possibly, a suspend; the
 # chosen mode is kept in /var/lib/eco/mode and re-applied at boot and resume.
 # No file means "never chosen": nothing is sent and the firmware's limits stand.
 
@@ -80,6 +82,12 @@ let
         }
       }
 
+      # Nothing chosen yet: nothing to restore, and no reason to need the
+      # driver (it is absent after a switch until the next boot).
+      if [ "''${1:-}" = restore ] && [ ! -e "$state" ]; then
+        exit 0
+      fi
+
       if [ ! -e "$drv/rsmu_cmd" ]; then
         echo "eco: ryzen_smu is not loaded ($drv missing)" >&2
         exit 1
@@ -92,9 +100,7 @@ let
           echo "$1" >"$state"
           status
           ;;
-        restore)
-          if [ -e "$state" ]; then apply "$(cat "$state")"; fi
-          ;;
+        restore) apply "$(cat "$state")" ;;
         status) status ;;
         *)
           echo "usage: eco [on|off|status]" >&2

@@ -49,6 +49,20 @@
   # (docs/desktop-migration.md): no USB stick needed for it.
   boot.loader.systemd-boot.memtest86.enable = true;
 
+  # A bad generation falls back on its own, without the boot menu — the
+  # precondition for firmware Fast Boot "Ultra Fast", which turns the keyboard
+  # off until Linux loads (docs/desktop-migration.md, BIOS tuning step 7).
+  # - bootCounting: each new entry gets 3 tries; systemd-bless-boot marks it
+  #   good once boot-complete.target is reached, and an entry that runs out of
+  #   tries is skipped for the previous generation.
+  # - panic=10: a kernel panic reboots after 10 s (the default is to hang).
+  # - RuntimeWatchdogSec: systemd pets the chipset's SP5100 TCO watchdog; if
+  #   the system hangs hard enough that it stops, the board resets in 30 s.
+  # Together a panic or a hang costs a try instead of waiting for a person.
+  boot.loader.systemd-boot.bootCounting.enable = true;
+  boot.kernelParams = [ "panic=10" ];
+  systemd.settings.Manager.RuntimeWatchdogSec = "30s";
+
   # Wi-Fi is the only link: the Intel I225-V port is not cabled, and Phase 0
   # confirmed it (enp13s0, NO-CARRIER). The MediaTek RZ616 (MT7922, mt7921e)
   # is wlp14s0 and needs redistributable firmware to come up at all.
