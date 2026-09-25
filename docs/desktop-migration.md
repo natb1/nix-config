@@ -104,7 +104,9 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
 - [x] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
       `sudo systemctl restart NetworkManager`, and check the profile at
       `/etc/NetworkManager/system-connections/` is 600 and root-owned.
-- [ ] **4. Windows still boots bare metal, and is still activated.** *Deferred
+- [ ] **4. Windows still boots bare metal, and is still activated.** *Boots:
+      confirmed 2026-09-25, bare metal and back to NixOS without issue.
+      Activation and the clock check below are still to read.* *Deferred
       2026-09-24 — not yet tried. The systemd-boot menu does list a Windows
       entry, which says the entry exists, not that it boots. Do this before
       Phase 2b: enrolling Secure Boot keys is the step most able to break
@@ -941,8 +943,12 @@ louder curve.
   (`i2c_piix4`) is refused because ACPI claims its ports for Gigabyte's WMI
   SMBus pass-through, which only Windows tools call.
   [`hosts/desk/sensors.nix`](../hosts/desk/sensors.nix) sets
-  `acpi_enforce_resources=lax` with the reasoning; confirm after the next
-  reboot with `sensors | grep -A3 spd5118`.* The "under ~55 °C" check in
+  `acpi_enforce_resources=lax` with the reasoning. **Confirmed after the
+  2026-09-25 reboot:** `spd5118-i2c-2-50` read 46.8 °C. Only one of two,
+  though — the kernel probes 0x50 + slot index, and channel B's DIMM is at
+  0x52 (read-only `i2cdetect -r`); a boot-time unit in `sensors.nix`
+  registers it, and it read 48.2 °C. Both under the 55 °C bar at idle, so
+  the hot run can be watched from Linux too.* The "under ~55 °C" check in
   [BIOS tuning](#bios-tuning) therefore has to be read from **HWiNFO under
   bare-metal Windows**, not from `sensors` as that section assumes.
 
@@ -961,7 +967,9 @@ since the next firmware update resets them too.
       switchable from NixOS instead of firmware setup: `eco on` / `eco off` /
       `eco status` ([`hosts/desk/eco.nix`](../hosts/desk/eco.nix), ryzen_smu
       with Zen 4's RSMU PPT/TDC/EDC commands). Leave firmware Eco Mode off.
-      First use to confirm: `eco status` reads 142/110/170 at stock, `eco on`
+      `eco status` confirmed 142/110/170 at stock after the 2026-09-25
+      reboot (PM table 0x540004: limits at words 2, 8, 61). Still to confirm:
+      `eco on`
       makes it 88/75/150, and an all-core build holds package power near 88 W*
 - [ ] Recorded in `hosts/desk/bios.md`; fan profile saved to USB
 - [x] Phase 0: fans visible in `sensors` — *not with mainline `it87` (ITE `0x8689` unclaimed); yes with the out-of-tree fork plus `ignore_resource_conflict=1`, read-only in practice (2026-09-24). Curves stay in firmware*; [ ] Phase 4: dGPU fan sane under vfio-pci

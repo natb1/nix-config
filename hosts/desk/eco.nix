@@ -69,17 +69,18 @@ let
         esac
       }
 
-      # The PM table's first words, as the SMU reports them. Layout assumed
-      # from Zen 3/4 tables (PPT limit/value, TDC limit/value, …, EDC at 8/9);
-      # the limits reading 142/110/170 at stock is what confirms it.
+      # Limits and live values from the SMU's PM table. The word positions
+      # are for table version 0x540004, read off this 7600X on 2026-09-25
+      # (the stock 142/110/170 sit at words 2, 8 and 61, each followed by
+      # its live value). Another AGESA can move them, so print the version.
       status() {
         echo "mode: $(cat "$state" 2>/dev/null || echo 'firmware default (never set)')"
-        od -An -tf4 -N40 "$drv/pm_table" | tr -s ' \n' ' ' | {
-          read -r ppt_l ppt tdc_l tdc _ _ _ _ edc_l edc
-          printf 'PPT %6.1f W of %6.1f W\n' "$ppt" "$ppt_l"
-          printf 'TDC %6.1f A of %6.1f A\n' "$tdc" "$tdc_l"
-          printf 'EDC %6.1f A of %6.1f A\n' "$edc" "$edc_l"
-        }
+        local -a w
+        mapfile -t w < <(od -An -tf4 -v -w4 "$drv/pm_table" | tr -d ' ')
+        printf 'PPT %6.1f W of %4.0f W\n' "''${w[3]}" "''${w[2]}"
+        printf 'TDC %6.1f A of %4.0f A\n' "''${w[9]}" "''${w[8]}"
+        printf 'EDC %6.1f A of %4.0f A\n' "''${w[62]}" "''${w[61]}"
+        printf 'PM table version 0x%08x\n' "$(od -An -tu4 "$drv/pm_table_version" | tr -d ' ')"
       }
 
       # Nothing chosen yet: nothing to restore, and no reason to need the

@@ -21,10 +21,41 @@
 # it stays off. lax applies to every driver that checks ACPI claims; it87 is
 # the only one of those this board would load, and it is not configured.
 
+#
+# The second DIMM needs a hand. The kernel instantiates SPD sensors itself,
+# but only at 0x50 + slot index for the slots DMI reports (two, so 0x50 and
+# 0x51), and this board wires channel B's DIMM at 0x52 — a read-only
+# `i2cdetect -r` found 0x50 and 0x52 on port 0 and nothing else (2026-09-25).
+# So register 0x52 by hand at boot; spd5118 checks the device type before
+# binding, and it read 48 °C there beside channel A's 47 °C.
+
 { pkgs, ... }:
 
 {
   boot.kernelParams = [ "acpi_enforce_resources=lax" ];
   boot.kernelModules = [ "spd5118" ];
   environment.systemPackages = [ pkgs.lm_sensors ];
+
+  systemd.services.spd5118-channel-b = {
+    description = "DDR5 temperature sensor for the channel B DIMM (SMBus 0x52)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-modules-load.service" ];
+    serviceConfig.Type = "oneshot";
+    # The PIIX4 adapter is found by name, not bus number, which can move; it
+    # appears once udev has loaded i2c_piix4, so wait for it briefly.
+    script = ''
+      for _ in $(seq 30); do
+        for a in /sys/bus/i2c/devices/i2c-*; do
+          if [ "$(cat "$a/name")" = "SMBus PIIX4 adapter port 0 at 0b00" ]; then
+            bus=''${a##*/i2c-}
+            [ -e "$a/$bus-0052" ] || echo "spd5118 0x52" > "$a/new_device"
+            exit 0
+          fi
+        done
+        sleep 1
+      done
+      echo "SMBus PIIX4 port 0 did not appear" >&2
+      exit 1
+    '';
+  };
 }
