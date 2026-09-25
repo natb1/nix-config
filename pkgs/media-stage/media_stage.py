@@ -19,6 +19,12 @@ The table (TSV, header row) needs `old` and `new` columns; `confidence` and
 Two special values of `new`: `beets` (music, imported by beets instead) and
 `skip` (left in staging on purpose).
 
+Several hosts may run this against one library (desk locally, the Mac over
+SMB). Writers take lock files (see Lock) and fail fast, naming the holder;
+moves never replace an existing file; apply re-validates under its locks and
+refuses a file that changed since it was scanned. The table itself is edited
+by hand: one person or agent per batch.
+
 The layout is docs/desktop-migration.md, "Layout on the share". LAYOUT below
 is its machine-checked form; keep the two in step.
 """
@@ -30,6 +36,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -237,7 +244,8 @@ def guess(name):
 def scan_file(path, rel, want_hash):
     st = path.stat()
     rec = {"path": rel, "size": st.st_size, "kind": kind_of(rel), "ext": ext_of(rel),
-           "mtime": datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")}
+           "mtime": datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+           "mtime_epoch": st.st_mtime}  # timezone-free, for comparing across hosts
     k = rec["kind"]
     if k == "pdf":
         info = pdfinfo(path)
@@ -326,11 +334,17 @@ def sidecar_paths(staging):
 
 
 def cmd_scan(a):
+    with batch_lock(a.staging, "scan"):
+        scan(a)
+
+
+def scan(a):
     staging = Path(a.staging)
     manifest, _, _ = sidecar_paths(staging)
     files, ignored = walk(staging)
     kinds, recs = {}, []
-    with open(manifest, "w") as out:
+    tmp = manifest.with_name(f".{manifest.name}.{os.getpid()}")
+    with open(tmp, "w") as out:
         for i, rel in enumerate(files, 1):
             rec = scan_file(staging / rel, rel, a.hash)
             recs.append(rec)
@@ -338,6 +352,7 @@ def cmd_scan(a):
             out.write(json.dumps(rec, ensure_ascii=False) + "\n")
             if sys.stderr.isatty():
                 print(f"\r{i}/{len(files)}", end="", file=sys.stderr)
+    os.replace(tmp, manifest)  # a concurrent check reads the old or the new, never half
     if sys.stderr.isatty():
         print(file=sys.stderr)
     print(f"{len(files)} files -> {manifest}")
@@ -414,10 +429,22 @@ def video_target(rec):
 
 
 def cmd_draft(a):
+    with batch_lock(a.staging, "draft"):
+        draft(a)
+
+
+def draft(a):
     staging = Path(a.staging)
     manifest, table, _ = sidecar_paths(staging)
+    # An existing table holds review work: keep its rows as they are and only
+    # add rows for files it does not list yet (a batch that grew since).
+    keep_header, kept = None, {}
     if table.exists() and not a.force:
-        sys.exit(f"{table} exists (it may hold review work); --force to overwrite")
+        with open(table) as f:
+            keep_header = f.readline().rstrip("\n").split("\t")
+            for line in f:
+                if line.strip():
+                    kept[line.rstrip("\n").split("\t")[keep_header.index("old")]] = line.rstrip("\n")
     recs = [json.loads(l) for l in open(manifest)]
     rows, stems = {}, {}
     # Pass 1: primary files.
@@ -462,12 +489,22 @@ def cmd_draft(a):
             else:
                 if r["kind"] == "subtitle":
                     rows[p][2] = "subtitle with no matching video"
-    with open(table, "w") as out:
-        out.write("old\tnew\tconfidence\tnote\n")
-        for p, (new, conf, note) in rows.items():
-            out.write("\t".join(x.replace("\t", " ").replace("\n", " ") for x in (p, new, conf, note)) + "\n")
-    blank = sum(1 for v in rows.values() if not v[0])
-    print(f"{len(rows)} rows -> {table}; {blank} left blank for review")
+    header = keep_header or ["old", "new", "confidence", "note"]
+    added = {p: v for p, v in rows.items() if p not in kept}
+    tmp = table.with_name(f".{table.name}.{os.getpid()}")
+    with open(tmp, "w") as out:
+        out.write("\t".join(header) + "\n")
+        for line in kept.values():
+            out.write(line + "\n")
+        for p, (new, conf, note) in added.items():
+            cols = {"old": p, "new": new, "confidence": conf, "note": note}
+            out.write("\t".join(cols.get(h, "").replace("\t", " ").replace("\n", " ") for h in header) + "\n")
+    os.replace(tmp, table)  # readers never see half a table
+    blank = sum(1 for v in added.values() if not v[0])
+    if kept:
+        print(f"kept {len(kept)} rows, added {len(added)} -> {table}; {blank} new rows left blank for review")
+    else:
+        print(f"{len(added)} rows -> {table}; {blank} left blank for review")
 
 
 # --------------------------------------------------------------------------
@@ -499,6 +536,122 @@ def default_library():
     sys.exit("no library root: pass --library or set MEDIA_LIBRARY")
 
 
+# --------------------------------------------------------------------------
+# Concurrency. desk and the Mac (over SMB) may both run this against one
+# library. Two locks, both plain files created with O_EXCL — atomic on a local
+# disk and over SMB alike (the server does the create), unlike fcntl locks,
+# which macOS's SMB client does not reliably carry:
+#   staging/<batch>.lock   one writer per batch: scan, draft, apply
+#   <library>/.media-stage.lock   one writer into the library: apply, tag, lint --fix
+# Moves under the library lock also refuse to replace anything, so a writer
+# that skipped the lock (Finder, a hand `mv`) still cannot be overwritten.
+
+class Lock:
+    def __init__(self, path, what):
+        self.path, self.what = Path(path), what
+
+    def __enter__(self):
+        for attempt in (1, 2):
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                break
+            except FileExistsError:
+                holder = self._holder()
+                if attempt == 1 and self._stale(holder):
+                    self.path.unlink(missing_ok=True)
+                    continue
+                sys.exit(f"locked: {self.path}\n  held by: {holder or '?'}\n"
+                         "  wait for it, or delete the file if that process is gone")
+        with os.fdopen(fd, "w") as f:
+            f.write(f"{socket.gethostname()} {os.getpid()} {self.what} "
+                    f"{datetime.datetime.now().isoformat(timespec='seconds')}\n")
+        return self
+
+    def __exit__(self, *exc):
+        self.path.unlink(missing_ok=True)
+
+    def _holder(self):
+        try:
+            return self.path.read_text().strip()
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _stale(holder):
+        """Only provable here: a lock from this host whose process is gone."""
+        parts = holder.split()
+        if len(parts) < 2 or parts[0] != socket.gethostname() or not parts[1].isdigit():
+            return False
+        try:
+            os.kill(int(parts[1]), 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        return False
+
+
+def batch_lock(staging, what):
+    return Lock(str(Path(staging)).rstrip("/") + ".lock", what)
+
+
+def library_lock(library, what):
+    return Lock(Path(library) / ".media-stage.lock", what)
+
+
+def move_noclobber(src, dst):
+    """Move, failing with FileExistsError rather than replacing `dst`.
+    link() is the atomic no-replace primitive; where there are no hard links
+    (the Mac's SMB mount, a second filesystem) fall back to check-then-rename,
+    which the library lock makes safe against every other media-stage."""
+    try:
+        os.link(src, dst)
+    except FileExistsError:
+        raise
+    except OSError:
+        if os.path.lexists(dst):
+            raise FileExistsError(dst)
+        try:
+            os.rename(src, dst)
+        except OSError:
+            shutil.move(src, dst)
+        return
+    os.unlink(src)
+
+
+class CaseIndex:
+    """Finds a target that differs from an existing path only by case. The Mac
+    sees the share case-insensitively and desk's disk does not, so
+    `The Wire (2002)` and `The wire (2002)` would be two folders on one host
+    and one on the other."""
+
+    def __init__(self, library):
+        self.library, self.cache = Path(library), {}
+
+    def clash(self, rel):
+        cur = self.library
+        for part in Path(rel).parts:
+            if cur not in self.cache:
+                try:
+                    self.cache[cur] = {n.casefold(): n for n in os.listdir(cur)}
+                except (FileNotFoundError, NotADirectoryError):
+                    return None
+            hit = self.cache[cur].get(part.casefold())
+            if hit is None:
+                return None
+            if hit != part:
+                return str((cur / hit).relative_to(self.library))
+            cur = cur / hit
+        return None
+
+
+def load_manifest(staging):
+    manifest, _, _ = sidecar_paths(staging)
+    if not manifest.exists():
+        return None
+    return {r["path"]: r for r in map(json.loads, open(manifest))}
+
+
 def validate(staging, library):
     """(errors, rows to move, counts). Errors are strings; empty means go."""
     _, table, _ = sidecar_paths(staging)
@@ -507,7 +660,10 @@ def validate(staging, library):
     rows = read_table(table)
     files, _ = walk(staging)
     present = set(files)
+    manifest = load_manifest(staging) or {}
+    cases = CaseIndex(library)
     errors, moves, seen_new, counts = [], [], {}, {"move": 0, "beets": 0, "skip": 0, "done": 0}
+    seen_fold = {}
     listed = set()
     for n, old, new in rows:
         where = f"line {n} ({old})"
@@ -531,7 +687,10 @@ def validate(staging, library):
             errors.append(f"{where}: {new}: {why}")
         if new in seen_new:
             errors.append(f"{where}: same target as line {seen_new[new]}: {new}")
+        elif new.casefold() in seen_fold:
+            errors.append(f"{where}: differs only in case from line {seen_fold[new.casefold()]}: {new}")
         seen_new[new] = n
+        seen_fold.setdefault(new.casefold(), n)
         target = library / new
         if old not in present:
             if target.exists():
@@ -543,6 +702,18 @@ def validate(staging, library):
             same = target.stat().st_size == (staging / old).stat().st_size and sha256(target) == sha256(staging / old)
             errors.append(f"{where}: target exists{' with identical content — use `skip`' if same else ''}: {new}")
             continue
+        clash = cases.clash(new)
+        if clash:
+            errors.append(f"{where}: differs only in case from existing {clash}")
+        # A file that changed since the scan was still being copied (Finder
+        # writes under the final name) or has been edited: its manifest, and
+        # so the review, are about a different file.
+        rec = manifest.get(old)
+        st = (staging / old).stat()
+        if rec is None:
+            errors.append(f"{where}: not in the manifest — scan again")
+        elif rec["size"] != st.st_size or abs(rec.get("mtime_epoch", st.st_mtime) - st.st_mtime) > 2:
+            errors.append(f"{where}: changed since scan (still copying?) — scan again")
         moves.append((old, new))
         counts["move"] += 1
     for f in sorted(present - listed):
@@ -562,6 +733,15 @@ def cmd_check(a):
 
 def cmd_apply(a):
     staging, library = Path(a.staging), Path(a.library) if a.library else default_library()
+    if a.dry_run:
+        return apply_locked(a, staging, library)
+    # Batch first, then library: every caller takes them in this order.
+    with batch_lock(staging, f"apply {staging.name}"), library_lock(library, f"apply {staging.name}"):
+        apply_locked(a, staging, library)
+
+
+def apply_locked(a, staging, library):
+    # Validated under the locks: what check saw may have changed since.
     errors, moves, counts = validate(staging, library)
     if errors:
         for e in errors:
@@ -574,12 +754,10 @@ def cmd_apply(a):
             print(f"would move {old} -> {new}")
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if dst.exists():
-            sys.exit(f"appeared since check: {new}")
         try:
-            os.rename(src, dst)
-        except OSError:
-            shutil.move(src, dst)  # a different filesystem: copy, then remove
+            move_noclobber(src, dst)
+        except FileExistsError:
+            sys.exit(f"appeared since check, not replaced: {new}\n  (earlier rows are moved; rerun apply after resolving it)")
         changes = [] if a.no_tag else tag_file(library, new)
         with open(log, "a") as f:
             f.write(json.dumps({"old": old, "new": new, "metadata": changes,
@@ -670,7 +848,7 @@ def tag_file(library, rel, dry_run=False):
         if e in ("mkv", "webm"):
             r = run(["mkvpropedit", "-q", str(path), "--edit", "info", "--set", f"title={todo['title']}"])
         elif e in ("mp4", "m4v", "mov"):
-            tmp = path.with_name(f".tagging.{path.name}")
+            tmp = path.with_name(f".tagging.{socket.gethostname()}.{os.getpid()}.{path.name}")
             r = run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-map", "0", "-c", "copy",
                      "-map_metadata", "0", "-metadata", f"title={todo['title']}", str(tmp)])
             if r.returncode == 0:
@@ -686,6 +864,13 @@ def tag_file(library, rel, dry_run=False):
 
 def cmd_tag(a):
     library = Path(a.library) if a.library else default_library()
+    if a.dry_run:
+        return tag_paths(a, library)
+    with library_lock(library, "tag"):
+        tag_paths(a, library)
+
+
+def tag_paths(a, library):
     for p in a.paths:
         rel = os.path.relpath(Path(p).resolve(), library.resolve())
         changes = tag_file(library, rel, a.dry_run)
@@ -700,6 +885,14 @@ AUDIO_REQUIRED = ("artist", "album", "title", "track")
 
 def cmd_lint(a):
     library = Path(a.library) if a.library else default_library()
+    if not a.fix:
+        sys.exit(lint(a, library))
+    with library_lock(library, "lint --fix"):
+        code = lint(a, library)
+    sys.exit(code)
+
+
+def lint(a, library):
     roots = [Path(d) for d in a.dirs] or [library / d for d in LIBRARY_DIRS]
     problems = 0
     for root in roots:
@@ -707,6 +900,14 @@ def cmd_lint(a):
             continue
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            folded = {}
+            for n in dirnames + filenames:
+                folded.setdefault(n.casefold(), []).append(n)
+            for group in folded.values():
+                if len(group) > 1:
+                    problems += 1
+                    print(f"CASE   {os.path.relpath(dirpath, library)}: {' / '.join(group)} "
+                          "(one entry on the Mac, several on desk)")
             for f in sorted(filenames):
                 if f in IGNORED_NAMES or f.startswith("."):
                     continue
@@ -740,7 +941,7 @@ def cmd_lint(a):
                             problems += 1
                             print(f"META   {rel}: " + ", ".join(f"{x} is {have.get(x)!r}" for x in bad))
     print(f"{problems} problems")
-    sys.exit(1 if problems else 0)
+    return 1 if problems else 0
 
 
 # --------------------------------------------------------------------------
@@ -759,7 +960,8 @@ def main(argv=None):
     s.set_defaults(fn=cmd_scan)
     s = sub.add_parser("draft", help="propose library paths into STAGING.tsv")
     s.add_argument("staging")
-    s.add_argument("--force", action="store_true", help="overwrite an existing table")
+    s.add_argument("--force", action="store_true",
+                   help="rewrite the table from scratch (default: keep its rows, add new files)")
     s.set_defaults(fn=cmd_draft)
     s = sub.add_parser("check", help="validate STAGING.tsv")
     s.add_argument("staging")

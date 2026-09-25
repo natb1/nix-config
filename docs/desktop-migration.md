@@ -3551,6 +3551,22 @@ folders hold more than films: anything that is not a movie, an episode or a
 YouTube video has no place in the layout yet — leave it `skip` and decide
 where it goes before inventing a folder for it.
 
+**Two hosts at once** (desk locally, the Mac over SMB) are safe by
+construction, not by care. Writers take lock files created atomically — they
+work over SMB, where `fcntl` locks from macOS do not reliably reach desk — and
+fail fast naming the holder: `staging/<batch>.lock` for scan, draft and
+apply, `/srv/media/.media-stage.lock` for anything that writes into the
+library. A lock left by a dead process on the same host is cleared by itself;
+one from the other host is removed by hand, after checking. Under the lock,
+`apply` validates again and moves with `link()` + `unlink()`, which cannot
+replace an existing file; a file that changed size or time since its scan
+(Finder still copying it) is refused; a target differing only in case from
+something already there is refused, because the Mac would see the two as
+one. `draft` on a grown batch keeps the reviewed rows and adds the new
+files. What it cannot guard: two people editing one `.tsv` at the same time —
+one reviewer per batch. Tested with two concurrent applies racing for one
+target: one moves, the other stops on the lock, nothing is overwritten.
+
 #### Checklist
 
 - [x] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled —

@@ -246,5 +246,88 @@ class Pipeline(unittest.TestCase):
             self.assertIn("LAYOUT movies/loose.mp4", out)
 
 
+class Concurrency(unittest.TestCase):
+    """Two hosts, one library: the guards in validate, apply and the locks."""
+
+    def batch(self, d):
+        lib = Path(d)
+        st = lib / "staging" / "b"
+        st.mkdir(parents=True)
+        make_video(st / "Heat.1995.mkv")
+        self.assertEqual(run_cli("scan", str(st), "--library", str(lib))[0], 0)
+        self.assertEqual(run_cli("draft", str(st), "--library", str(lib))[0], 0)
+        return lib, st
+
+    def test_library_lock_from_another_host_blocks(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = self.batch(d)
+            (lib / ".media-stage.lock").write_text("mba 123 apply other 2026-09-25T20:00:00\n")
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertNotEqual(code, 0)
+            self.assertTrue((st / "Heat.1995.mkv").exists())
+            self.assertTrue((lib / ".media-stage.lock").exists())  # not ours to remove
+
+    def test_stale_lock_on_this_host_is_cleared(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = self.batch(d)
+            p = subprocess.Popen(["true"])
+            p.wait()  # a pid that is certainly gone
+            (lib / ".media-stage.lock").write_text(f"{ms.socket.gethostname()} {p.pid} apply x\n")
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            self.assertFalse((lib / ".media-stage.lock").exists())
+            self.assertFalse(Path(str(st) + ".lock").exists())
+
+    def test_file_changed_since_scan_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = self.batch(d)
+            with open(st / "Heat.1995.mkv", "ab") as f:
+                f.write(b"\0" * 10)  # still being copied
+            code, out = run_cli("check", str(st), "--library", str(lib))
+            self.assertEqual(code, 1)
+            self.assertIn("changed since scan", out)
+
+    def test_case_clash_with_library_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = self.batch(d)
+            (lib / "movies" / "HEAT (1995)").mkdir(parents=True)
+            code, out = run_cli("check", str(st), "--library", str(lib))
+            self.assertEqual(code, 1)
+            self.assertIn("only in case", out)
+
+    def test_lint_reports_case_siblings(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            (lib / "rpg" / "Cairn").mkdir(parents=True)
+            (lib / "rpg" / "cairn").mkdir(parents=True)
+            code, out = run_cli("lint", "--library", str(lib))
+            self.assertEqual(code, 1)
+            self.assertIn("CASE", out)
+
+    def test_move_never_replaces(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d, "a"), Path(d, "b")
+            a.write_text("new")
+            b.write_text("existing")
+            with self.assertRaises(FileExistsError):
+                ms.move_noclobber(a, b)
+            self.assertEqual((a.read_text(), b.read_text()), ("new", "existing"))
+
+    def test_draft_keeps_review_and_adds_new_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = self.batch(d)
+            table = Path(str(st) + ".tsv")
+            reviewed = table.read_text().replace("movies/Heat (1995)/Heat (1995).mkv", "movies/Heat (1995)/Heat (1995) - Reviewed.mkv")
+            table.write_text(reviewed)
+            make_video(st / "Alien.1979.mkv")
+            run_cli("scan", str(st), "--library", str(lib))
+            code, out = run_cli("draft", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            self.assertIn("kept 1 rows, added 1", out)
+            text = table.read_text()
+            self.assertIn("Heat (1995) - Reviewed.mkv", text)
+            self.assertIn("movies/Alien (1979)/Alien (1979).mkv", text)
+
+
 if __name__ == "__main__":
     unittest.main()
