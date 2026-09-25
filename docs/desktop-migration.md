@@ -3604,11 +3604,17 @@ switch, so each snapshot is complete up to the date recorded above.
       up under the Shared Library on the *other* phone. Record the switch date
 - [ ] Record each personal library's photo and video counts, as of the switch
 - [x] `hosts/desk/icloud.nix` imported — *2026-09-25; `desk` builds*
-- [ ] Env files for `shared`, `n8` and `<FILL_ME_wife>`; `icloudpd-login shared`
-      (which also logs in for `n8`) and paste the printed `SharedSync-…` into
-      `shared.env`
+- [x] Env files for `shared` and `n8`; `icloudpd-login n8` (the same session
+      serves `shared`) and the printed `SharedSync-…` into `shared.env` —
+      *2026-09-25. The first login hit a missing `~/.local/state/icloudpd`
+      (fixed in `icloudpd-login`). Afterwards `--list-libraries` ran with no
+      terminal, from the keyring and session alone: `PrimarySync` and one
+      `SharedSync-F99DD9E5-…`. `<FILL_ME_wife>.env` waits for the backfill*
 - [ ] `systemctl --user start icloudpd@shared`, and confirm the test photos
-      from both phones landed in `/srv/media/icloud/shared/`
+      from both phones landed in `/srv/media/icloud/shared/` — *2026-09-25:
+      the first run succeeded and downloaded one Live Photo (`IMG_4482.HEIC`
+      plus `_HEVC.MOV`), owned by `n8:users` with mode 0644. A second run
+      downloaded nothing. Still needed: a test shot from the other phone*
 - [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the pop-up; restore it
 - [ ] [BIOS tuning](#bios-tuning) validated
 - [ ] Backfill `icloudpd@n8`, then `icloudpd@<FILL_ME_wife>`. Counts match;
