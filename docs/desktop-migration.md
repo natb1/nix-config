@@ -564,7 +564,7 @@ the text was wrong about how the machine behaves.
 | Board revision on the PCB itself | [Firmware update](#firmware-update) | The box says 1.0. `dmidecode` cannot settle it — the board's SMBIOS *Version* reads `x.x` (2026-09-24). The silkscreen (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before the *next* flash. F43c is already on and boots, so this is retrospective now |
 | Linux sees neither the fans nor the DIMM temperatures | [Fan control](#fan-control), [BIOS tuning](#bios-tuning) | Measured 2026-09-24. The board's ITE Super I/O reports **chip ID `0x8689`**, which mainline `it87` does not claim (`modprobe it87` → `No such device`), so no header RPM or PWM shows up in `sensors`. `spd5118` finds no DIMM sensors either. Two consequences: fan control stays firmware-only (already the plan, now forced), and BIOS tuning's "DIMMs under ~55 °C" has to be read from HWiNFO under bare-metal Windows. An OS-side curve would need the out-of-tree `it87` fork |
 | Total size of the media, across all five sources plus iCloud | Media storage, [Step 3](#step-3--bring-the-media-in), [Step 4](#step-4--iphone-photos-from-icloud) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr + both iCloud Photos libraries (and the shared library's growth) must fit in ~730 GB after de-duplication — **together with the host-side Steam library**, which shares that volume. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
-| GCS bucket: storage class and egress | [Step 3](#step-3--bring-the-media-in) | Coldline/Archive add per-GB retrieval fees on top of internet egress. Check the class before pulling |
+| GCS bucket: which videos have no internet source left | [Step 3](#step-3--bring-the-media-in) | The bucket is listed, not pulled, and the videos are re-downloaded from the internet (*decided 2026-09-25*: cheaper than GCS egress). Anything that has gone from the web is the exception, pulled from GCS by name — check the storage class before that, since Coldline/Archive add per-GB retrieval fees on top of egress |
 | Flickr export request | [Step 3](#step-3--bring-the-media-in) | Asynchronous — Flickr prepares the archive over hours to days. Request it early so it is ready by ingest; download links expire |
 | Google Takeout export request | [Step 3](#step-3--bring-the-media-in) | Same shape as Flickr, worse deadline: Takeout is prepared over hours to days and the **download links expire after 7 days**. Request it with *delivery to Google Drive* so it lands somewhere rclone can pull from unattended, instead of a browser download that must finish inside the window |
 | Google Photos library size and item count | [Step 3](#step-3--bring-the-media-in) | Read both off [photos.google.com](https://photos.google.com) before requesting the export — the count is the only verification Takeout admits, and it has to be recorded *before* the library changes under it |
@@ -3010,7 +3010,8 @@ comes last of all: once the backup is trusted, iCloud is trimmed to recent photo
 
 **Where the media is today** (2026-09-21): spread across five places —
 **Google Drive**, **Google Photos**, **the MacBook's internal storage**, a **GCS
-bucket** it has to be exported from, and **Flickr**. Drive and Photos are one
+bucket** of videos (listed, then re-downloaded from the internet rather than
+pulled out of GCS), and **Flickr**. Drive and Photos are one
 account and one Google One quota but **two separate stores** — Google severed the
 Drive↔Photos folder sync in July 2019, so nothing in Photos is reachable through
 the Drive remote and it needs its own ingest path. None of them is this machine,
@@ -3340,17 +3341,21 @@ A backup is a claim until it is restored. All four, before trusting it:
 
 ### Step 3 — bring the media in
 
-**`rclone` for Drive and GCS**, because it speaks both and it is already in the
-plan for the Drive mount (Phase 3). The MacBook is `rsync`. **Two sources are
-exceptions, for opposite reasons.** Flickr has no rclone backend at all, so it
-comes in through Flickr's own account export. Google Photos *has* one — and it
-is the wrong tool anyway, because the API it drives is lossy: see below.
+**`rclone` for Drive**, because it is already in the plan for the Drive mount
+(Phase 3). The MacBook is `rsync`. **Two sources are exceptions, for opposite
+reasons.** Flickr has no rclone backend at all, so it comes in through Flickr's
+own account export. Google Photos *has* one — and it is the wrong tool anyway,
+because the API it drives is lossy: see below. **GCS is not copied at all**
+(*decided 2026-09-25*): its videos came from the internet, and re-downloading
+them from there is cheaper than GCS egress, so only the bucket's listing comes
+out of GCS.
 
 | Source | How | Notes |
 | --- | --- | --- |
 | Google Drive | `rclone copy gdrive:<path> /srv/media/<dest> --progress` | Use the Drive remote configured for Phase 3's mount, not the mount itself — `copy` against the API is faster and resumable. Google-native Docs/Sheets are not media; exclude them |
 | Google Photos | **Google Takeout, not `rclone`** ([takeout.google.com](https://takeout.google.com)) → deselect everything, select *Google Photos*, delivery **to Google Drive**, `.tgz`, 50 GB parts. Then pull the parts with the Drive remote already configured above and unpack into `/srv/media/google-photos/` | Do **not** use `rclone`'s `google photos` backend for the archival copy. It can only see the library through the Photos Library API, which **strips GPS EXIF from every download** and re-encodes some originals — the loss is silent and it is not recoverable later. Takeout is the only route that yields the true originals. What it costs: each photo arrives with a **sidecar `.json`** holding the timestamp, GPS, description and album membership, and the metadata has to be merged back into the files (`exiftool`, or `google-photos-takeout-helper`) before the sidecars are worth less than the originals |
-| GCS bucket | `rclone copy gcs:<bucket>/<path> /srv/media/<dest>` | Needs a `gcs` remote (service-account JSON or `gcloud` user creds — hand-provisioned, not in git). Internet egress is billed per GB, plus retrieval fees if the bucket is Coldline/Archive — check the class first. A one-off pull of a few hundred GB is tens of dollars, not a reason to hesitate |
+| Google Drive shared drives `print` and `audio` | `rclone copy gdrive,team_drive=<id>: /srv/media/<name>/ --progress`, the ID from `rclone backend drives gdrive:` | Shared drives, not folders — invisible to plain `gdrive:` and to `--drive-shared-with-me`. *2026-09-25:* `print` 182 files, 2.72 GiB; `audio` 800 files, 6.16 GiB. **Not gated on Step 2 or BIOS tuning:** they are copies, Drive keeps the originals until the sources are retired, and `rclone check` catches a corrupt copy |
+| GCS bucket | **List, then re-download from the internet — not `rclone copy`.** `gcloud auth login`, then `gcloud storage ls --long --recursive 'gs://<bucket>/**' > /srv/media/gcs/listing.txt`. Work down the listing, fetching each video from where it came from (`yt-dlp <url>` for video sites) into `/srv/media/gcs/` | Listing is metadata only: a handful of Class A operations, no egress. The listing is the manifest — keep it, it is the only record of what the bucket held once it is retired. A video with no source left online is pulled by name (`gcloud storage cp gs://<bucket>/<object> /srv/media/gcs/`), and only those pay egress |
 | MacBook | From the Mac: `rsync -avh --progress ~/<path>/ n8@desk:/srv/media/<dest>/` over Tailscale | Or drag into the SMB share from Finder. `rsync` is resumable and prints what it skipped |
 | Flickr | Account settings → *Your Flickr data* → request the export; download the zip parts when Flickr emails; unzip into `/srv/media/flickr/` | Contains the **originals** plus separate JSON for titles, descriptions, albums and tags — keep the JSON alongside, it is the only copy of that metadata outside Flickr. Fallback if the export is unusable: `gallery-dl` against the account with an API key |
 
@@ -3358,7 +3363,10 @@ Then, per source, **verify rather than assume**:
 
 ```sh
 rclone check gdrive:<path>        /srv/media/<dest> --one-way   # size + hash
-rclone check gcs:<bucket>/<path>  /srv/media/<dest> --one-way
+rclone check gdrive,team_drive=<id>: /srv/media/<name> --one-way   # print, audio
+# GCS: a re-downloaded video will not hash-match the bucket's copy (different
+# encode, container or muxing). Count instead — every object in listing.txt is
+# either on disk, pulled by name, or marked as deliberately dropped.
 # Mac side: rerun the same rsync with --dry-run --checksum; it should list nothing.
 # Google Photos: no hashes, and `rclone check` against the Photos remote is
 # worse than useless — it compares Takeout's originals to the API's degraded
@@ -3431,7 +3439,9 @@ also holding the other four sources un-de-duplicated.
       from `iphone-13-mini` at `100.70.251.123` on SMB3_11*
 - **Step 2 postponed 2026-09-24**, by choice. That also holds Step 3: nothing
       irreplaceable lands on `/srv/media` without a proven restore. The
-      share itself is in use for anything that has another copy
+      share itself is in use for anything that has another copy — which
+      includes every source still in place: downloading is not the risk,
+      deleting the source is
 - [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
       ed25519 key for it
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
@@ -3448,7 +3458,9 @@ also holding the other four sources un-de-duplicated.
       its library size — Takeout's album folders are duplicates of media that
       also lives under `Photos from <year>/` — *so far (2026-09-24): Google
       Drive 22.1 GiB in 2,884 files (`rclone size`, Google Docs excluded);
-      Google Photos 8.2 GB archived. GCS, the MacBook and Flickr to go*
+      Google Photos 8.2 GB archived.* *2026-09-25: shared drives `print`
+      2.72 GiB (182 files) and `audio` 6.16 GiB (800 files). GCS (sum the
+      listing), the MacBook and Flickr to go*
 - [ ] Record the Google Photos item count **before** requesting Takeout — it is
       the only verification the export admits, and it is unreadable afterwards
       if the library has moved on
@@ -3470,9 +3482,16 @@ also holding the other four sources un-de-duplicated.
       `Photos from 2012` … `2022` (no `-edited`, no `.json`) plus 124 under
       `Archive`. The library ends in 2022, and photos.google.com agrees —
       confirmed the same evening, so the archive is the whole library*
+- [ ] Pull the `print` and `audio` shared drives into `/srv/media/print/` and
+      `/srv/media/audio/`; `rclone check --one-way` each. Not gated: the
+      Drive originals stay until the restore proof
+- [ ] `gcloud auth login`; save the GCS listing to `/srv/media/gcs/listing.txt`
+      and check the storage class (`gcloud storage buckets describe`)
+- [ ] Re-download the listed videos from the internet; pull by name only the
+      ones with no source left; count against the listing
 - [ ] [BIOS tuning](#bios-tuning) validated — memory proven stable before
       irreplaceable data passes through it
-- [ ] Ingest from Drive, Photos, GCS, the MacBook and Flickr into separate
+- [ ] Ingest from Drive, Photos, the MacBook and Flickr into separate
       directories; `rclone check` / `rsync --dry-run --checksum` / item counts
       each; merge the Takeout sidecars back into the media; then de-duplicate
 - [ ] First full backup, restore proof, *then* decide the fate of the sources
