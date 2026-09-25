@@ -4022,6 +4022,9 @@ defence is Apple's, not ours. The quota is freed once they leave it.
 - [ ] [Step 2](#step-2--backup-for-when-the-bulk-ssd-dies) complete, and its
       four restore proofs passed, one of them restoring a file from
       `/srv/media/icloud/`
+- [ ] The [retirement gate](#before-any-original-is-retired) closed: trimming
+      iCloud retires originals, so the restic password must already be off
+      `desk` and the recovery plan written
 - [ ] [BIOS tuning](#bios-tuning) validated. A bit flip in the downloaded
       copy becomes permanent the day iCloud's copy goes
 - [ ] ntfy (`<FILL_ME_notify_unit>`) reaches a phone. Once deletion is on,
