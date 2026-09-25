@@ -126,4 +126,27 @@ in
     };
   };
   powerManagement.resumeCommands = "${eco}/bin/eco restore";
+
+  # For the power menu (power-menu.nix), which has no terminal for a sudo
+  # prompt: `systemctl start eco@on.service` / `eco@off.service`, which this
+  # user may start without a password — the same arrangement as
+  # reboot-to-windows. Nothing else in eco is reachable that way.
+  systemd.services."eco@" = {
+    description = "Eco Mode %i";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${eco}/bin/eco %i";
+    };
+  };
+  security.polkit.extraConfig = ''
+    polkit.addRule(function (action, subject) {
+      if (action.id == "org.freedesktop.systemd1.manage-units" &&
+          (action.lookup("unit") == "eco@on.service" ||
+           action.lookup("unit") == "eco@off.service") &&
+          action.lookup("verb") == "start" &&
+          subject.user == "n8" && subject.local && subject.active) {
+        return polkit.Result.YES;
+      }
+    });
+  '';
 }

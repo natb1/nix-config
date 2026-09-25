@@ -86,6 +86,36 @@
     })
   ];
 
+  # Tailscale in waybar's tray: its own `tailscale systray` (1.80+), started
+  # with the session. waybar is started by niri, not by a unit this can order
+  # after, and an icon registered before the tray exists is simply lost — so
+  # wait for the StatusNotifierWatcher waybar provides. operator=n8 lets the
+  # tray's own switches (connect, exit node) work without sudo; without it the
+  # tray could only show status. Desk-only: modules/nixos/tailscale.nix is
+  # shared with wsl, which has no tray.
+  services.tailscale.extraSetFlags = [ "--operator=n8" ];
+  systemd.user.services.tailscale-systray = {
+    description = "Tailscale tray icon";
+    wantedBy = [ "graphical-session.target" ];
+    after = [ "graphical-session.target" ];
+    partOf = [ "graphical-session.target" ];
+    serviceConfig = {
+      ExecStartPre = [
+        (pkgs.writeShellScript "wait-for-tray" ''
+          for _ in $(${pkgs.coreutils}/bin/seq 60); do
+            ${pkgs.systemd}/bin/busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1 && exit 0
+            ${pkgs.coreutils}/bin/sleep 1
+          done
+          echo "no StatusNotifierWatcher (waybar tray) after 60 s" >&2
+          exit 1
+        '')
+      ];
+      ExecStart = "${pkgs.tailscale}/bin/tailscale systray";
+      Restart = "on-failure";
+      RestartSec = 5;
+    };
+  };
+
   # google-chrome is unfree, and it is allowed by name in flake.nix's
   # unfreePredicate — not here. nixpkgs.config is defined once, by the flake's
   # `home` helper, so a second definition in this file conflicts with that one

@@ -1,6 +1,6 @@
 # The power menu: Mod+Shift+Escape in niri (hosts/desk/home/niri.kdl) opens
 # `power-menu`, a fuzzel list of suspend / reboot / reboot-into-something /
-# power off / log out.
+# power off / log out, plus the Eco Mode switch that applies (eco.nix).
 #
 # Everything but Windows is plain logind, which lets the active local session
 # do it without a password: `systemctl reboot --firmware-setup`,
@@ -46,7 +46,16 @@ let
       pkgs.niri
     ];
     text = ''
+      # Only the Eco Mode switch that applies (hosts/desk/eco.nix keeps the
+      # chosen mode in a world-readable file; none means stock).
+      if [ "$(cat /var/lib/eco/mode 2>/dev/null)" = on ]; then
+        eco_item="Eco Mode → off (stock 142 W)"
+      else
+        eco_item="Eco Mode → on (88 W)"
+      fi
+
       choice=$(printf '%s\n' \
+        "$eco_item" \
         "Suspend" \
         "Reboot" \
         "Reboot → boot menu" \
@@ -55,15 +64,24 @@ let
         "Reboot → MemTest86+" \
         "Power off" \
         "Log out" |
-        fuzzel --dmenu --prompt "power › " --lines 8) || exit 0
+        fuzzel --dmenu --prompt "power › " --lines 9) || exit 0
 
       run() {
         if ! "$@"; then
           notify-send -u critical -a "Power menu" "$choice failed" "$* — see journalctl -b"
+          return 1
         fi
       }
 
       case "$choice" in
+        "Eco Mode → on (88 W)")
+          run systemctl start eco@on.service &&
+            notify-send -a "Power menu" "Eco Mode on" "88 W / 75 A / 150 A"
+          ;;
+        "Eco Mode → off (stock 142 W)")
+          run systemctl start eco@off.service &&
+            notify-send -a "Power menu" "Eco Mode off" "Stock 142 W / 110 A / 170 A"
+          ;;
         "Suspend") run systemctl suspend ;;
         "Reboot") run systemctl reboot ;;
         "Reboot → boot menu") run systemctl reboot --boot-loader-menu=30 ;;

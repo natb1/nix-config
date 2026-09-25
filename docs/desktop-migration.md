@@ -104,9 +104,9 @@ so Wi-Fi, this repo, and the Claude and gh sessions should already be in place.
 - [x] **3. Wi-Fi came up on its own** — no `nmtui`. If not:
       `sudo systemctl restart NetworkManager`, and check the profile at
       `/etc/NetworkManager/system-connections/` is 600 and root-owned.
-- [ ] **4. Windows still boots bare metal, and is still activated.** *Boots:
-      confirmed 2026-09-25, bare metal and back to NixOS without issue.
-      Activation and the clock check below are still to read.* *Deferred
+- [x] **4. Windows still boots bare metal, and is still activated.** *Boots:
+      confirmed 2026-09-25, bare metal and back to NixOS without issue, and
+      Activation reads fine. The clock comparison below was not reported.* *Deferred
       2026-09-24 — not yet tried. The systemd-boot menu does list a Windows
       entry, which says the entry exists, not that it boots. Do this before
       Phase 2b: enrolling Secure Boot keys is the step most able to break
@@ -968,8 +968,14 @@ since the next firmware update resets them too.
       `eco status` ([`hosts/desk/eco.nix`](../hosts/desk/eco.nix), ryzen_smu
       with Zen 4's RSMU PPT/TDC/EDC commands). Leave firmware Eco Mode off.
       `eco status` confirmed 142/110/170 at stock after the 2026-09-25
-      reboot (PM table 0x540004: limits at words 2, 8, 61). Still to confirm:
-      `eco on`
+      reboot (PM table 0x540004: limits at words 2, 8, 61). **Measured the
+      same day** under `stress-ng --cpu 12` (matrixprod): eco on held PPT at
+      87.6/88 W (RAPL 91 W), Tctl 90 °C, 4958 MHz; stock drew only 94.4 W
+      (RAPL 96 W) at Tctl 95.4 °C, 4991 MHz — at stock this CPU hits its
+      95 °C ceiling long before 142 W, so it is cooling-limited and Eco Mode
+      buys ~6 W and ~5 °C for 0.7 % clock. The cooler and the fan curves are
+      the lever here, not Eco. Also in the power menu (`eco@on`/`eco@off`
+      units, polkit). Originally: `eco on`
       makes it 88/75/150, and an all-core build holds package power near 88 W*
 - [ ] Recorded in `hosts/desk/bios.md`; fan profile saved to USB
 - [x] Phase 0: fans visible in `sensors` — *not with mainline `it87` (ITE `0x8689` unclaimed); yes with the out-of-tree fork plus `ignore_resource_conflict=1`, read-only in practice (2026-09-24). Curves stay in firmware*; [ ] Phase 4: dGPU fan sane under vfio-pci
@@ -2708,7 +2714,11 @@ What to expect:
       and a saved password survives a reboot after one keyring prompt —
       *2026-09-24, flag confirmed at the console*
 - [x] fuzzel launches (`Mod+D`), and `Mod+Return` gives WezTerm — *2026-09-24*
-- [ ] waybar tray shows Steam, Tailscale and blueman
+- [ ] waybar tray shows Steam, Tailscale and blueman — *2026-09-25 reboot:
+      blueman yes, the other two no, because nothing started them.
+      Tailscale's own `tailscale systray` is now a user unit
+      (`hosts/desk/desktop.nix`, operator=n8); Steam shows only while it
+      runs. One gnome-keyring prompt at login, as intended*
 - [x] `notify-send test` pops up in swaync and lands in its history —
       *2026-09-24, with two fixes on the way. swaync was started twice, by
       niri's `spawn-at-startup` and by the unit `services.swaync.enable`
