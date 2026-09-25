@@ -173,6 +173,9 @@
       # scripts/sync-wezterm.sh can resolve the vendor hash against it.
       packages = forAllSystems ({ pkgs, ... }: {
         wezterm = pkgs.callPackage ./modules/home/wezterm-package.nix { };
+        # Media filing for /srv/media (docs/desktop-migration.md, "Layout on
+        # the share"); `nix run .#media-stage -- --help`.
+        media-stage = pkgs.callPackage ./pkgs/media-stage { };
       });
 
       # Module regression tests. `nix flake check` is the gate before a switch.
@@ -184,6 +187,8 @@
         {
           wezterm-test-suite = weztermTests.wezterm-test-suite;
           claude-daemon-test-suite = claudeDaemonTests.claude-daemon-test-suite;
+          # Its unit and pipeline tests run in the build.
+          media-stage = pkgs.callPackage ./pkgs/media-stage { };
         }
         // weztermTests.wezterm-tests
         // claudeDaemonTests.claude-daemon-tests

@@ -6,7 +6,7 @@
 # Not managed here: the Samba password. It lives in the login keychain,
 # saved the first time the share is mounted with "Remember this password".
 
-{ ... }:
+{ pkgs, ... }:
 
 let
   queue = "desk_brother";
@@ -38,6 +38,11 @@ in
   # there yet. The port check first keeps a desk that is off (or booted into
   # Windows) from raising a "problem connecting to the server" dialog every
   # five minutes.
+  # media-stage, for filing a batch from this Mac (its Downloads, say) into
+  # the share: staged under /Volumes/media/staging/, then scanned, drafted,
+  # checked and applied in place — docs/desktop-migration.md, "Filing a batch".
+  home-manager.users.n8.home.packages = [ (pkgs.callPackage ../../pkgs/media-stage { }) ];
+
   home-manager.users.n8.launchd.agents.desk-media = {
     enable = true;
     config = {

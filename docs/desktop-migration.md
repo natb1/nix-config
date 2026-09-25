@@ -3354,7 +3354,7 @@ out of GCS.
 | --- | --- | --- |
 | Google Drive | `rclone copy gdrive:<path> /srv/media/<dest> --progress` | Use the Drive remote configured for Phase 3's mount, not the mount itself — `copy` against the API is faster and resumable. Google-native Docs/Sheets are not media; exclude them |
 | Google Photos | **Google Takeout, not `rclone`** ([takeout.google.com](https://takeout.google.com)) → deselect everything, select *Google Photos*, delivery **to Google Drive**, `.tgz`, 50 GB parts. Then pull the parts with the Drive remote already configured above and unpack into `/srv/media/google-photos/` | Do **not** use `rclone`'s `google photos` backend for the archival copy. It can only see the library through the Photos Library API, which **strips GPS EXIF from every download** and re-encodes some originals — the loss is silent and it is not recoverable later. Takeout is the only route that yields the true originals. What it costs: each photo arrives with a **sidecar `.json`** holding the timestamp, GPS, description and album membership, and the metadata has to be merged back into the files (`exiftool`, or `google-photos-takeout-helper`) before the sidecars are worth less than the originals |
-| Google Drive shared drives `print` and `audio` | `rclone copy gdrive,team_drive=<id>: /srv/media/<name>/ --progress`, the ID from `rclone backend drives gdrive:` | Shared drives, not folders — invisible to plain `gdrive:` and to `--drive-shared-with-me`. *2026-09-25:* `print` 182 files, 2.72 GiB; `audio` 800 files, 6.16 GiB. **Not gated on Step 2 or BIOS tuning:** they are copies, Drive keeps the originals until the sources are retired, and `rclone check` catches a corrupt copy |
+| Google Drive shared drives `print` and `audio` | `rclone copy gdrive,team_drive=<id>: /srv/media/staging/<name>/ --progress`, the ID from `rclone backend drives gdrive:` | Shared drives, not folders — invisible to plain `gdrive:` and to `--drive-shared-with-me`. *2026-09-25:* `print` 182 files, 2.72 GiB; `audio` 800 files, 6.16 GiB. **Not gated on Step 2 or BIOS tuning:** they are copies, Drive keeps the originals until the sources are retired, and `rclone check` catches a corrupt copy |
 | GCS bucket | **List, then re-download from the internet — not `rclone copy`.** `gcloud auth login`, then `gcloud storage ls --long --recursive 'gs://<bucket>/**' > /srv/media/gcs/listing.txt`. Work down the listing, fetching each video from where it came from straight into `movies/` or `tv/` under [the layout below](#layout-on-the-share) | Listing is metadata only: a handful of Class A operations, no egress. The listing is the manifest — keep it, it is the only record of what the bucket held once it is retired. A video with no source left online is pulled by name (`gcloud storage cp gs://<bucket>/<object> <dest>`, then named to the layout), and only those pay egress |
 | MacBook | From the Mac: `rsync -avh --progress ~/<path>/ n8@desk:/srv/media/<dest>/` over Tailscale | Or drag into the SMB share from Finder. `rsync` is resumable and prints what it skipped |
 | Flickr | Account settings → *Your Flickr data* → request the export; download the zip parts when Flickr emails; unzip into `/srv/media/flickr/` | Contains the **originals** plus separate JSON for titles, descriptions, albums and tags — keep the JSON alongside, it is the only copy of that metadata outside Flickr. Fallback if the export is unusable: `gallery-dl` against the account with an API key |
@@ -3363,7 +3363,7 @@ Then, per source, **verify rather than assume**:
 
 ```sh
 rclone check gdrive:<path>        /srv/media/<dest> --one-way   # size + hash
-rclone check gdrive,team_drive=<id>: /srv/media/<name> --one-way   # print, audio
+rclone check gdrive,team_drive=<id>: /srv/media/staging/<name> --one-way   # print, audio
 # GCS: a re-downloaded video will not hash-match the bucket's copy (different
 # encode, container or muxing). Count instead — every object in listing.txt is
 # either on disk, pulled by name, or marked as deliberately dropped.
@@ -3425,16 +3425,18 @@ also holding the other four sources un-de-duplicated.
 #### Layout on the share
 
 Added 2026-09-25. Each source lands **as it came** in a staging directory
-(`/srv/media/print/`, `/srv/media/audio/`, …), is verified there, and only
-then is **moved** into the library below — renaming during the copy would
-leave nothing for `rclone check` to compare. Once a staging directory is empty
-it goes. Nothing is kept for compatibility with the old names: the Drive
-shares' `.commons-print/index.json` (a reader's page counts and two bookmarks)
-is not carried over.
+(`/srv/media/staging/print/`, `/srv/media/staging/audio/`, …), is verified
+there, and only then is **moved** into the library below — renaming during the
+copy would leave nothing for `rclone check` to compare. Once a staging
+directory is empty it goes. How a batch gets from one to the other is
+[Filing a batch](#filing-a-batch). Nothing is kept for compatibility with the
+old names, and nothing relies on the Drive shares'
+`.commons-print/index.json`: it is not carried over, and classification reads
+each file's own metadata instead.
 
 ```
 /srv/media/
-  music/<album artist>/<album> (<year>)/<disc>-<track> <title>.mp3
+  music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.mp3   # disc only if multi-disc
   books/<author>/<title>.<ext>
   rpg/<game or line>/<title> (<variant>).<ext>
   movies/<title> (<year>)/<title> (<year>).<ext>
@@ -3451,8 +3453,10 @@ none of `: * ? " < > |`.
 unreliable: `…Shoemaker's Wife.mp3` and `…Shoemaker's Wife_1.mp3` are two
 different pieces from two different CDs by their tags, and the 34 `_N`
 suffixes (33 of them Liszt) are flattened disc collisions, not duplicates.
-[`beets`](https://beets.io) (`pkgs.beets`) with MusicBrainz, `move: yes`, path
-`$albumartist/$album%aunique{} ($year)/$disc-$track $title`:
+[`beets`](https://beets.io) with MusicBrainz, configured in
+[`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix): `move` and
+`write` on, compilations filed like any other album (not beets' top-level
+`Compilations/`), plugins `chroma` (AcoustID), `duplicates`, `info`:
 
 - **Album artist is the performer** for classical (Julian Bream), with the
   composer in the composer tag. Otherwise one Bream box set scatters across
@@ -3498,19 +3502,54 @@ Calibre or Kavita can adopt if the shelf grows.
   videos.
 
 **The `print` rename is a reviewed table**, not a regex: 181 files, drafted
-2026-09-25 as `/srv/media/print-rename.tsv` (old name, new path, note). It is
-kept on the share and **not in this repo**, which is public. Folder and name
-for the files whose names said nothing (Stonetop's `Arcana.pdf`, Frostwyck's
-`map-area.pdf`, the Dungeon Age `Tomb-*`) came from each PDF's own text and
-metadata. Rows noted `check` are guesses — review those first. Then, from
-`/srv/media` after `rclone check` has passed on the staging copy:
+2026-09-25 and kept as `/srv/media/staging/print.tsv` — on the share and
+**not in this repo**, which is public. Folder and name for the files whose
+names said nothing (Stonetop's `Arcana.pdf`, Frostwyck's `map-area.pdf`, the
+Dungeon Age `Tomb-*`) came from each PDF's own text and metadata. Rows noted
+`check` are guesses — review those first. It is applied like any other batch,
+below.
 
-```sh
-tail -n +2 print-rename.tsv | while IFS=$'\t' read -r old new note; do
-  mkdir -p "$(dirname "$new")" && mv -n -- "print/$old" "$new"
-done
-find print -type f    # anything listed was not moved: a collision or a typo
-```
+#### Filing a batch
+
+Added 2026-09-25. **One procedure for every batch** — the `print` and `audio`
+shared drives, the GCS re-downloads, and the loose videos in the MacBook's
+Downloads folder that come next. The tool is
+[`media-stage`](../pkgs/media-stage/media_stage.py), installed on desk and on
+the Mac ([`hosts/mba/desk.nix`](../hosts/mba/desk.nix)); its tests, which run
+the whole procedure over a generated batch, are part of `nix flake check`.
+Music is the exception at step 4: beets files it.
+
+| Step | Command | What it does |
+| --- | --- | --- |
+| 1. Stage | `rclone copy …` / `rsync -a …` into `staging/<batch>/` | The files exactly as they came. For a source with hashes, `rclone check --one-way` against it now, while the names still match |
+| 2. Scan | `media-stage scan staging/<batch> [--hash]` | Reads each file's **own** metadata into `staging/<batch>.manifest.jsonl`. PDF: `pdfinfo` fields (title, author, creator app, pages, page size) and the first three pages' text. EPUB: the OPF's title, creators, identifiers (ISBN), language, publisher. CBZ: image count, `ComicInfo.xml`. Audio: `ffprobe` duration, bitrate and tags, and a tag-coverage summary. Video: codec and resolution, audio and subtitle languages, the container's title tag, [`guessit`](https://github.com/guessit-io/guessit)'s parse of the file name (title, year, season, episode, edition), and yt-dlp's `.info.json` if one sits beside it. `--hash` adds SHA-256 and lists identical files |
+| 3. Draft | `media-stage draft staging/<batch>` | Proposes `new` for what a rule can decide, with a confidence: YouTube from `.info.json` (**high**); movies and episodes from the file name (**medium**, and only with a year — no year, no guess); EPUBs from their metadata (**medium**); subtitles, `.info.json` and thumbnails follow their video; audio → `beets`. Everything else — every PDF, anything unrecognised — is left **blank**, with the evidence in the note. Writes `staging/<batch>.tsv` |
+| 4. Classify | edit `staging/<batch>.tsv` | Fill every blank `new`, correct the rest. `skip` leaves a file in staging on purpose. This is the step for judgement — a person, or Claude reading the manifest and the note: the manifest's text and metadata are what identified Stonetop's `Arcana.pdf` |
+| 5. Check | `media-stage check staging/<batch>` | Refuses the batch on: a blank row; a staged file missing from the table, or a row whose file is gone; a path that is not the layout (`LAYOUT` in the script is the layout above, as regexes); a character SMB cannot carry; a changed extension; two rows with one target; a target that already exists (and says so if it is byte-identical — a duplicate to `skip`) |
+| 6. Apply | `media-stage apply staging/<batch>` | Checks again, moves each file, **writes its standard metadata**, logs to `staging/<batch>.applied.jsonl`, removes emptied folders. Rerunnable: moved rows count as done |
+| 6′. Music | `beet import --group-albums staging/audio` | `--group-albums` because the `audio` drive is one flat folder: without it beets takes the folder for one 800-track album. Weak MusicBrainz matches prompt; untagged albums are tagged by hand or with `-A` (as-is) |
+| 7. Lint | `media-stage lint [--fix]` | Audits the whole library: every file against the layout, and its metadata against the standard below. `--fix` rewrites what differs (not music) |
+
+**Standard metadata** — what `apply` writes and `lint` expects, derived from
+the library path so the two cannot drift apart:
+
+| Kind | Written | By |
+| --- | --- | --- |
+| PDF | Title (variants dropped: `Saving Saxham (Cairn, v1)` → `Saving Saxham`); Author for `books/` | `exiftool`, an incremental update — the original is still inside the file |
+| EPUB | `dc:title`, `dc:creator` **only where missing** — a publisher's own title beats one derived from a file name | the OPF, rewritten in place |
+| Video | the container's title: `Heat (1995)`, `The Wire - S01E01 - The Target`, the YouTube title | `mkvpropedit` in place for MKV/WebM; a stream-copy remux for MP4/MOV |
+| Music | album artist, artist, album, title, track (disc, year where known) | beets, from MusicBrainz or by hand |
+
+**From the Mac.** The share is mounted at `/Volumes/media`, so the steps are
+the same with that prefix: stage with `rsync -a --progress ~/Downloads/<…>
+/Volumes/media/staging/mba-downloads/`, then scan, draft, classify and check
+there. Run the heavy steps **on desk**, where the disk is local:
+`ssh desk media-stage scan --hash /srv/media/staging/mba-downloads` (hashing
+over SMB reads every byte across the network) and `ssh desk media-stage apply
+/srv/media/staging/mba-downloads` (tagging an MP4 rewrites it). Downloads
+folders hold more than films: anything that is not a movie, an episode or a
+YouTube video has no place in the layout yet — leave it `skip` and decide
+where it goes before inventing a folder for it.
 
 #### Checklist
 
@@ -3572,13 +3611,17 @@ find print -type f    # anything listed was not moved: a collision or a typo
       `Photos from 2012` … `2022` (no `-edited`, no `.json`) plus 124 under
       `Archive`. The library ends in 2022, and photos.google.com agrees —
       confirmed the same evening, so the archive is the whole library*
-- [ ] Pull the `print` and `audio` shared drives into `/srv/media/print/` and
-      `/srv/media/audio/`; `rclone check --one-way` each. Not gated: the
+- [ ] Pull the `print` and `audio` shared drives into `/srv/media/staging/print/`
+      and `/srv/media/staging/audio/`; `rclone check --one-way` each. Not gated: the
       Drive originals stay until the restore proof
-- [ ] Review `/srv/media/print-rename.tsv` (the `check` rows first) and apply
-      it into `rpg/` and `books/`; `print/` ends empty
-- [ ] `beets` over `audio/` into `music/`: performer as album artist, the
-      untagged soundtracks by hand; `audio/` ends empty
+- [ ] `print`: `media-stage scan`, then review `staging/print.tsv` (the
+      `check` rows first), `check`, `apply`; `staging/print/` ends empty
+- [ ] `audio`: `media-stage scan` for the tag-coverage summary, then
+      `beet import --group-albums staging/audio` into `music/`: performer as
+      album artist, the untagged soundtracks by hand; `staging/audio/` ends
+      empty
+- [ ] `media-stage lint` clean
+- [ ] The Mac's Downloads videos, by [Filing a batch](#filing-a-batch)
 - [ ] `gcloud auth login`; save the GCS listing to `/srv/media/gcs/listing.txt`
       and check the storage class (`gcloud storage buckets describe`)
 - [ ] Re-download the listed videos from the internet into `movies/` and

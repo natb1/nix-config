@@ -1,0 +1,785 @@
+#!/usr/bin/env python3
+"""media-stage: bring a batch of files into the /srv/media library.
+
+Every batch goes through the same steps, whatever its source (a Google Drive
+share, a GCS listing, a Mac's Downloads folder):
+
+  scan   STAGING   read each file's own metadata  -> STAGING.manifest.jsonl
+  draft  STAGING   propose library paths by rule  -> STAGING.tsv
+  (review STAGING.tsv: fill the blank `new` cells, correct the rest)
+  check  STAGING   validate the table against the files and the layout
+  apply  STAGING   move each file into place, then write its standard metadata
+  lint   [DIR...]  audit the library: layout and metadata
+
+STAGING is a directory under <library>/staging/. Its sidecars sit next to it:
+staging/print/ has staging/print.manifest.jsonl and staging/print.tsv.
+
+The table (TSV, header row) needs `old` and `new` columns; `confidence` and
+`note` are optional. `old` is relative to STAGING, `new` to the library root.
+Two special values of `new`: `beets` (music, imported by beets instead) and
+`skip` (left in staging on purpose).
+
+The layout is docs/desktop-migration.md, "Layout on the share". LAYOUT below
+is its machine-checked form; keep the two in step.
+"""
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+
+# --------------------------------------------------------------------------
+# Kinds and layout
+
+VIDEO_EXT = {"mkv", "mp4", "m4v", "mov", "avi", "wmv", "webm", "mpg", "mpeg", "ts", "m2ts", "flv"}
+SUB_EXT = {"srt", "ass", "ssa", "vtt", "sub", "idx", "sup"}
+AUDIO_EXT = {"mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aif", "aiff", "wma", "alac"}
+IMAGE_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
+LIBRARY_DIRS = ("music", "books", "rpg", "movies", "tv", "youtube")
+
+# Junk the Mac, Windows and old readers leave behind; never part of a batch.
+IGNORED_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini", ".localized"}
+
+_V = "|".join(sorted(VIDEO_EXT))
+_S = "|".join(sorted(SUB_EXT))
+# Subtitle/sidecar suffix after a video's stem: .en.srt, .en.forced.srt, .info.json, .jpg
+_SIDE = rf"(\.[A-Za-z]{{2,3}}(-[A-Za-z]{{2}})?)?(\.(forced|sdh|cc|default))?\.({_S})|\.info\.json|\.(jpg|jpeg|png|webp|nfo)"
+
+LAYOUT = {
+    "music": re.compile(r"^music/[^/]+/[^/]+/[^/]+\.[A-Za-z0-9]+$"),
+    "books": re.compile(r"^books/[^/]+/[^/]+\.(epub|pdf|mobi|azw3|cbz|cbr|djvu)$"),
+    "rpg": re.compile(r"^rpg/[^/]+/[^/]+\.[A-Za-z0-9]+$"),
+    "movies": re.compile(
+        rf"^movies/(?P<m>[^/]+ \(\d{{4}}\))/"
+        rf"((?P=m)( - [^/]+)?(\.({_V})|{_SIDE})|extras/[^/]+)$"),
+    "tv": re.compile(
+        rf"^tv/(?P<s>[^/]+ \(\d{{4}}\))/Season (?P<n>\d{{2}})/"
+        rf"(?P=s) - S(?P=n)E\d{{2,3}}(-E\d{{2,3}})?( - [^/]+)?(\.({_V})|{_SIDE})$"),
+    "youtube": re.compile(
+        rf"^youtube/[^/]+/\d{{4}}-\d{{2}}-\d{{2}} - [^/]+ \[[A-Za-z0-9_-]+\](\.({_V})|{_SIDE}|\.(m4a|opus|mp3|webm))$"),
+}
+
+# SMB-safe for the Windows clients: none of these in any path component.
+SMB_BAD = re.compile(r'[:*?"<>|\\\x00-\x1f]')
+
+
+def ext_of(p):
+    name = Path(p).name
+    return name.rsplit(".", 1)[1].lower() if "." in name else ""
+
+
+def kind_of(p):
+    e = ext_of(p)
+    if e in VIDEO_EXT:
+        return "video"
+    if e in SUB_EXT:
+        return "subtitle"
+    if e in AUDIO_EXT:
+        return "audio"
+    if e in ("pdf", "epub", "cbz", "cbr", "mobi", "azw3", "djvu"):
+        return e if e in ("pdf", "epub", "cbz") else "document"
+    if e in IMAGE_EXT:
+        return "image"
+    if Path(p).name.endswith(".info.json"):
+        return "infojson"
+    return "other"
+
+
+def layout_error(rel):
+    """None if `rel` (relative to the library root) fits the layout, else why not."""
+    parts = rel.split("/")
+    for c in parts:
+        if not c:
+            return "empty path component"
+        if SMB_BAD.search(c):
+            return f"character not allowed over SMB in {c!r}"
+        if c != c.strip() or c.endswith("."):
+            return f"leading/trailing space or trailing dot in {c!r}"
+        if len(c.encode()) > 255:
+            return f"component longer than 255 bytes: {c[:40]!r}…"
+    top = parts[0]
+    if top not in LAYOUT:
+        return f"top directory must be one of {', '.join(LIBRARY_DIRS)}"
+    if not LAYOUT[top].match(rel):
+        return f"does not fit the {top}/ layout"
+    return None
+
+
+# --------------------------------------------------------------------------
+# External tools (on PATH via the nix wrapper)
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def ffprobe(path):
+    r = run(["ffprobe", "-v", "error", "-of", "json", "-show_format", "-show_streams", str(path)])
+    if r.returncode:
+        return {"error": r.stderr.strip()[:300]}
+    return json.loads(r.stdout or "{}")
+
+
+def lower_tags(d):
+    return {k.lower(): v for k, v in (d or {}).items()}
+
+
+def pdfinfo(path):
+    r = run(["pdfinfo", str(path)])
+    info = {}
+    for line in r.stdout.splitlines():
+        k, sep, v = line.partition(":")
+        if sep:
+            info[k.strip()] = v.strip()
+    if r.returncode:
+        info["error"] = r.stderr.strip()[:300]
+    return info
+
+
+def pdftext(path, pages=3, limit=800):
+    r = run(["pdftotext", "-l", str(pages), str(path), "-"])
+    return re.sub(r"\s+", " ", r.stdout).strip()[:limit]
+
+
+# --------------------------------------------------------------------------
+# EPUB
+
+NS = {
+    "c": "urn:oasis:names:tc:opendocument:xmlns:container",
+    "opf": "http://www.idpf.org/2007/opf",
+    "dc": "http://purl.org/dc/elements/1.1/",
+}
+
+
+def _opf_path(z):
+    root = ET.fromstring(z.read("META-INF/container.xml"))
+    return root.find(".//c:rootfile", NS).get("full-path")
+
+
+def epub_meta(path):
+    try:
+        with zipfile.ZipFile(path) as z:
+            root = ET.fromstring(z.read(_opf_path(z)))
+    except Exception as e:  # malformed books are common; report, don't crash
+        return {"error": str(e)[:300]}
+    md = root.find("opf:metadata", NS)
+    if md is None:
+        return {"error": "no <metadata> in OPF"}
+    def all_(tag):
+        return [(e.text or "").strip() for e in md.findall(f"dc:{tag}", NS) if (e.text or "").strip()]
+    return {
+        "title": (all_("title") or [""])[0],
+        "creators": all_("creator"),
+        "identifiers": all_("identifier"),
+        "language": (all_("language") or [""])[0],
+        "date": (all_("date") or [""])[0],
+        "publisher": (all_("publisher") or [""])[0],
+    }
+
+
+def epub_fill(path, title, creator, dry_run=False):
+    """Add dc:title / dc:creator where the book has none. Never overwrites:
+    a publisher's own title is better than one derived from a file name."""
+    with zipfile.ZipFile(path) as z:
+        opf_name = _opf_path(z)
+        raw = z.read(opf_name)
+    ET.register_namespace("", NS["opf"])
+    ET.register_namespace("dc", NS["dc"])
+    root = ET.fromstring(raw)
+    md = root.find("opf:metadata", NS)
+    changed = []
+    for tag, value in (("title", title), ("creator", creator)):
+        if value and not any((e.text or "").strip() for e in md.findall(f"dc:{tag}", NS)):
+            ET.SubElement(md, f"{{{NS['dc']}}}{tag}").text = value
+            changed.append(f"dc:{tag}={value}")
+    if not changed or dry_run:
+        return changed
+    new_opf = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    fd, tmp = tempfile.mkstemp(dir=Path(path).parent, suffix=".epub")
+    os.close(fd)
+    with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():  # mimetype stays first and stored, as the spec requires
+            data = new_opf if item.filename == opf_name else src.read(item.filename)
+            dst.writestr(item, data)
+    os.replace(tmp, path)
+    return changed
+
+
+# --------------------------------------------------------------------------
+# scan
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def guess(name):
+    from guessit import guessit  # imported lazily: only video needs it
+    g = guessit(name)
+    out = {}
+    for k, v in g.items():
+        out[k] = v if isinstance(v, (str, int, float, bool, type(None))) else (
+            [x if isinstance(x, (str, int)) else str(x) for x in v] if isinstance(v, list) else str(v))
+    return out
+
+
+def scan_file(path, rel, want_hash):
+    st = path.stat()
+    rec = {"path": rel, "size": st.st_size, "kind": kind_of(rel), "ext": ext_of(rel),
+           "mtime": datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")}
+    k = rec["kind"]
+    if k == "pdf":
+        info = pdfinfo(path)
+        rec["meta"] = {x: info.get(x, "") for x in
+                       ("Title", "Author", "Subject", "Creator", "Producer", "Pages", "Page size", "error") if info.get(x)}
+        rec["text"] = pdftext(path)
+    elif k == "epub":
+        rec["meta"] = epub_meta(path)
+    elif k == "cbz":
+        try:
+            with zipfile.ZipFile(path) as z:
+                names = z.namelist()
+                rec["meta"] = {"images": sum(ext_of(n) in IMAGE_EXT for n in names)}
+                ci = next((n for n in names if n.lower().endswith("comicinfo.xml")), None)
+                if ci:
+                    root = ET.fromstring(z.read(ci))
+                    rec["meta"]["comicinfo"] = {c.tag: c.text for c in root if c.text}
+        except Exception as e:
+            rec["meta"] = {"error": str(e)[:300]}
+    elif k in ("audio", "video"):
+        p = ffprobe(path)
+        fmt = p.get("format", {})
+        streams = p.get("streams", [])
+        m = {"duration": round(float(fmt.get("duration", 0) or 0), 1),
+             "bit_rate": int(fmt.get("bit_rate", 0) or 0),
+             "tags": lower_tags(fmt.get("tags"))}
+        if "error" in p:
+            m["error"] = p["error"]
+        if k == "video":
+            v = next((s for s in streams if s.get("codec_type") == "video"), {})
+            m.update({
+                "video": f"{v.get('codec_name', '?')} {v.get('width', '?')}x{v.get('height', '?')}",
+                "audio_langs": [lower_tags(s.get("tags")).get("language", "und") for s in streams if s.get("codec_type") == "audio"],
+                "sub_langs": [lower_tags(s.get("tags")).get("language", "und") for s in streams if s.get("codec_type") == "subtitle"],
+            })
+            rec["guess"] = guess(path.name)
+            ij = info_json_for(path)
+            if ij:
+                rec["info_json"] = ij
+        else:
+            # Only the fields a library needs; the full tag dump is noise.
+            m["tags"] = {x: m["tags"][x] for x in
+                         ("artist", "album_artist", "album", "title", "track", "disc", "date", "composer", "genre")
+                         if x in m["tags"]}
+        rec["meta"] = m
+    elif k == "subtitle":
+        rec["guess"] = guess(path.name)
+    if want_hash:
+        rec["sha256"] = sha256(path)
+    return rec
+
+
+def info_json_for(video):
+    """yt-dlp's --write-info-json sidecar, if the video has one."""
+    for cand in (video.with_suffix(".info.json"), video.parent / (video.stem + ".info.json")):
+        if cand.exists():
+            try:
+                d = json.loads(cand.read_text())
+            except Exception:
+                return None
+            return {k: d.get(k) for k in ("id", "title", "channel", "uploader", "upload_date", "extractor", "webpage_url")}
+    return None
+
+
+def walk(staging):
+    """Files in a batch, relative paths, sorted. Dotfiles and OS junk excluded."""
+    files, ignored = [], []
+    for dirpath, dirnames, filenames in os.walk(staging):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        rel_dir = os.path.relpath(dirpath, staging)
+        for d in os.listdir(dirpath):
+            if d.startswith(".") and os.path.isdir(os.path.join(dirpath, d)):
+                ignored.append(os.path.normpath(os.path.join(rel_dir, d)) + "/")
+        for f in sorted(filenames):
+            rel = os.path.normpath(os.path.join(rel_dir, f))
+            if f in IGNORED_NAMES or f.startswith("._") or f.startswith("."):
+                ignored.append(rel)
+            else:
+                files.append(rel)
+    return files, ignored
+
+
+def sidecar_paths(staging):
+    s = str(Path(staging)).rstrip("/")
+    return Path(s + ".manifest.jsonl"), Path(s + ".tsv"), Path(s + ".applied.jsonl")
+
+
+def cmd_scan(a):
+    staging = Path(a.staging)
+    manifest, _, _ = sidecar_paths(staging)
+    files, ignored = walk(staging)
+    kinds, recs = {}, []
+    with open(manifest, "w") as out:
+        for i, rel in enumerate(files, 1):
+            rec = scan_file(staging / rel, rel, a.hash)
+            recs.append(rec)
+            kinds[rec["kind"]] = kinds.get(rec["kind"], 0) + 1
+            out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            if sys.stderr.isatty():
+                print(f"\r{i}/{len(files)}", end="", file=sys.stderr)
+    if sys.stderr.isatty():
+        print(file=sys.stderr)
+    print(f"{len(files)} files -> {manifest}")
+    print("  by kind: " + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items())))
+    if ignored:
+        print(f"  ignored (dotfiles, OS junk): {len(ignored)} — e.g. {ignored[0]}")
+    audio = [r for r in recs if r["kind"] == "audio"]
+    if audio:
+        print("  audio tag coverage:")
+        for t in ("artist", "album_artist", "album", "title", "track", "disc", "date"):
+            n = sum(1 for r in audio if r["meta"]["tags"].get(t))
+            print(f"    {t:13} {n}/{len(audio)}")
+    errs = [r for r in recs if (r.get("meta") or {}).get("error")]
+    for r in errs[:10]:
+        print(f"  unreadable: {r['path']}: {r['meta']['error']}")
+    if a.hash:
+        by = {}
+        for r in recs:
+            by.setdefault(r["sha256"], []).append(r["path"])
+        dups = [v for v in by.values() if len(v) > 1]
+        print(f"  identical-content groups: {len(dups)}")
+        for g in dups[:20]:
+            print("    " + "  ==  ".join(g))
+
+
+# --------------------------------------------------------------------------
+# draft: the rules. Anything a rule cannot decide is left blank for review.
+
+def clean(s):
+    s = SMB_BAD.sub(" ", str(s)).replace("/", "-")
+    s = re.sub(r"\s+", " ", s).strip().rstrip(".")
+    return s
+
+
+def person(name):
+    """'Camus, Albert' -> 'Albert Camus'."""
+    m = re.match(r"^([^,]+),\s*([^,]+)$", name.strip())
+    return f"{m.group(2)} {m.group(1)}" if m else name.strip()
+
+
+def ep_code(season, episode):
+    eps = episode if isinstance(episode, list) else [episode]
+    code = f"S{int(season):02d}E{int(eps[0]):02d}"
+    if len(eps) > 1:
+        code += f"-E{int(eps[-1]):02d}"
+    return code
+
+
+def video_target(rec):
+    """(stem-without-extension relative to library, confidence, note) or (None, '', note)."""
+    ij = rec.get("info_json")
+    if ij and ij.get("id") and ij.get("upload_date"):
+        ch = clean(ij.get("channel") or ij.get("uploader") or "Unknown channel")
+        d = ij["upload_date"]
+        date = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+        return f"youtube/{ch}/{date} - {clean(ij.get('title') or '')} [{ij['id']}]", "high", "from yt-dlp info.json"
+    g = rec.get("guess") or {}
+    title = clean(g.get("title", "")) if g.get("title") else ""
+    if g.get("type") == "episode" and title and "season" in g and "episode" in g:
+        if not g.get("year"):
+            return None, "", f"episode of {title!r} {ep_code(g['season'], g['episode'])}: show year unknown"
+        show = f"{title} ({g['year']})"
+        code = ep_code(g["season"], g["episode"])
+        name = f"{show} - {code}" + (f" - {clean(g['episode_title'])}" if g.get("episode_title") else "")
+        return f"tv/{show}/Season {int(g['season']):02d}/{name}", "medium", "from file name (guessit)"
+    if g.get("type") == "movie" and title:
+        if not g.get("year"):
+            return None, "", f"movie {title!r}? year unknown"
+        m = f"{title} ({g['year']})"
+        edition = g.get("edition")
+        stem = m + (f" - {clean(edition if isinstance(edition, str) else ' '.join(edition))}" if edition else "")
+        return f"movies/{m}/{stem}", "medium", "from file name (guessit)"
+    return None, "", "not a recognisable movie/episode name"
+
+
+def cmd_draft(a):
+    staging = Path(a.staging)
+    manifest, table, _ = sidecar_paths(staging)
+    if table.exists() and not a.force:
+        sys.exit(f"{table} exists (it may hold review work); --force to overwrite")
+    recs = [json.loads(l) for l in open(manifest)]
+    rows, stems = {}, {}
+    # Pass 1: primary files.
+    for r in recs:
+        k, p = r["kind"], r["path"]
+        new, conf, note = "", "", ""
+        if k == "video":
+            stem, conf, note = video_target(r)
+            if stem:
+                new = f"{stem}.{r['ext']}"
+                stems[str(Path(p).with_suffix(""))] = stem
+        elif k == "audio":
+            new, conf, note = "beets", "", "music: imported by beets"
+        elif k == "epub":
+            m = r.get("meta", {})
+            if m.get("title") and m.get("creators"):
+                title = clean(re.split(r"[:;]", m["title"])[0])
+                new, conf, note = f"books/{clean(person(m['creators'][0]))}/{title}.epub", "medium", "from EPUB metadata"
+            else:
+                note = "EPUB has no title/creator: " + json.dumps(m, ensure_ascii=False)[:200]
+        elif k in ("pdf", "cbz", "document"):
+            m = r.get("meta", {})
+            bits = [f"{x}={m[x]}" for x in ("Title", "Author", "Creator", "Pages", "Page size") if m.get(x)]
+            text = r.get("text", "")
+            note = "classify (books/ or rpg/): " + "; ".join(bits) + (f"; text: {text[:160]}" if text else "")
+        else:
+            note = f"{k}: classify, or `skip`"
+        rows[p] = [new, conf, note]
+    # Pass 2: sidecars follow their video (subtitles, info.json, thumbnails).
+    for r in recs:
+        p = r["path"]
+        if r["kind"] in ("subtitle", "infojson", "image") or p.endswith(".nfo"):
+            name = Path(p).name
+            parent = str(Path(p).parent)
+            for vstem, target in stems.items():
+                vname = Path(vstem).name
+                if str(Path(vstem).parent) == parent and name.startswith(vname + ".") and name != vname:
+                    suffix = name[len(vname):]
+                    rows[p] = [target + suffix.lower() if r["kind"] != "subtitle" else target + suffix,
+                               "medium", "follows its video"]
+                    break
+            else:
+                if r["kind"] == "subtitle":
+                    rows[p][2] = "subtitle with no matching video"
+    with open(table, "w") as out:
+        out.write("old\tnew\tconfidence\tnote\n")
+        for p, (new, conf, note) in rows.items():
+            out.write("\t".join(x.replace("\t", " ").replace("\n", " ") for x in (p, new, conf, note)) + "\n")
+    blank = sum(1 for v in rows.values() if not v[0])
+    print(f"{len(rows)} rows -> {table}; {blank} left blank for review")
+
+
+# --------------------------------------------------------------------------
+# check / apply
+
+def read_table(table):
+    with open(table) as f:
+        header = f.readline().rstrip("\n").split("\t")
+        if "old" not in header or "new" not in header:
+            sys.exit(f"{table}: header must name 'old' and 'new' columns")
+        io, inew = header.index("old"), header.index("new")
+        rows = []
+        for n, line in enumerate(f, 2):
+            if not line.strip():
+                continue
+            cols = line.rstrip("\n").split("\t")
+            cols += [""] * (len(header) - len(cols))
+            rows.append((n, cols[io].strip(), cols[inew].strip()))
+    return rows
+
+
+def default_library():
+    env = os.environ.get("MEDIA_LIBRARY")
+    if env:
+        return Path(env)
+    for p in ("/srv/media", "/Volumes/media"):
+        if Path(p).is_dir():
+            return Path(p)
+    sys.exit("no library root: pass --library or set MEDIA_LIBRARY")
+
+
+def validate(staging, library):
+    """(errors, rows to move, counts). Errors are strings; empty means go."""
+    _, table, _ = sidecar_paths(staging)
+    if not table.exists():
+        return [f"no table at {table}; run draft first"], [], {}
+    rows = read_table(table)
+    files, _ = walk(staging)
+    present = set(files)
+    errors, moves, seen_new, counts = [], [], {}, {"move": 0, "beets": 0, "skip": 0, "done": 0}
+    listed = set()
+    for n, old, new in rows:
+        where = f"line {n} ({old})"
+        if old in listed:
+            errors.append(f"{where}: listed twice")
+        listed.add(old)
+        if not new:
+            errors.append(f"{where}: `new` is blank — classify it, or write `skip`")
+            continue
+        if new in ("beets", "skip"):
+            if new == "beets" and kind_of(old) != "audio":
+                errors.append(f"{where}: `beets` is for audio only")
+            if old not in present:
+                errors.append(f"{where}: not in staging")
+            counts[new] += 1
+            continue
+        if ext_of(old) != ext_of(new):
+            errors.append(f"{where}: extension changes to .{ext_of(new)}")
+        why = layout_error(new)
+        if why:
+            errors.append(f"{where}: {new}: {why}")
+        if new in seen_new:
+            errors.append(f"{where}: same target as line {seen_new[new]}: {new}")
+        seen_new[new] = n
+        target = library / new
+        if old not in present:
+            if target.exists():
+                counts["done"] += 1  # moved by an earlier apply
+            else:
+                errors.append(f"{where}: not in staging")
+            continue
+        if target.exists():
+            same = target.stat().st_size == (staging / old).stat().st_size and sha256(target) == sha256(staging / old)
+            errors.append(f"{where}: target exists{' with identical content — use `skip`' if same else ''}: {new}")
+            continue
+        moves.append((old, new))
+        counts["move"] += 1
+    for f in sorted(present - listed):
+        errors.append(f"not in the table: {f}")
+    return errors, moves, counts
+
+
+def cmd_check(a):
+    staging, library = Path(a.staging), Path(a.library) if a.library else default_library()
+    errors, moves, counts = validate(staging, library)
+    for e in errors:
+        print("ERROR", e)
+    print(f"{len(errors)} errors; to move {counts.get('move', 0)}, beets {counts.get('beets', 0)}, "
+          f"skip {counts.get('skip', 0)}, already done {counts.get('done', 0)}")
+    sys.exit(1 if errors else 0)
+
+
+def cmd_apply(a):
+    staging, library = Path(a.staging), Path(a.library) if a.library else default_library()
+    errors, moves, counts = validate(staging, library)
+    if errors:
+        for e in errors:
+            print("ERROR", e)
+        sys.exit(f"{len(errors)} errors; nothing moved")
+    _, _, log = sidecar_paths(staging)
+    for old, new in moves:
+        src, dst = staging / old, library / new
+        if a.dry_run:
+            print(f"would move {old} -> {new}")
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            sys.exit(f"appeared since check: {new}")
+        try:
+            os.rename(src, dst)
+        except OSError:
+            shutil.move(src, dst)  # a different filesystem: copy, then remove
+        changes = [] if a.no_tag else tag_file(library, new)
+        with open(log, "a") as f:
+            f.write(json.dumps({"old": old, "new": new, "metadata": changes,
+                                "at": datetime.datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False) + "\n")
+        print(f"{old} -> {new}" + (f"  [{'; '.join(changes)}]" if changes else ""))
+    if not a.dry_run:
+        for dirpath, _, _ in sorted(os.walk(staging), key=lambda t: -len(t[0])):
+            if Path(dirpath) != staging:
+                try:
+                    os.rmdir(dirpath)
+                except OSError:
+                    pass
+    left, _ = walk(staging)
+    print(f"moved {len(moves)}; left in staging: {len(left)}"
+          + (f" (beets {counts['beets']}: `beet import {staging}`)" if counts.get("beets") else ""))
+
+
+# --------------------------------------------------------------------------
+# Standard metadata, derived from a library path
+
+def strip_variants(stem):
+    """'Foo (pages, v1.3)' -> 'Foo'; 'Foo (1999)' is left alone."""
+    while True:
+        m = re.match(r"^(.*\S)\s+\((?!\d{4}\))[^()]*\)$", stem)
+        if not m:
+            return stem
+        stem = m.group(1)
+
+
+def standard(rel):
+    """The metadata a library path implies: {'title':..., 'author':...}. Empty if none."""
+    p = Path(rel)
+    top, stem = p.parts[0], p.name[: -len(p.suffix)] if p.suffix else p.name
+    if top == "books":
+        return {"title": strip_variants(stem), "author": p.parts[1]}
+    if top == "rpg":
+        return {"title": strip_variants(stem)}
+    if top == "movies":
+        return {"title": stem if "extras" not in p.parts else strip_variants(stem)}
+    if top == "tv":
+        show = re.sub(r" \(\d{4}\)$", "", p.parts[1])
+        m = re.match(r"^.+? - (S\d{2}E\d{2,3}(?:-E\d{2,3})?)(?: - (.+))?$", stem)
+        if m:
+            return {"title": f"{show} - {m.group(1)}" + (f" - {m.group(2)}" if m.group(2) else "")}
+    if top == "youtube":
+        m = re.match(r"^\d{4}-\d{2}-\d{2} - (.+) \[[A-Za-z0-9_-]+\]$", stem)
+        if m:
+            return {"title": m.group(1), "author": p.parts[1]}
+    return {}
+
+
+def current_meta(path):
+    k = kind_of(path)
+    if k == "pdf":
+        i = pdfinfo(path)
+        return {"title": i.get("Title", ""), "author": i.get("Author", "")}
+    if k == "epub":
+        m = epub_meta(path)
+        return {"title": m.get("title", ""), "author": (m.get("creators") or [""])[0]}
+    if k == "video":
+        t = lower_tags(ffprobe(path).get("format", {}).get("tags"))
+        return {"title": t.get("title", ""), "author": t.get("artist", "")}
+    if k == "audio":
+        return lower_tags(ffprobe(path).get("format", {}).get("tags"))
+    return {}
+
+
+def tag_file(library, rel, dry_run=False):
+    """Write the standard metadata for one library file. Returns what changed."""
+    path = library / rel
+    want, k = standard(rel), kind_of(rel)
+    if not want or k not in ("pdf", "epub", "video"):
+        return []
+    have = current_meta(path)
+    if k == "epub":
+        # Publisher metadata wins; only fill what is missing.
+        return epub_fill(path, want.get("title"), want.get("author"), dry_run)
+    todo = {x: v for x, v in want.items() if v and have.get(x) != v and not (x == "author" and k == "video")}
+    if not todo or dry_run:
+        return [f"{x}={v}" for x, v in todo.items()] if dry_run else []
+    if k == "pdf":
+        args = [f"-{x.capitalize()}={v}" for x, v in todo.items()]
+        r = run(["exiftool", "-q", "-m", "-overwrite_original", *args, str(path)])
+        if r.returncode:
+            return [f"exiftool failed: {r.stderr.strip()[:200]}"]
+    elif k == "video" and "title" in todo:
+        e = ext_of(rel)
+        if e in ("mkv", "webm"):
+            r = run(["mkvpropedit", "-q", str(path), "--edit", "info", "--set", f"title={todo['title']}"])
+        elif e in ("mp4", "m4v", "mov"):
+            tmp = path.with_name(f".tagging.{path.name}")
+            r = run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-map", "0", "-c", "copy",
+                     "-map_metadata", "0", "-metadata", f"title={todo['title']}", str(tmp)])
+            if r.returncode == 0:
+                os.replace(tmp, path)
+            elif tmp.exists():
+                tmp.unlink()
+        else:
+            return [f"title not written: .{e} has no title tag we write"]
+        if r.returncode:
+            return [f"title not written: {r.stderr.strip()[:200]}"]
+    return [f"{x}={v}" for x, v in todo.items()]
+
+
+def cmd_tag(a):
+    library = Path(a.library) if a.library else default_library()
+    for p in a.paths:
+        rel = os.path.relpath(Path(p).resolve(), library.resolve())
+        changes = tag_file(library, rel, a.dry_run)
+        print(f"{rel}: {'; '.join(changes) if changes else 'ok'}")
+
+
+# --------------------------------------------------------------------------
+# lint
+
+AUDIO_REQUIRED = ("artist", "album", "title", "track")
+
+
+def cmd_lint(a):
+    library = Path(a.library) if a.library else default_library()
+    roots = [Path(d) for d in a.dirs] or [library / d for d in LIBRARY_DIRS]
+    problems = 0
+    for root in roots:
+        if not root.exists():
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            for f in sorted(filenames):
+                if f in IGNORED_NAMES or f.startswith("."):
+                    continue
+                path = Path(dirpath) / f
+                rel = os.path.relpath(path, library)
+                why = layout_error(rel)
+                if why:
+                    problems += 1
+                    print(f"LAYOUT {rel}: {why}")
+                    continue
+                k = kind_of(rel)
+                if k == "audio":
+                    tags = current_meta(path)
+                    missing = [t for t in AUDIO_REQUIRED if not tags.get(t)]
+                    if not (tags.get("album_artist") or tags.get("albumartist")):
+                        missing.append("album_artist")
+                    if missing:
+                        problems += 1
+                        print(f"META   {rel}: missing {', '.join(missing)}")
+                elif k in ("pdf", "epub", "video"):
+                    want, have = standard(rel), current_meta(path)
+                    if k == "epub":
+                        bad = [x for x in ("title", "author") if not have.get(x)]
+                    else:
+                        bad = [x for x, v in want.items() if v and have.get(x) != v and not (x == "author" and k == "video")]
+                    if bad:
+                        if a.fix:
+                            changes = tag_file(library, rel)
+                            print(f"FIXED  {rel}: {'; '.join(changes)}")
+                        else:
+                            problems += 1
+                            print(f"META   {rel}: " + ", ".join(f"{x} is {have.get(x)!r}" for x in bad))
+    print(f"{problems} problems")
+    sys.exit(1 if problems else 0)
+
+
+# --------------------------------------------------------------------------
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="media-stage", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--library", help="library root (default: $MEDIA_LIBRARY, else /srv/media, else /Volumes/media)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    _add = sub.add_parser
+    sub.add_parser = lambda *x, **kw: _add(*x, parents=[common], **kw)
+    s = sub.add_parser("scan", help="read metadata into STAGING.manifest.jsonl")
+    s.add_argument("staging")
+    s.add_argument("--hash", action="store_true", help="sha256 every file (reports identical content)")
+    s.set_defaults(fn=cmd_scan)
+    s = sub.add_parser("draft", help="propose library paths into STAGING.tsv")
+    s.add_argument("staging")
+    s.add_argument("--force", action="store_true", help="overwrite an existing table")
+    s.set_defaults(fn=cmd_draft)
+    s = sub.add_parser("check", help="validate STAGING.tsv")
+    s.add_argument("staging")
+    s.set_defaults(fn=cmd_check)
+    s = sub.add_parser("apply", help="move files into the library and write their metadata")
+    s.add_argument("staging")
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--no-tag", action="store_true", help="move only; leave metadata alone")
+    s.set_defaults(fn=cmd_apply)
+    s = sub.add_parser("tag", help="write standard metadata for library files")
+    s.add_argument("paths", nargs="+")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(fn=cmd_tag)
+    s = sub.add_parser("lint", help="audit layout and metadata of the library")
+    s.add_argument("dirs", nargs="*", help="limit to these directories")
+    s.add_argument("--fix", action="store_true", help="write standard metadata where it differs (not audio)")
+    s.set_defaults(fn=cmd_lint)
+    a = ap.parse_args(argv)
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()
