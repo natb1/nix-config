@@ -3728,13 +3728,22 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       move; the 182nd is `.commons-print/index.json`, not carried over).
       `audio` tag coverage: artist 736/800, album 764, title 765, track 742,
       album artist 591, date 631*
-- [ ] `print`: `media-stage scan`, then review `staging/print.tsv` (the
-      `check` rows first), `check`, `apply`; `staging/print/` ends empty
-- [ ] `audio`: `media-stage scan` for the tag-coverage summary, then
-      `beet import --group-albums staging/audio` into `music/`: performer as
-      album artist, the untagged soundtracks by hand; `staging/audio/` ends
-      empty
-- [ ] `media-stage lint` clean
+- [x] `print`: `media-stage scan`, then review `staging/print.tsv` (the
+      `check` rows first), `check`, `apply`; `staging/print/` ends empty —
+      *2026-09-25: the 21 flagged rows reviewed on the review page, 3 given
+      new paths; all 181 filed into `rpg/` and `books/` with titles written*
+- [x] `audio`: into `music/` by beets — *2026-09-25, by the review page in
+      two rounds (the second for what beets 2.x left: unmatched suite
+      movements and second copies). No album matched strongly enough to
+      file unasked. 710 tracks filed; 7 folders left in `staging/audio/` on
+      purpose: duplicates of filed albums (Vol. 6, Spanish Guitar, the
+      22-track *La guitarra romantica*, 2 Together Again movements), the
+      *Collection CD 4 / CD 6* folders (two copies of many tracks — to sort
+      by hand), and 1 track the Together Again CD does not list*
+- [x] `media-stage lint` clean — *2026-09-25: 891 files, 0 problems*
+- [ ] Merge the two spellings of Brandish Gilhelm's *CROWN and SKULL* Volume
+      I and Volume 2 (`…- The Album` / `…: The Album`), tagged by hand in two
+      forms; then delete the staging leftovers above once checked
 - [ ] Library read-only from the Mac: after both switches, `/Volumes/media`
       and `/Volumes/media-staging` mount; `touch /Volumes/media/x` fails;
       `README.md` is on both; a fresh `claude` on the Mac asked to "put this
