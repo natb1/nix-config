@@ -71,7 +71,22 @@ in
 {
   # The flake's overlay rather than the module's default package: the default
   # calls package.nix without the npmConfigHook the flake itself passes.
-  nixpkgs.overlays = [ inputs.tether.overlays.default ];
+  #
+  # Patched: when a reopened MAP session cannot enter telecom/msg and then
+  # cannot enter the inbox either, upstream lists whatever folder it is parked
+  # in — the root, which answers with no messages and no error — so it never
+  # reopens and texts silently stop arriving while `tether --bt-connection`
+  # still says MAP is up (seen 14:30–15:37, 2026-09-25; the texts still
+  # reached ANCS, which Tether keeps from popping up for Messages). The patch
+  # reopens the session instead.
+  nixpkgs.overlays = [
+    inputs.tether.overlays.default
+    (_final: prev: {
+      tether = prev.tether.overrideAttrs (old: {
+        patches = (old.patches or [ ]) ++ [ ./tether-map-inbox-fallback.patch ];
+      });
+    })
+  ];
 
   programs.tether = {
     enable = true;
