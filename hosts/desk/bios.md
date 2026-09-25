@@ -9,7 +9,7 @@ BIOS tuning).
 ## Fans (Smart Fan 6), set 2026-09-25
 
 Saved with F3 as [`bios/fan-profile-2026-09-25`](bios/fan-profile-2026-09-25),
-load it back with F2 in Smart Fan 6. The values below are decoded from that
+load it back from Smart Fan 6's Load Fan Profile. The values below are decoded from that
 file, not transcribed from the screen.
 
 | Header (it87 channel) | Curve (°C → duty) | Notes |
