@@ -3245,13 +3245,17 @@ invocation, second repository — not a migration.
   services.restic.backups.media = {
     initialize = true;
     paths = [ "/srv/media" ];
-    repository = "sftp:u<FILL_ME>@u<FILL_ME>.your-storagebox.de:restic/media";  # relative to the box's home
+    # Append-only: the box's authorized_keys forces this key to
+    # `rclone serve restic --stdio --append-only restic/media`, so the path
+    # lives there and the remote command restic sends is ignored.
+    repository = "rclone:";
     passwordFile = "/etc/restic/media.password";        # 0600, hand-provisioned
     extraOptions = [
-      "sftp.command='ssh -p 23 -i /etc/restic/id_ed25519 u<FILL_ME>@u<FILL_ME>.your-storagebox.de -s sftp'"
+      "rclone.program='ssh -p 23 -i /etc/restic/id_ed25519 u676942@u676942.your-storagebox.de'"
     ];
     extraBackupArgs = [ "--exclude-caches" "--one-file-system" ];
-    pruneOpts = [ "--keep-daily 7" "--keep-weekly 5" "--keep-monthly 12" ];
+    # No pruneOpts: forget is refused by the append-only channel, and
+    # retention runs by hand with the offline prune key.
     runCheck = true;
     checkOpts = [ "--read-data-subset=2%" ];            # samples, not a full download — ~15 GB/day at 730 GB, over Wi-Fi; 1% if the uplink minds
     timerConfig = {
@@ -3271,8 +3275,10 @@ invocation, second repository — not a migration.
   # non-default port makes the [host]:port form mandatory. This IS declarative
   # and belongs in the repo, unlike the private key.
   programs.ssh.knownHosts.storagebox = {
-    hostNames = [ "[u<FILL_ME>.your-storagebox.de]:23" ];
-    publicKey = "ssh-ed25519 <FILL_ME_from_docs.hetzner.com>";
+    # SHA256:XqONwb1S0zuj5A1CDxpOSuD2hnAArV1A3wKY7Z3sdgM, matched against
+    # docs.hetzner.com/storage/storage-box/general on 2026-09-25.
+    hostNames = [ "[u676942.your-storagebox.de]:23" ];
+    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs";
   };
 }
 ```
@@ -3310,7 +3316,7 @@ with restic pointed at that channel instead of the SFTP backend:
 ```nix
     repository = "rclone:";
     extraOptions = [
-      "rclone.program='ssh -p 23 -i /etc/restic/id_ed25519 u<FILL_ME>@u<FILL_ME>.your-storagebox.de'"
+      "rclone.program='ssh -p 23 -i /etc/restic/id_ed25519 u676942@u676942.your-storagebox.de'"
     ];
 ```
 
@@ -3323,8 +3329,8 @@ The cost: pruning needs a second, unrestricted key that does not live on `desk`.
 Keep it offline and run retention deliberately, a few times a year. That is the
 correct trade — automatic pruning is also automatic deletion.
 
-Which means **adopting append-only also means dropping `pruneOpts` from the unit
-above.** Leave it in and every run fails at the forget step. Retention becomes a
+Which is why **the unit above has no `pruneOpts`**: with it, every run would
+fail at the forget step. Retention becomes a
 manual job run from elsewhere with the unrestricted key; decide that consciously
 rather than discovering it from a red timer.
 
@@ -3574,7 +3580,13 @@ where it goes before inventing a folder for it.
       share itself is in use for anything that has another copy — which
       includes every source still in place: downloading is not the risk,
       deleting the source is
-- [x] Order a Storage Box BX11 (1 TB) — *2026-09-25*
+- [x] Order a Storage Box BX11 (1 TB) — *2026-09-25: `u676942`
+      (`u676942.your-storagebox.de`). Additional settings: SSH support and
+      external reachability on, SMB and WebDAV off. Daily automatic
+      snapshots, 10 kept*
+- [x] Host keys verified — *2026-09-25, `ssh-keyscan -p 23` matched Hetzner's
+      published ED25519, RSA and ECDSA fingerprints; the ED25519 key is pinned
+      in the unit's `knownHosts`*
 - [x] Generate a dedicated ed25519 key for it — *2026-09-25,
       `/etc/restic/id_ed25519` (root, 0600; dir 0700), comment `desk-restic`,
       `SHA256:pbsrEaftbebgxXiaB5rilJRzo5o4oaMr9uXKS1S0AFM`. Goes on the box only
