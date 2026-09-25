@@ -3413,7 +3413,7 @@ two keep growing, so this step has two halves: a **one-time copy of each
 personal library**, and an **ongoing copy of one shared library** that both
 cameras write into from now on. The tool for both is
 [`icloudpd`](https://github.com/icloud-photos-downloader/icloud_photos_downloader)
-(`pkgs.icloudpd`; nixpkgs has no NixOS module, so the unit below is hand-written).
+(`pkgs.icloudpd`, 1.32.3; nixpkgs has no NixOS module, so [`hosts/desk/icloud.nix`](../hosts/desk/icloud.nix) is hand-written).
 
 **Why a shared library rather than two ongoing backups.** icloudpd logs in as
 one Apple ID and sees only that ID's libraries. Two ongoing backups would mean
@@ -3485,92 +3485,101 @@ that costs a second timer instance and no extra 2FA. The wife's personal
 library is the one that cannot be made ongoing without keeping a second
 session alive, so the wife's Camera button is what to check.
 
-#### One-time copy of each personal library
+#### The module: `hosts/desk/icloud.nix`
 
-Run by hand on `desk` as n8, over SSH, **after** the switch, so each snapshot is
-complete up to the date recorded above. Same gate as the Step 3 ingest:
-[BIOS tuning](#bios-tuning) validated first. icloudpd verifies nothing against
-Apple's checksums, so a bit flip in the copy would go unnoticed. Not gated on
-restic: iCloud keeps the originals, the same reasoning that let the Takeout
-download go ahead early.
+*Landed 2026-09-25.* One template **user** unit, `icloudpd@<instance>`, and
+one hand-provisioned env file per instance, `~/.config/icloudpd/<instance>.env`,
+which keeps the Apple IDs out of this public repo:
 
 ```sh
-# Per account. --auth-only prompts for the password and the 2FA code.
-icloudpd --username <apple-id> --cookie-directory ~/.icloudpd/<name> --auth-only
-icloudpd --username <apple-id> --cookie-directory ~/.icloudpd/<name> --list-libraries
-#   PrimarySync          ← the personal library
-#   SharedSync-<UUID>    ← the shared one, once it exists
-icloudpd --username <apple-id> --cookie-directory ~/.icloudpd/<name> \
-  --library PrimarySync --directory /srv/media/icloud/<name>
+APPLE_ID=someone@example.com
+LIBRARY=PrimarySync            # or SharedSync-<UUID>, as icloudpd-login prints it
 ```
 
-- **Originals only, by default.** An edited photo comes down as the camera's
-  original, without the edit. If the edits matter, add `--size adjusted`
-  alongside `--size original` (check the packaged version's `--help`;
-  repeating `--size` is recent).
+| Instance | Apple ID | `LIBRARY` | Lands in | Runs |
+| --- | --- | --- | --- | --- |
+| `shared` | n8's | `SharedSync-…` | `/srv/media/icloud/shared/` | Daily user timer, `Persistent` (a run missed while suspended happens on wake) |
+| `n8` | n8's | `PrimarySync` | `/srv/media/icloud/n8/` | Once, by hand |
+| `<FILL_ME_wife>` | the wife's | `PrimarySync` | `/srv/media/icloud/<FILL_ME_wife>/` | Once, by hand |
+
+What the module decides, and why:
+
+- **A user unit, so the password sits in gnome-keyring.** icloudpd's
+  `keyring` password provider stores it under the service name
+  `pyicloud://icloud-password`. That is the same no-plaintext rule
+  `gdrive.nix` follows for rclone's config password. A system unit would have
+  needed a plaintext password file. The unit runs only with a password from
+  the keyring and no terminal, so a lapsed session **fails** instead of
+  waiting for a prompt that will never be answered.
+- **The session cookies are not encrypted.** pyicloud writes them in the
+  clear to `~/.local/state/icloudpd/<apple-id>/`, and they grant access to the
+  photos for as long as Apple honours them. That is an accepted exception to
+  the rule for n8's own account. For the wife's account, `icloudpd-forget`
+  removes both the cookies and the keyring entry once the backfill is
+  verified.
+- **Cookies are keyed on the Apple ID, not the instance.** `shared` and `n8`
+  are the same account, so they share one session and one 2FA.
+- **`AssertPathIsMountPoint=/srv/media`.** A user unit cannot `requires=`
+  the system's `srv-media.mount`, so this is the form of Samba's guard that a
+  user unit can have. Without the bulk SSD mounted, the unit fails instead of
+  filling the root filesystem.
+- **Add-only.** No `--auto-delete`, no `--delete-after-download`, no
+  `--keep-icloud-recent-days`. Anyone in the Shared Library can delete from
+  it, and the backup is whatever is left when they do.
+- **Everything else is icloudpd's defaults:** originals, `YYYY/MM/DD` folders,
+  and each Live Photo's video saved next to its still. An edited photo comes
+  down as the camera's original, without the edit; add `--size adjusted`
+  beside `--size original` if the edits turn out to matter.
+- **The alert:** `OnFailure=icloudpd-failed@%i` sends a critical swaync
+  pop-up, which stays in swaync's history, until the plan's ntfy
+  (`<FILL_ME_notify_unit>`) exists.
+
+Two helper commands ship with it:
+
+- `icloudpd-login <instance>`: the password (typed once, then saved to the
+  keyring) and the 2FA code, then the account's libraries, including the
+  `SharedSync-<UUID>` name the `shared` env file needs.
+- `icloudpd-forget <instance>`: deletes that Apple ID's session and keyring
+  entry. The env file is left in place.
+
+Running as n8, on desk, in the graphical session (the keyring has to be
+unlocked):
+
+```sh
+# Personal backfills — after the camera switch and BIOS tuning's validation
+icloudpd-login n8
+systemctl --user start --no-block icloudpd@n8
+journalctl --user -fu icloudpd@n8        # hours, for a whole library
+icloudpd-login <FILL_ME_wife>             # with the wife's phone to hand for the 2FA code
+systemctl --user start --no-block icloudpd@<FILL_ME_wife>
+
+# Ongoing shared library — the timer is already enabled; it waits on the env file
+systemctl --user start icloudpd@shared    # first run by hand, to watch it
+systemctl --user list-timers 'icloudpd@*'
+```
+
+**Gate for the backfills: [BIOS tuning](#bios-tuning) validated first**, the
+same gate as the Step 3 ingest. icloudpd doesn't check what it downloads
+against Apple's checksums, so a bit flip in the copy would go unnoticed.
+They are not gated on restic: iCloud keeps the originals, the same reasoning
+that let the Takeout download go ahead early. Run them **after** the camera
+switch, so each snapshot is complete up to the date recorded above.
+
 - **Verify by count, as for Takeout.** Photos → Library → *All Photos* shows
   "N Photos, M Videos" at the bottom on each phone. A Live Photo comes down as
   a still plus a `.MOV`, so count the stills and videos separately
-  (Takeout trap 2 again). Then **run the same command again**: it must
-  download nothing.
-- **Then delete the wife's cookie directory** (`rm -r ~/.icloudpd/<FILL_ME_wife>`).
-  Nothing ongoing needs that account, and a live session into someone else's
-  iCloud should not sit on a box that does not need it.
+  (Takeout trap 2 again). Then **start the same instance again**: its journal
+  must show nothing downloaded.
+- **Then `icloudpd-forget <FILL_ME_wife>`.** Nothing ongoing needs that
+  account, and a live session into someone else's iCloud should not stay on a
+  machine that no longer needs it.
 - **Overlap with Google Photos is expected.** Phones have historically backed
   up to both. De-duplicate with the rest of Step 3, after verifying.
-
-#### Ongoing copy of the shared library
-
-One template unit, one instance today: n8's account, the Shared Library. A
-timer rather than icloudpd's own `--watch-with-interval`, for the same
-reason restic runs on one: a failed run becomes a failed unit, and that
-becomes an `OnFailure` alert.
-
-```nix
-# hosts/desk/icloud.nix — sketch; confirm flags against pkgs.icloudpd's --help
-{ pkgs, ... }:
-{
-  systemd.services."icloudpd@" = {
-    description = "iCloud Photos → /srv/media/icloud (%i)";
-    after = [ "network-online.target" "srv-media.mount" ];
-    wants = [ "network-online.target" ];
-    requires = [ "srv-media.mount" ];   # the same footgun as Samba's
-    unitConfig.OnFailure = "<FILL_ME_notify_unit>";
-    serviceConfig = {
-      Type = "oneshot";
-      User = "n8";                      # the share's `force user`; files match
-      StateDirectory = "icloudpd/%i";   # cookies, 0700, off the share
-      EnvironmentFile = "/etc/icloudpd/%i.env";  # APPLE_ID=, LIBRARY=SharedSync-…
-      # NO --auto-delete and NO --delete-after-download. Anyone in the Shared
-      # Library can delete from it; the backup only ever adds.
-      ExecStart = ''
-        ${pkgs.icloudpd}/bin/icloudpd --username ''${APPLE_ID} \
-          --cookie-directory /var/lib/icloudpd/%i \
-          --library ''${LIBRARY} --directory /srv/media/icloud/shared \
-          --no-progress-bar
-      '';
-    };
-  };
-  systemd.timers."icloudpd@shared" = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = { OnCalendar = "daily"; Persistent = true; RandomizedDelaySec = "1h"; };
-  };
-}
-```
-
-- **The password.** With a valid session cookie icloudpd should not need
-  it, but it asks again when the session lapses. Keep it in
-  `/etc/icloudpd/shared.password`, 0600, and hand it over with whichever
-  `--password-provider` the packaged version supports non-interactively. Check
-  that the password does not end up in `argv`. It goes on the README's
-  unmanaged-state list along with the `.env` file.
-- **Re-authentication is a chore on a timer.** When the session lapses, the
-  run fails, `OnFailure` fires, and the fix is interactive:
-  `sudo -u n8 icloudpd --username <apple-id> --cookie-directory /var/lib/icloudpd/shared --auth-only`
-  from any SSH session, with n8's phone to hand for the code. Until
-  `<FILL_ME_notify_unit>` reaches a phone (ntfy), the alert only helps at the
-  desk. A shared library that silently stopped backing up two months ago is
-  the failure to avoid.
+- **Re-authentication is a recurring chore.** When the `shared` session
+  lapses, a run fails, the pop-up names `icloudpd-login shared`, and n8's
+  phone supplies the code. Until the alert reaches a phone (ntfy), it only
+  helps at the desk. A shared library that silently stopped backing up two
+  months ago is the failure to avoid.
 - **Backed up by Step 2** like everything else under `/srv/media`. Once
   restic has passed its restore proofs, `/srv/media/icloud/` plus Hetzner is a
   real second copy. Until then iCloud is the only authoritative one. Nothing
@@ -3579,26 +3588,29 @@ becomes an `OnFailure` alert.
 #### Checklist
 
 - [ ] Both Apple IDs: iCloud Photos on, ADP off, Access iCloud Data on the Web on
-- [ ] Decide which account creates the Shared Library (it pays the storage);
-      read each personal library's size from Settings → *Apple Account* →
+- [ ] Read each personal library's size from Settings → *Apple Account* →
       iCloud and add both to the ~730 GB budget
-- [ ] Create the Shared Library and invite the other account. Both the
-      creator (at setup) and the invitee (on accepting) choose *Choose
-      Manually* and move **no** existing photos
+- [x] Create the Shared Library and invite the other account — *2026-09-25;
+      the unused Shared Album was removed the same day*
+- [ ] Both the creator (at setup) and the invitee (on accepting) chose
+      *Choose Manually* and moved **no** existing photos. Check that the
+      Shared Library holds only test shots
 - [ ] Both phones: *Sharing from Camera* on, **Share Manually**, Camera's
       Shared Library button on and still on after closing Camera and after a
       restart. Take a test photo on each and confirm it shows
       up under the Shared Library on the *other* phone. Record the switch date
 - [ ] Record each personal library's photo and video counts, as of the switch
+- [x] `hosts/desk/icloud.nix` imported — *2026-09-25; `desk` builds*
+- [ ] Env files for `shared`, `n8` and `<FILL_ME_wife>`; `icloudpd-login shared`
+      (which also logs in for `n8`) and paste the printed `SharedSync-…` into
+      `shared.env`
+- [ ] `systemctl --user start icloudpd@shared`, and confirm the test photos
+      from both phones landed in `/srv/media/icloud/shared/`
+- [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the pop-up; restore it
 - [ ] [BIOS tuning](#bios-tuning) validated
-- [ ] One-time `PrimarySync` copy for n8, then for n8's wife. Counts match;
-      a second run downloads nothing. Delete the wife's cookie directory
-- [ ] `hosts/desk/icloud.nix` imported. `--auth-only` into
-      `/var/lib/icloudpd/shared`, then `systemctl start icloudpd@shared` and
-      confirm the test photos from both phones landed
-- [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the failure is
-      noticed; restore it
-- [ ] Two weeks later: `systemctl list-timers icloudpd@shared` shows daily
+- [ ] Backfill `icloudpd@n8`, then `icloudpd@<FILL_ME_wife>`. Counts match;
+      a second start downloads nothing. Then `icloudpd-forget <FILL_ME_wife>`
+- [ ] Two weeks later: `systemctl --user list-timers 'icloudpd@*'` shows daily
       runs, and new photos from both phones are on the share
 
 ---

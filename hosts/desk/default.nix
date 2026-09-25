@@ -20,6 +20,7 @@
     ./desktop.nix
     ./gdrive.nix
     ./media.nix
+    ./icloud.nix
     ./printing.nix
     ./iphone.nix
     ./eco.nix
