@@ -60,6 +60,11 @@
   #   the system hangs hard enough that it stops, the board resets in 30 s.
   # Together a panic or a hang costs a try instead of waiting for a person.
   boot.loader.systemd-boot.bootCounting.enable = true;
+  # No menu countdown (5.3 s of every boot, measured 2026-09-25). The menu is
+  # still there: hold Space while the machine boots, or ask for it from Linux
+  # with `systemctl reboot --boot-loader-menu=30`, or skip it with
+  # `systemctl reboot --boot-loader-entry=<entry>` (list: `=help`).
+  boot.loader.timeout = 0;
   boot.kernelParams = [ "panic=10" ];
   systemd.settings.Manager.RuntimeWatchdogSec = "30s";
 
