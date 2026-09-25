@@ -145,13 +145,21 @@ def lower_tags(d):
 
 def pdfinfo(path):
     r = run(["pdfinfo", str(path)])
+    return parse_pdfinfo(r.stdout, r.returncode, r.stderr)
+
+
+def parse_pdfinfo(out, code=0, err=""):
     info = {}
-    for line in r.stdout.splitlines():
+    for line in out.splitlines():
+        # Indented lines describe a subtype (PDF/X's "Title: ISO 15930 …"),
+        # not the document: they must not replace its Title.
+        if line[:1].isspace():
+            continue
         k, sep, v = line.partition(":")
         if sep:
-            info[k.strip()] = v.strip()
-    if r.returncode:
-        info["error"] = r.stderr.strip()[:300]
+            info.setdefault(k.strip(), v.strip())
+    if code:
+        info["error"] = err.strip()[:300]
     return info
 
 

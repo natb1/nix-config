@@ -192,6 +192,17 @@ class Layout(unittest.TestCase):
 
 
 class Helpers(unittest.TestCase):
+    def test_pdfinfo_pdfx_subtype_title(self):
+        # pdfinfo on a PDF/X file: the subtype block repeats "Title".
+        out = ("Title:           Witches of Frostwyck - Map - Area\n"
+               "PDF subtype:     PDF/X-1:2001\n"
+               "    Title:         ISO 15930 - Electronic document file format for prepress digital data exchange (PDF/X)\n"
+               "    Abbreviation:  PDF/X-1:2001\n"
+               "Pages:           1\n")
+        info = ms.parse_pdfinfo(out)
+        self.assertEqual(info["Title"], "Witches of Frostwyck - Map - Area")
+        self.assertEqual(info["Pages"], "1")
+
     def test_strip_variants(self):
         self.assertEqual(ms.strip_variants("Saving Saxham (Cairn, v1)"), "Saving Saxham")
         self.assertEqual(ms.strip_variants("Republic (tr. Grube, rev. Reeve)"), "Republic")
