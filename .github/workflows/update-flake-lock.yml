@@ -1,4 +1,4 @@
-# Weekly flake.lock bump, committed straight to main — no PR to merge.
+# Daily flake.lock bump, committed straight to main — no PR to merge.
 #
 # The gate is evaluation plus the x86_64-linux checks: every host's system
 # derivation must evaluate against the new lock, or nothing is pushed. It does
@@ -8,7 +8,7 @@ name: update flake.lock
 
 on:
   schedule:
-    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+    - cron: "0 9 * * *" # daily 09:00 UTC
   workflow_dispatch:
 
 permissions:
