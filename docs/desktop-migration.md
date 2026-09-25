@@ -3761,8 +3761,16 @@ target: one moves, the other stops on the lock, nothing is overwritten.
 - [ ] Library read-only from the Mac: after both switches, `/Volumes/media`
       and `/Volumes/media-staging` mount; `touch /Volumes/media/x` fails;
       `README.md` is on both; a fresh `claude` on the Mac asked to "put this
-      video on the media share" picks up the `media-share` skill
-- [ ] The Mac's Downloads videos, by [Filing a batch](#filing-a-batch)
+      video on the media share" picks up the `media-share` skill — *desk's
+      half verified 2026-09-25 after its switch: `media` read-only and
+      `media-staging` writable in `testparm`, `media-readme` active, README on
+      both, `~/.claude/CLAUDE.md` and the skill linked (and listed by a running
+      session). The Mac's half not yet: it was offline*
+- [ ] **Postponed** (decided 2026-09-25): the Mac's Downloads videos, by
+      [Filing a batch](#filing-a-batch). Not before `print` and `audio` are
+      filed and `lint` is clean, so the procedure has been through one real
+      batch first. Nothing is lost by waiting: the videos stay in the Mac's
+      Downloads, and nothing there is deleted until they are filed
 - [ ] `gcloud auth login`; save the GCS listing to `/srv/media/gcs/listing.txt`
       and check the storage class (`gcloud storage buckets describe`)
 - [ ] Re-download the listed videos from the internet into `movies/` and
