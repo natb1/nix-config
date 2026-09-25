@@ -1,0 +1,23 @@
+--- a/src/core/src/bluetooth/connection.cpp
++++ b/src/core/src/bluetooth/connection.cpp
+@@ -899,10 +899,17 @@
+             map_lists_sent = false;
+             std::string nav_err;
+             // Relative: the session is parked on the message root.
+-            if (!session->set_folder(MAP_FOLDER_INBOX, nav_err))
++            if (!session->set_folder(MAP_FOLDER_INBOX, nav_err)) {
+                 debug::log(WARN, "bluetooth: SetFolder({}) failed: {}", MAP_FOLDER_INBOX, nav_err);
+-            err.clear();
+-            listings = session->list_messages("", MESSAGE_LIST_MAX, err);
++                // Not in the inbox, so listing "" would list wherever the session
++                // is parked — often the root, which answers with no messages and
++                // no error, and the session would never be reopened. Reopen now.
++                err = nav_err;
++                map_failures = MAP_FAILURES_BEFORE_REOPEN;
++            } else {
++                err.clear();
++                listings = session->list_messages("", MESSAGE_LIST_MAX, err);
++            }
+         }
+ 
+         if (!err.empty()) {
