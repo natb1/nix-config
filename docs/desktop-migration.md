@@ -3426,10 +3426,10 @@ once, for the one-time copy, and never again.
 
 | | Personal library (`PrimarySync`) | Shared library (`SharedSync-…`) |
 | --- | --- | --- |
-| What lands in it | Everything **before** the camera switch, plus, afterwards, screenshots, images saved from Messages/Safari, and photos from other camera apps | Every **Camera app** photo and video from both phones after the switch |
+| What lands in it | Everything **before** the camera switch, plus, afterwards, screenshots, images saved from Messages/Safari, and photos from other camera apps | Every **Camera app** photo and video from both phones after the switch, taken with the Shared Library button on |
 | Backup | **Once**, per account, right after the switch | **Ongoing**, daily timer, n8's account only |
 | Lands in | `/srv/media/icloud/n8/`, `/srv/media/icloud/<FILL_ME_wife>/` | `/srv/media/icloud/shared/` |
-| Accepted gap | Screenshots and saved images after the switch are not backed up. The one-time run can be repeated by hand at any time; it skips files it already has | Items someone moves back to their personal library drop out of the ongoing backup |
+| Accepted gap | Screenshots and saved images after the switch are not backed up. The one-time run can be repeated by hand at any time; it skips files it already has | Items someone moves back to their personal library, and any shot taken with the Camera button switched off, drop out of the ongoing backup |
 
 #### Prerequisites, on both Apple IDs
 
@@ -3461,14 +3461,29 @@ once, for the one-time copy, and never again.
    counts across two libraries. A photo moved in by mistake can be moved back
    to the personal library afterwards.
 3. On **both** phones: Settings → Photos → Shared Library → *Sharing from
-   Camera* → **Share Automatically** on, and **Share When at Home** off, so
-   sharing does not depend on where the phone is.
-4. On both phones, open Camera and check that the Shared Library button (two
-   people) is on. It can be switched per shot, and that choice sticks.
+   Camera* **on**, set to **Share Manually** — *not* Share Automatically.
+   *Corrected 2026-09-25, found in the iOS settings:* **Share Automatically is
+   proximity-based.** It shares only when the phone detects another participant
+   nearby (or at home, with *Share When at Home*). A photo taken while apart
+   would land in the personal library, which only gets the one-time copy, so
+   it would never be backed up. iOS has no "every Camera photo" setting;
+   Share Manually with the Camera button left on is the closest there is.
+4. On both phones, open Camera and turn the Shared Library button (two
+   people, top of the viewfinder) **on**. Under Share Manually the button is
+   the whole mechanism, so check that it **stays** on: close Camera, reopen
+   it, and restart the phone. If it resets, this design has a hole, and the
+   fallback is below.
 5. **Record the switch date.** It is where the personal snapshots end and the
    shared library begins.
 
 This half has no dependency on the machine and can happen today.
+
+**Fallback, if the Camera button turns out not to stick,** or if it gets
+switched off and forgotten: make n8's own personal library ongoing too. The
+same session on n8's account sees both `PrimarySync` and `SharedSync-…`, so
+that costs a second timer instance and no extra 2FA. The wife's personal
+library is the one that cannot be made ongoing without keeping a second
+session alive, so the wife's Camera button is what to check.
 
 #### One-time copy of each personal library
 
@@ -3570,8 +3585,9 @@ becomes an `OnFailure` alert.
 - [ ] Create the Shared Library and invite the other account. Both the
       creator (at setup) and the invitee (on accepting) choose *Choose
       Manually* and move **no** existing photos
-- [ ] Both phones: *Share Automatically* on, *Share When at Home* off, Camera's
-      Shared Library button on. Take a test photo on each and confirm it shows
+- [ ] Both phones: *Sharing from Camera* on, **Share Manually**, Camera's
+      Shared Library button on and still on after closing Camera and after a
+      restart. Take a test photo on each and confirm it shows
       up under the Shared Library on the *other* phone. Record the switch date
 - [ ] Record each personal library's photo and video counts, as of the switch
 - [ ] [BIOS tuning](#bios-tuning) validated
