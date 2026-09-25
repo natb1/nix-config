@@ -66,14 +66,18 @@ class StageSession(TerminalImportSession):
         self.staging = staging
         self.answers = answers
         self.review = []  # albums for a person
-        self.imported = 0
+        self.dupmode = {}  # answers: folder -> dup:merge/remove/keep chosen
+        self.merging = set()  # folders whose merged task is on its way back
+        review = Path(staging.rstrip("/") + ".review.json")
+        self.review_items = ({i["id"]: i for i in json.loads(review.read_text())["items"]}
+                             if answers is not None and review.exists() else {})
 
     # -- helpers
 
     def key(self, task):
         return os.path.relpath(displayable_path(task.paths[0]), self.staging)
 
-    def record(self, task, why, options, match=None):
+    def record(self, task, why, options, twin=None):
         key = self.key(task)
         items = sorted(task.items, key=lambda i: (i.disc or 0, i.track or 0, displayable_path(i.path)))
         guess = next((g for g in (from_name(i.path) for i in items) if g), {})
@@ -107,7 +111,7 @@ class StageSession(TerminalImportSession):
                 {"key": "album", "label": "Album", "value": album},
                 {"key": "year", "label": "Year", "value": str(first.year or "")},
             ]},
-            "match": match,
+            "twin": twin,
         })
 
     @staticmethod
@@ -132,6 +136,39 @@ class StageSession(TerminalImportSession):
             "recommended": best and score >= 60,
         }
 
+    # -- an album already in the library
+    #
+    # Applying a release imports only the files that match its tracks: files
+    # MusicBrainz does not list (a suite's movements it counts as one track)
+    # stay in staging, and so does a second copy of an album already filed.
+    # Both come back here as an album that has a twin in the library, and the
+    # person decides: add these files to it, replace it, keep both, or not.
+
+    TWIN_FIELDS = ("albumartist", "album", "year", "mb_albumid", "mb_albumartistid",
+                   "mb_releasegroupid", "albumtype", "label", "comp", "disctotal")
+
+    def twin(self, task):
+        first = task.items[0]
+        best = task.candidates[0].info.album_id if task.candidates else None
+        for a in self.lib.albums():
+            if best and a.mb_albumid == best:
+                return a
+            if first.album and (a.album or "").casefold() == first.album.casefold():
+                return a
+        return None
+
+    def dup_options(self, twin, here):
+        there = len(list(twin.items()))
+        name = f"{twin.albumartist} – {twin.album}" + (f" ({twin.year})" if twin.year else "")
+        return [
+            {"value": "dup:merge", "label": f"Add these files to {name}",
+             "detail": f"{there} tracks there + {here} here, filed as one album with its tags"},
+            {"value": "dup:remove", "label": "Replace the library copy with this one",
+             "detail": f"the {there} tracks there are deleted; these {here} are filed with its tags"},
+            {"value": "dup:keep", "label": "Keep both", "detail": "filed as a second album of the same name"},
+            {"value": "dup:skip", "label": "Keep only the library copy", "detail": "this one stays in staging"},
+        ]
+
     # -- decisions beets would have prompted for
 
     def choose_match(self, task):
@@ -139,16 +176,45 @@ class StageSession(TerminalImportSession):
             return self.answered(task)
         if task.rec == Recommendation.strong and task.candidates:
             return task.candidates[0]
+        twin = self.twin(task)
+        cands = [self.candidate(m, n == 0 and not twin) for n, m in enumerate(task.candidates[:5])]
+        if twin:
+            there = len(list(twin.items()))
+            self.record(task, f"like an album already filed ({there} tracks there, {len(task.items)} here)",
+                        self.dup_options(twin, len(task.items)) + cands, twin=twin.id)
+            return Action.SKIP
         why = {Recommendation.none: "no match beets would accept",
                Recommendation.low: "weak match",
                Recommendation.medium: "close match"}.get(task.rec, "needs a look")
         why += f" (best {round(100 * (1 - float(task.candidates[0].distance)))}%)" if task.candidates else ": nothing found"
-        self.record(task, why, [self.candidate(m, n == 0) for n, m in enumerate(task.candidates[:5])])
+        self.record(task, why, cands)
         return Action.SKIP
 
     def answered(self, task):
-        a = self.answers.get(item_id(self.key(task)))
+        key = self.key(task)
+        if key in self.merging:     # the merged task beets builds for dup:merge
+            return Action.RETAG
+        a = self.answers.get(item_id(key))
         if not a or a["choice"] == "skip":
+            return Action.SKIP
+        value = a.get("value", "")
+        if value in ("dup:merge", "dup:remove", "dup:keep"):
+            twin = self.lib.get_album((self.review_items.get(item_id(key)) or {}).get("twin") or 0)
+            if not twin:
+                ui.print_(f"stagereview: {key}: the library album to join is gone; left in staging")
+                return Action.SKIP
+            for i in task.items:
+                for f in self.TWIN_FIELDS:
+                    if twin.get(f) is not None:
+                        setattr(i, f, twin.get(f))
+                i.artist = i.artist or twin.albumartist
+                guess = from_name(i.path)
+                i.title = i.title or guess.get("title", "")
+                i.track = i.track or int(guess.get("track") or 0)
+            self.dupmode[key] = value
+            task.__dict__.pop("source", None)  # cached from the old tags; the duplicate check reads it
+            return Action.RETAG
+        if value == "dup:skip":
             return Action.SKIP
         if a["choice"] == "custom":
             f = a.get("fields") or {}
@@ -161,10 +227,8 @@ class StageSession(TerminalImportSession):
                     i.year = int(f["year"])
                 i.title = i.title or guess.get("title", "")
                 i.track = i.track or int(guess.get("track") or 0)
+            task.__dict__.pop("source", None)
             return Action.RETAG
-        value = a.get("value", "")
-        if value.startswith("dup:"):
-            value = a.get("match") or ""
         if value.startswith("mb:"):
             task.lookup_candidates([value[3:]])
             if task.candidates:
@@ -173,18 +237,17 @@ class StageSession(TerminalImportSession):
         return Action.SKIP
 
     def get_duplicate_action(self, task, found_duplicates):
+        key = self.key(task)
         if self.answers is not None:
-            a = self.answers.get(item_id(self.key(task))) or {}
+            mode = self.dupmode.get(key)
+            if mode == "dup:merge":
+                self.merging.add(key)
+                return DuplicateAction.MERGE
             return {"dup:keep": DuplicateAction.KEEP, "dup:remove": DuplicateAction.REMOVE}.get(
-                a.get("value"), DuplicateAction.SKIP)
-        where = "; ".join(sorted({displayable_path(d.item_dir() if hasattr(d, "item_dir") else d.path)
-                                  for d in found_duplicates}))
-        match = task.match
-        self.record(task, f"already in the library: {where}", [
-            {"value": "dup:skip", "label": "Keep the library copy", "detail": "this one stays in staging", "recommended": True},
-            {"value": "dup:remove", "label": "Replace the library copy with this one", "detail": ""},
-            {"value": "dup:keep", "label": "Keep both", "detail": "filed as two albums"},
-        ], match=f"mb:{match.info.album_id}" if match and getattr(match.info, "album_id", None) else None)
+                mode, DuplicateAction.SKIP)
+        twin = found_duplicates[0]
+        self.record(task, f"already in the library ({len(list(twin.items()))} tracks there, {len(task.items)} here)",
+                    self.dup_options(twin, len(task.items)), twin=twin.id)
         return DuplicateAction.SKIP
 
     def should_resume(self, path):

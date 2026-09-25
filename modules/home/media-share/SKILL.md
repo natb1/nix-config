@@ -95,7 +95,12 @@ agent or person per batch.
    - Audio: `beet stage-review --answers /srv/media/staging/<batch>.answers
      /srv/media/staging/<batch>`. A chosen release is applied by its id,
      hand-entered tags as-is, "Leave it in staging" leaves the album where it
-     is.
+     is. A chosen release takes only the files that match its tracks, and an
+     album already filed under the same name is not filed twice. Whatever is
+     left (a suite's extra movements, a second copy) goes round again: `beet
+     stage-review --batch <batch>-2 …`, a new tab on the page, where each
+     leftover offers "add these files to the album already filed", replace
+     it, keep both, or leave in staging.
 8. **Apply**, on desk: `media-stage apply /srv/media/staging/<batch>`
    (from the Mac: `ssh desk media-stage apply /srv/media/staging/<batch>`).
    It re-checks, moves, writes standard metadata and logs to
