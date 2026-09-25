@@ -49,12 +49,15 @@ let
   # one account and share one session.
   loginScript = pkgs.writeShellApplication {
     name = "icloudpd-login";
-    runtimeInputs = [ pkgs.icloudpd ];
+    runtimeInputs = [ pkgs.icloudpd pkgs.coreutils ];
     text = ''
       instance=''${1:?usage: icloudpd-login <instance>}
       # shellcheck source=/dev/null
       . "${envFile "$instance"}"
       cookies="''${XDG_STATE_HOME:-$HOME/.local/state}/icloudpd/$APPLE_ID"
+      # pyicloud makes only the last directory, and the parent is otherwise
+      # the unit's StateDirectory — which does not exist before its first run.
+      install -d -m 0700 "$(dirname "$cookies")" "$cookies"
       # keyring first, so a stored password is used; console second, and
       # icloudpd writes a console-typed password back to the keyring.
       icloudpd --username "$APPLE_ID" --cookie-directory "$cookies" \
