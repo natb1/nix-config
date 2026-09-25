@@ -2732,7 +2732,18 @@ What to expect:
       recurs every time, report it upstream with `tetherd.log`. *Alert added
       the same day:* the `tether-ancs-watch` user service (in `iphone.nix`)
       polls `tether --bt-connection` each minute and posts one swaync alert
-      after five minutes of BR/EDR up with Notifications down
+      after five minutes of BR/EDR up with Notifications down. *Second
+      absence, 2026-09-24 19:14 → next morning: failed the same way, and it
+      answers the open question.* LE dropped at 19:16, within two minutes of
+      walking off, and mirroring rebuilt itself once; BR/EDR went at 19:18
+      and flapped at the edge of range until 20:03. From then on the phone
+      was in range all night — BR/EDR up, MAP working — and never answered LE
+      again, although tetherd solicited ANCS every three minutes for twelve
+      hours. A Bluetooth cycle on the phone at about 08:15 cleared it (LE and
+      mirroring back by 08:30). So the wedge is set **on the way out**, while
+      crossing the edge of range, and time in range does not clear it: two
+      departures, two wedges. Next: an iOS automation that cycles Bluetooth
+      when the phone joins the home Wi-Fi, and the upstream report
 
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
