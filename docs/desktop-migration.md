@@ -3355,7 +3355,7 @@ out of GCS.
 | Google Drive | `rclone copy gdrive:<path> /srv/media/<dest> --progress` | Use the Drive remote configured for Phase 3's mount, not the mount itself — `copy` against the API is faster and resumable. Google-native Docs/Sheets are not media; exclude them |
 | Google Photos | **Google Takeout, not `rclone`** ([takeout.google.com](https://takeout.google.com)) → deselect everything, select *Google Photos*, delivery **to Google Drive**, `.tgz`, 50 GB parts. Then pull the parts with the Drive remote already configured above and unpack into `/srv/media/google-photos/` | Do **not** use `rclone`'s `google photos` backend for the archival copy. It can only see the library through the Photos Library API, which **strips GPS EXIF from every download** and re-encodes some originals — the loss is silent and it is not recoverable later. Takeout is the only route that yields the true originals. What it costs: each photo arrives with a **sidecar `.json`** holding the timestamp, GPS, description and album membership, and the metadata has to be merged back into the files (`exiftool`, or `google-photos-takeout-helper`) before the sidecars are worth less than the originals |
 | Google Drive shared drives `print` and `audio` | `rclone copy gdrive,team_drive=<id>: /srv/media/<name>/ --progress`, the ID from `rclone backend drives gdrive:` | Shared drives, not folders — invisible to plain `gdrive:` and to `--drive-shared-with-me`. *2026-09-25:* `print` 182 files, 2.72 GiB; `audio` 800 files, 6.16 GiB. **Not gated on Step 2 or BIOS tuning:** they are copies, Drive keeps the originals until the sources are retired, and `rclone check` catches a corrupt copy |
-| GCS bucket | **List, then re-download from the internet — not `rclone copy`.** `gcloud auth login`, then `gcloud storage ls --long --recursive 'gs://<bucket>/**' > /srv/media/gcs/listing.txt`. Work down the listing, fetching each video from where it came from (`yt-dlp <url>` for video sites) into `/srv/media/gcs/` | Listing is metadata only: a handful of Class A operations, no egress. The listing is the manifest — keep it, it is the only record of what the bucket held once it is retired. A video with no source left online is pulled by name (`gcloud storage cp gs://<bucket>/<object> /srv/media/gcs/`), and only those pay egress |
+| GCS bucket | **List, then re-download from the internet — not `rclone copy`.** `gcloud auth login`, then `gcloud storage ls --long --recursive 'gs://<bucket>/**' > /srv/media/gcs/listing.txt`. Work down the listing, fetching each video from where it came from straight into `movies/` or `tv/` under [the layout below](#layout-on-the-share) | Listing is metadata only: a handful of Class A operations, no egress. The listing is the manifest — keep it, it is the only record of what the bucket held once it is retired. A video with no source left online is pulled by name (`gcloud storage cp gs://<bucket>/<object> <dest>`, then named to the layout), and only those pay egress |
 | MacBook | From the Mac: `rsync -avh --progress ~/<path>/ n8@desk:/srv/media/<dest>/` over Tailscale | Or drag into the SMB share from Finder. `rsync` is resumable and prints what it skipped |
 | Flickr | Account settings → *Your Flickr data* → request the export; download the zip parts when Flickr emails; unzip into `/srv/media/flickr/` | Contains the **originals** plus separate JSON for titles, descriptions, albums and tags — keep the JSON alongside, it is the only copy of that metadata outside Flickr. Fallback if the export is unusable: `gallery-dl` against the account with an API key |
 
@@ -3422,6 +3422,96 @@ unpacked contents coexist until the merge is verified, so the ingest needs
 roughly **twice the Photos library size free** at its peak, on a volume that is
 also holding the other four sources un-de-duplicated.
 
+#### Layout on the share
+
+Added 2026-09-25. Each source lands **as it came** in a staging directory
+(`/srv/media/print/`, `/srv/media/audio/`, …), is verified there, and only
+then is **moved** into the library below — renaming during the copy would
+leave nothing for `rclone check` to compare. Once a staging directory is empty
+it goes. Nothing is kept for compatibility with the old names: the Drive
+shares' `.commons-print/index.json` (a reader's page counts and two bookmarks)
+is not carried over.
+
+```
+/srv/media/
+  music/<album artist>/<album> (<year>)/<disc>-<track> <title>.mp3
+  books/<author>/<title>.<ext>
+  rpg/<game or line>/<title> (<variant>).<ext>
+  movies/<title> (<year>)/<title> (<year>).<ext>
+  tv/<show> (<year>)/Season <NN>/<show> (<year>) - S<NN>E<NN> - <episode>.<ext>
+  youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
+```
+
+The video half is the naming Jellyfin, Plex, Kodi and Infuse all parse without
+per-file hints, which keeps the choice of player open — Infuse on the iPhone
+reads the SMB share as it stands. Names stay SMB-safe for the Windows clients:
+none of `: * ? " < > |`.
+
+**Music** — by tag, never by file name. The `audio` drive's names are
+unreliable: `…Shoemaker's Wife.mp3` and `…Shoemaker's Wife_1.mp3` are two
+different pieces from two different CDs by their tags, and the 34 `_N`
+suffixes (33 of them Liszt) are flattened disc collisions, not duplicates.
+[`beets`](https://beets.io) (`pkgs.beets`) with MusicBrainz, `move: yes`, path
+`$albumartist/$album%aunique{} ($year)/$disc-$track $title`:
+
+- **Album artist is the performer** for classical (Julian Bream), with the
+  composer in the composer tag. Otherwise one Bream box set scatters across
+  "Dowland", "Bach", "Unknown Artist" and "Bream, Julian".
+- **Untagged albums are tagged by hand** — the Crown and Skull / Daisy Crown
+  soundtracks carry no tags and are unlikely to be on MusicBrainz; import them
+  as-is (`beet import -A`) after fixing album/artist/track.
+
+**RPG** — one folder per game or product line, **not** per rules system: a
+multi-system adventure (Witches of Frostwyck: Cairn, 5e, OSR) keeps its
+versions together. A third-party adventure for one game sits in that game's
+folder (The Drops of St Jerome under `Cairn/`). System-neutral aids go in
+`GM Tools/`. Variants go in the parentheses — system, layout (pages, spreads,
+booklet), paper size (A4, letter, 11x14), version where it matters — and are
+**not duplicates**: pages are for screens, spreads for print. Storefront noise
+is dropped (`(1)`, `OEF2025_11_12`, `_DTHKOw`, `pdfcoffee.com_`). A later
+re-download from a storefront arrives under the publisher's name and is renamed
+by hand to match.
+
+**Books** — `books/<author>/<title>.<ext>`, translator in the parentheses where
+there is a choice of translation. Ten books need no Calibre; the layout is one
+Calibre or Kavita can adopt if the shelf grows.
+
+**Video** — files named after the title, not after the source:
+
+- **Movies**: one folder per film, year always included (it is how every
+  scraper tells remakes apart). Extras go under `extras/` in that folder,
+  subtitles beside the film as `<title> (<year>).en.srt`, an alternate cut as
+  `<title> (<year>) - <edition>.<ext>`.
+- **TV**: specials are `Season 00`. A multi-episode file is `S01E01-E02`.
+- **YouTube** (and any other `yt-dlp` site): grouped by channel, dated by
+  upload, the video id kept so a re-download dedupes against it. One
+  command, rerunnable:
+
+  ```sh
+  yt-dlp --download-archive /srv/media/youtube/.archive \
+         --windows-filenames --embed-metadata --embed-subs --write-info-json \
+         -o '/srv/media/youtube/%(channel)s/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s' <url>
+  ```
+
+  A YouTube video that is really a film or an episode is filed under
+  `movies/` or `tv/` instead; `youtube/` is for things that only exist as
+  videos.
+
+**The `print` rename is a reviewed table**, not a regex: 181 files, drafted
+2026-09-25 as `/srv/media/print-rename.tsv` (old name, new path, note). It is
+kept on the share and **not in this repo**, which is public. Folder and name
+for the files whose names said nothing (Stonetop's `Arcana.pdf`, Frostwyck's
+`map-area.pdf`, the Dungeon Age `Tomb-*`) came from each PDF's own text and
+metadata. Rows noted `check` are guesses — review those first. Then, from
+`/srv/media` after `rclone check` has passed on the staging copy:
+
+```sh
+tail -n +2 print-rename.tsv | while IFS=$'\t' read -r old new note; do
+  mkdir -p "$(dirname "$new")" && mv -n -- "print/$old" "$new"
+done
+find print -type f    # anything listed was not moved: a collision or a typo
+```
+
 #### Checklist
 
 - [x] Bulk drive partitioned as btrfs by disko (§1), with `autoScrub` enabled —
@@ -3485,10 +3575,15 @@ also holding the other four sources un-de-duplicated.
 - [ ] Pull the `print` and `audio` shared drives into `/srv/media/print/` and
       `/srv/media/audio/`; `rclone check --one-way` each. Not gated: the
       Drive originals stay until the restore proof
+- [ ] Review `/srv/media/print-rename.tsv` (the `check` rows first) and apply
+      it into `rpg/` and `books/`; `print/` ends empty
+- [ ] `beets` over `audio/` into `music/`: performer as album artist, the
+      untagged soundtracks by hand; `audio/` ends empty
 - [ ] `gcloud auth login`; save the GCS listing to `/srv/media/gcs/listing.txt`
       and check the storage class (`gcloud storage buckets describe`)
-- [ ] Re-download the listed videos from the internet; pull by name only the
-      ones with no source left; count against the listing
+- [ ] Re-download the listed videos from the internet into `movies/` and
+      `tv/`, named to [the layout](#layout-on-the-share); pull by name only
+      the ones with no source left; count against the listing
 - [ ] [BIOS tuning](#bios-tuning) validated — memory proven stable before
       irreplaceable data passes through it
 - [ ] Ingest from Drive, Photos, the MacBook and Flickr into separate
