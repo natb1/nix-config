@@ -89,7 +89,10 @@
       # packet"), but that says the feature exists, not that this card, this
       # firmware and AM5's s2idle resume cleanly together. Phase 8 sets the
       # bar: 10/10 clean suspend/resume cycles and 5/5 magic-packet wakes.
-      # Until it passes, screens off is the whole idle behaviour — a desktop
+      # And a second gate (2026-09-25): a LAN-side wake relay (the ESP8266)
+      # that wakes desk from the phone on cellular, 5/5 — a LAN-only wake
+      # strands the share exactly when it is wanted, away from home.
+      # Until both pass, screens off is the whole idle behaviour — a desktop
       # that will not wake is worse than one that never sleeps, and this box
       # is also a server.
     ];

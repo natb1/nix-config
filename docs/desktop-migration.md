@@ -516,6 +516,9 @@ fonts, browser") but no desktop in it. Settled here, in full in
   and other apps' secrets under a password of its own.
 - **Idle: screens off, then suspend if Wake-on-WLAN proves reliable**; if it
   does not, screens off and never suspend. Phase 8 decides, with a stated bar.
+  *Tightened 2026-09-25:* suspend is also blocked until a
+  [wake relay](#second-gate-a-wake-relay-that-works-from-off-the-lan) can wake
+  `desk` from off the LAN.
 - **iPhone notifications on the desktop over ANCS** (Bluetooth LE), via
   `ancs4linux` into swaync. A use case today.
 - **The dGPU is lent to the host on demand**, not handed over at boot: the
@@ -2672,7 +2675,9 @@ networking.networkmanager.settings.connection."wifi.wake-on-wlan" = "magic";
   `wakeonlan f0:a6:54:14:9b:0d`. Over the tailnet there is nothing to send
   one: a sleeping `desk` is simply offline to Tailscale, Samba, CUPS and the
   mux server until something on the LAN wakes it. This is the real cost of
-  suspending, and the reason the fallback exists.
+  suspending, and why suspend is blocked on the
+  [remote wake relay](#second-gate-a-wake-relay-that-works-from-off-the-lan)
+  below — away from home is exactly when the share is wanted.
 - **The nightly backup wakes the machine itself**: the restic timer has
   `WakeSystem = true`, so the RTC wakes it, restic runs, and swayidle suspends
   it again after 15 idle minutes.
@@ -2690,6 +2695,66 @@ or mt7921e errors in `journalctl -k -b`), and 5 of 5 magic packets from the
 Mac wake it. Anything less, delete the second timeout and write down why here.
 Both the MT7922's WoWLAN and AM5's s2idle have mixed track records on
 Linux, so the bar is set to catch exactly those.
+
+#### Second gate: a wake relay that works from off the LAN
+
+**Decided 2026-09-25: suspend does not land until this exists and passes.**
+Meeting the bar above is necessary but not enough. A LAN-only wake means a
+`desk` that suspends while you are out stays asleep until you are home — and
+off the LAN is when the share is needed most (it was verified from the
+iPhone on cellular, 2026-09-25: a live SMB session over a direct tailnet
+path). Until the relay passes, swayidle keeps doing what it does today:
+screens off, never suspend.
+
+Nothing on the tailnet can do the job, because the tailnet sleeps with
+`desk`: tailscaled is suspended, the T-Mobile gateway's NAT and firewall
+state lapse, and the coordination server marks the node offline. The
+Wi-Fi's own pattern-match wake (one pattern, offset 0) could match a UDP
+packet to 41641, but nothing would ever reach it. So the wake has to come
+from something that stays awake on the LAN.
+
+**The relay: the ESP8266 on hand.** The Arduino Uno is out — it has no
+network hardware, and with an Ethernet shield it still has no TLS and would
+need a cable to the gateway. The ESP8266 is on the same Wi-Fi as `desk`, and:
+
+- **It cannot join the tailnet** (no Tailscale client runs on it), so it
+  listens *outbound* instead: it holds a subscription to an ntfy topic
+  (ntfy.sh's JSON stream, or a poll), which works from behind the T-Mobile
+  CGNAT with no port forward. The same service the
+  [ntfy follow-up](#push-alerts-to-the-phone-ntfy) would use for alerts in
+  the other direction.
+- **On a wake message it broadcasts the magic packet**: UDP to
+  `192.168.12.255:9` (the LAN is `192.168.12.0/24`), for
+  `f0:a6:54:14:9b:0d`. Broadcast, not unicast: a sleeping `desk` does not
+  answer ARP.
+- **Trigger from the phone**: an iOS Shortcut that POSTs to the topic (or the
+  ntfy app). Then wait for `desk` to show online in the Tailscale app.
+- **Authenticated enough.** The topic name is a secret, and the message must
+  carry a shared token the firmware checks, so it has to go over HTTPS
+  (BearSSL on the ESP8266), never plain HTTP. The worst a leaked secret buys a
+  stranger is waking `desk`: the share still needs the tailnet *and* the
+  Samba password.
+- **Health.** The firmware posts a heartbeat on boot and every few hours to a
+  second topic, so a dead relay is noticed before the trip, not during it.
+  A hardware watchdog restarts it if the stream hangs.
+- **Secrets stay out of this repo**, which is public: firmware source can
+  live here, but the Wi-Fi PSK, topic and token go in an untracked header,
+  listed in the README's unmanaged-state section.
+
+**The bar**, in Phase 8, with the phone's Wi-Fi *off*: 5 of 5 suspends woken
+by the relay from the phone on cellular, each ending with an SMB listing of
+`media` from the phone; plus the relay surviving a power cycle of itself
+(it reconnects to Wi-Fi and ntfy without a hand). Anything less, and suspend
+stays out.
+
+- [ ] ESP8266 firmware: Wi-Fi, ntfy subscription over HTTPS, token check,
+      magic-packet broadcast, heartbeat, watchdog
+- [ ] Relay powered from something that stays on (a USB charger, not
+      `desk`'s own ports, which lose power in suspend)
+- [ ] Wi-Fi's `power/wakeup` enabled on `desk` (it reads `disabled` today,
+      2026-09-25 — nothing sets it yet)
+- [ ] iOS Shortcut that sends the wake
+- [ ] Only then: the suspend timeout in `hosts/desk/home/desktop.nix`
 
 ### iPhone notifications over ANCS
 
@@ -2909,7 +2974,10 @@ What to expect:
 - [ ] A screen share (Chrome → Meet) sees the niri outputs through the portal
 - [ ] Idle: monitors off at 10 min; with nothing busy, suspend at 15; the
       suspend bar in [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)
-      met or suspend removed. Everything else is in Phase 8
+      met or suspend removed. Everything else is in Phase 8. *Blocked
+      2026-09-25 on the
+      [wake relay](#second-gate-a-wake-relay-that-works-from-off-the-lan):
+      until it passes, monitors off and never suspend*
 
 ---
 
@@ -4738,6 +4806,10 @@ in full, and then the parts that only show up under load:
       [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it). Plus:
       no suspend while `win` runs, while restic runs, while the Mac has an SMB
       mount or a mux pane open. Miss any, and suspend comes out
+- [ ] **The remote wake bar**: 5/5 wakes through the ESP8266 relay from the
+      phone on cellular, per
+      [Second gate](#second-gate-a-wake-relay-that-works-from-off-the-lan).
+      Suspend is not wired up until this and the suspend bar both pass
 - [ ] After an RTC wake for the nightly backup, the machine suspends again on
       its own
 
@@ -4904,10 +4976,11 @@ Still to do, after Phase 8:
 18. **A sleeping `desk` that nobody can wake.** Suspend takes Samba, CUPS,
     the mux server and Tailscale offline together, and only a magic packet
     from the LAN brings them back. That cost is accepted, but it only stays
-    acceptable if the wake is reliable. The bar in
-    [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) is what
-    turns this from a slow annoyance into a decision. Below it, suspend comes
-    out.
+    acceptable if the wake is reliable *and reachable from away*. The bar in
+    [Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it) and the
+    [wake relay's](#second-gate-a-wake-relay-that-works-from-off-the-lan) are
+    what turn this from a slow annoyance into a decision. Below either,
+    suspend stays out.
 
 ## Deliberately not doing
 
