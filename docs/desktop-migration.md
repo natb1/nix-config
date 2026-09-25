@@ -580,6 +580,9 @@ the text was wrong about how the machine behaves.
 | Game library vs ProtonDB, and each title's Secure Boot/TPM requirement | Before Phase 7; Phase 2b | Which titles need Windows at all, which of those need bare metal (kernel anti-cheat), and which of *those* refuse to start without Secure Boot (e.g. Battlefield 6, recent Call of Duty). The last list is why [Phase 2b](#phase-2b--restore-secure-boot) exists |
 | Printer's USB URI | [Printer sharing](#printer-sharing) | The serial-keyed `usb://Brother/HL-L2305%20series?serial=U66480F3N341782` is built from what Windows reports; `lpinfo -v` after Phase 2 is authoritative |
 | Alerting for `OnFailure` | Media storage | `<FILL_ME_notify_unit>` — the repo has no notification path yet. The intended answer is ntfy, deferred to [Optional follow-ups](#optional-follow-ups); until then the unit is a desktop pop-up via swaync, which only helps if you are at the desk |
+| Storage Box and Hetzner account credentials | [Media storage](#media-storage) | **Interim, 2026-09-25:** the box's main-account password is the Hetzner account password, kept in Chrome's password manager. Two problems to fix before the backup is trusted. (1) Reuse: the box password is sent to the box and also works for SMB/WebDAV/FTP if they are on, and the account login can reset everything, including snapshots. They should be two different passwords. (2) The append-only design assumes a compromised `desk` cannot reach an unrestricted credential. Chrome on `desk` can. Evaluating Vaultwarden and KeePassXC. Either works if the vault stays locked on `desk` and is unlocked only on the phone or laptop |
+| Storage Box hardening steps | [Media storage](#media-storage) | To write: 2FA on the Hetzner account; SMB/WebDAV/FTP off; password login on port 22 off where the Console allows it; automatic snapshots (Console-managed, read-only over SSH, count against the 1 TB); later, replace the box password with the offline prune key |
+| Written recovery plan (dead man's switch, digital estate) | [Media storage](#media-storage) | To write. Someone other than you has to be able to get the media back: where the Hetzner login, the restic repository password (`/etc/restic/media.password`) and the prune key are held, and how a trusted person gets them if you cannot. Without the restic password the backup is unreadable ciphertext |
 | ancs4linux: pinned revision and hash | [iPhone notifications](#iphone-notifications-over-ancs) | Not in nixpkgs; packaged in this repo, pinned by rev and hash like every other out-of-tree artifact here |
 | Memory kit's DRAM IC | [BIOS tuning](#bios-tuning) | Kit: 2 × 16 GB Corsair Vengeance **`CMK32GX5M2D6000C36`** — **XMP only, no EXPO**: DDR5-6000 36-36-36-76 at 1.35 V; running its XMP profile since 2026-09-23, not yet validated. The DRAM IC (Hynix A/M-die, Samsung, Micron) decides how far the timings go; the part number usually identifies it |
 
@@ -3571,8 +3574,11 @@ where it goes before inventing a folder for it.
       share itself is in use for anything that has another copy — which
       includes every source still in place: downloading is not the risk,
       deleting the source is
-- [ ] Order a Storage Box BX11 (1 TB); generate a dedicated
-      ed25519 key for it
+- [x] Order a Storage Box BX11 (1 TB) — *2026-09-25*
+- [x] Generate a dedicated ed25519 key for it — *2026-09-25,
+      `/etc/restic/id_ed25519` (root, 0600; dir 0700), comment `desk-restic`,
+      `SHA256:pbsrEaftbebgxXiaB5rilJRzo5o4oaMr9uXKS1S0AFM`. Goes on the box only
+      as the append-only forced-command line, never through the Console's key field*
 - [ ] `/etc/restic/media.password` and `/etc/restic/id_ed25519`, both 0600,
       added to the README's unmanaged-state list
 - [ ] Append-only forced command, plus the offline prune key recorded somewhere
