@@ -569,7 +569,7 @@ the text was wrong about how the machine behaves.
 | Which Apple ID creates the Shared Library | [Step 4](#step-4--iphone-photos-from-icloud) | The creator's iCloud plan stores every Camera photo from both phones from then on. Pick the account with the larger plan, or the one on a Family Sharing iCloud+ plan |
 | iCloud session lapse | [Step 4](#step-4--iphone-photos-from-icloud) | The ongoing backup needs an interactive 2FA re-auth roughly every two months. Until ntfy exists, the `OnFailure` alert only reaches the desk |
 | Windows Hello sign-in method | Before the first guest boot | Bare metal and the guest use different TPMs, so a TPM-backed PIN is invalidated on every crossing — [Two TPMs, one install](#two-tpms-one-install). Decide: password sign-in, PIN re-created per crossing, or test fTPM passthrough |
-| Fate of the Drive/Photos/GCS/MacBook/Flickr copies (not iCloud: the phones keep using it) | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
+| Fate of the Drive/Photos/GCS/MacBook/Flickr copies (iCloud has its own gated trim, [Step 5](#step-5--clear-icloud-storage-automatically)) | After the restore test | Keep, or retire in favour of `/srv/media` + Hetzner. Not before the restore test either way |
 | ~~Stale NVRAM entry for the old ESP~~ | ~~Phase 2~~ | **Closed 2026-09-24.** disko wiped the 1 TB drive and `Boot0004` (PARTUUID `f968dba4…`) was left pointing at nothing; verified that GUID exists on no partition, then removed it with `efibootmgr -b 0004 -B`. One Windows entry remains, on the 2 TB ESP |
 | `C:` free space | Ongoing | ~88 GB after the ESP. Games live here; the answer to "full" is uninstalling or a bigger Windows drive, never the 1 TB drive |
 | `virtio-win` NIC/balloon drivers | Before the first guest boot | Install from bare metal via `pkgs.virtio-win`'s ISO |
@@ -2937,7 +2937,8 @@ makes the share safe to depend on; and only then does the media come in —
 because it is irreplaceable, it arrives on a volume whose backup already works.
 A fourth, [Step 4](#step-4--iphone-photos-from-icloud), added 2026-09-25, covers the
 two iPhones: a one-time copy of each personal iCloud library, then an ongoing copy
-of a shared one.
+of a shared one. A fifth, [Step 5](#step-5--clear-icloud-storage-automatically),
+comes last of all: once the backup is trusted, iCloud is trimmed to recent photos.
 
 **Where the media is today** (2026-09-21): spread across five places —
 **Google Drive**, **Google Photos**, **the MacBook's internal storage**, a **GCS
@@ -3585,8 +3586,10 @@ switch, so each snapshot is complete up to the date recorded above.
   months ago is the failure to avoid.
 - **Backed up by Step 2** like everything else under `/srv/media`. Once
   restic has passed its restore proofs, `/srv/media/icloud/` plus Hetzner is a
-  real second copy. Until then iCloud is the only authoritative one. Nothing
-  here is ever a reason to delete from iCloud to free quota.
+  real second copy. Until then iCloud is the only authoritative one.
+  Deleting from iCloud to free quota is
+  [Step 5](#step-5--clear-icloud-storage-automatically), behind its own
+  gates, and nothing here does it before then.
 
 #### Checklist
 
@@ -3598,10 +3601,12 @@ switch, so each snapshot is complete up to the date recorded above.
 - [ ] Both the creator (at setup) and the invitee (on accepting) chose
       *Choose Manually* and moved **no** existing photos. Check that the
       Shared Library holds only test shots
-- [ ] Both phones: *Sharing from Camera* on, **Share Manually**, Camera's
+- [x] Both phones: *Sharing from Camera* on, **Share Manually**, Camera's
       Shared Library button on and still on after closing Camera and after a
       restart. Take a test photo on each and confirm it shows
       up under the Shared Library on the *other* phone. Record the switch date
+      — *2026-09-25, the switch date. Both test shots reached the backup
+      (below); the button survived a Camera relaunch and a restart*
 - [ ] Record each personal library's photo and video counts, as of the switch
 - [x] `hosts/desk/icloud.nix` imported — *2026-09-25; `desk` builds*
 - [x] Env files for `shared` and `n8`; `icloudpd-login n8` (the same session
@@ -3623,6 +3628,95 @@ switch, so each snapshot is complete up to the date recorded above.
       a second start downloads nothing. Then `icloudpd-forget <FILL_ME_wife>`
 - [ ] Two weeks later: `systemctl --user list-timers 'icloudpd@*'` shows daily
       runs, and new photos from both phones are on the share
+
+### Step 5 — clear iCloud storage automatically
+
+Added 2026-09-25. **Goal: iCloud holds only recent photos, and `/srv/media`
+plus Hetzner holds everything.** The daily `shared` run gets a second job:
+after downloading, it deletes from iCloud whatever is older than
+`<FILL_ME_keep_days>` days (suggested: **90**). That leaves the recent months
+on the phones and frees the rest of the iCloud quota. It is the one part of
+this section that **destroys a copy**, so it is gated harder than anything
+else here, and it ships switched off.
+
+**What it gives up, both phones included.** The Shared Library is one
+library, so a deletion hides the photo on **both** phones: it disappears from
+Photos, Memories and on-phone search. Anything older than the window is then
+only browsable through the `media` share (Files → `smb://desk/media` over
+Tailscale, [Step 1](#step-1--srvmedia-as-a-network-share)). That is a
+household decision, not just a technical one. Agree it with the other
+participant before enabling it.
+
+#### The trap in icloudpd's own switch
+
+icloudpd's `--keep-icloud-recent-days N` deletes every item older than N days
+**whether or not its download worked in that same run**. Read in the packaged
+1.32.3, `icloudpd/base.py` around line 1092: the delete decision looks only at
+the item's age, never at the download result. Used naively, a download that
+fails on the day an item crosses the window loses the photo. So the flag is
+never the whole mechanism. It runs last, behind three independent checks,
+each of which must pass in the same unit run:
+
+1. **Download pass**: exactly today's unit, unchanged. It must exit 0.
+2. **Everything is on disk.** The same command with `--only-print-filenames`
+   prints what it *would* download, which is anything iCloud has that
+   `/srv/media/icloud/shared` does not. Straight after a download pass it
+   must print **nothing**. Anything it prints is a failed download, and the
+   run stops there and alerts.
+3. **Everything is offsite.** `restic-backups-media` last succeeded less than
+   36 hours ago (`systemctl show -p Result,ExecMainExitTimestamp`). A
+   90-day window then means every deleted photo spent roughly 90 days in
+   daily snapshots before its iCloud copy went. Checking each file against
+   `restic find` would be stronger, but the window already makes the same
+   argument cheaply.
+4. **Delete pass**, with `--keep-icloud-recent-days <FILL_ME_keep_days>`. It
+   re-enumerates, downloads nothing (step 2 just proved that), and moves
+   items older than the window to iCloud's *Recently Deleted*.
+
+*Recently Deleted* keeps them for another 30 days, so the last line of
+defence is Apple's, not ours. The quota is freed once they leave it.
+
+#### Shape, when it lands
+
+- **Opt-in per instance** through the env file (`KEEP_ICLOUD_DAYS=90`).
+  Without it the unit behaves exactly as today: add-only. The module comment's
+  "add-only, deliberately" becomes "add-only unless `KEEP_ICLOUD_DAYS` is
+  set, and then only behind the checks".
+- **Steps 2–4 as `ExecStartPost=` commands**, or one small script, so a
+  failure anywhere fails the unit and raises the same `OnFailure` alert.
+- **The personal libraries are cleared once, not continuously.** Each gets
+  the same sequence a single time, by hand, after its backfill has been
+  through restic: a top-up download, the on-disk check, then the delete pass
+  with `KEEP_ICLOUD_DAYS` set for that one start. Screenshots and saved
+  images taken since the backfill are downloaded by that same top-up, not
+  lost. The wife's account needs one more `icloudpd-login` for this, and
+  `icloudpd-forget` straight after.
+
+#### Gates — every one before `KEEP_ICLOUD_DAYS` is set anywhere
+
+- [ ] [Step 2](#step-2--backup-for-when-the-bulk-ssd-dies) complete, and its
+      four restore proofs passed, one of them restoring a file from
+      `/srv/media/icloud/`
+- [ ] [BIOS tuning](#bios-tuning) validated. A bit flip in the downloaded
+      copy becomes permanent the day iCloud's copy goes
+- [ ] ntfy (`<FILL_ME_notify_unit>`) reaches a phone. Once deletion is on,
+      a silently failing unit is no longer harmless
+- [ ] 30+ days of clean daily `shared` runs, **and** a deliberately broken
+      run (wrong `LIBRARY=`) that was noticed
+- [x] Deleting from iCloud leaves `/srv/media` untouched — *2026-09-25: n8
+      deleted both test shots from the Shared Library, the next run reported
+      "Downloading 0", and all three files stayed in
+      `/srv/media/icloud/shared/2026/09/25/`*
+- [ ] Both participants agree to the window, knowing old photos then leave
+      both phones
+- [ ] First enablement as a **dry run**: add `--dry-run` to the delete pass,
+      and check that the journal lists only items older than the window (and
+      that deletion is possible at all on a `SharedSync` library). Then remove
+      `--dry-run`
+- [ ] A week after enabling: the iCloud storage figure has started to fall,
+      Recently Deleted holds only items older than the window, and every one
+      of them is in `/srv/media/icloud/shared/` and in the latest restic
+      snapshot
 
 ---
 
