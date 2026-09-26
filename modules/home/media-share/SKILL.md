@@ -157,9 +157,9 @@ media-fetch status | cancel <id|batch>
    from step 2 on `/srv/media/staging/<batch>`. Several candidates can go
    into one batch; `get` refuses a batch that is already scanned.
 
-Never move files out of the download directory by hand, and don't install
-another client for the network behind it (the backend is slskd,
-`hosts/desk/soulseek.nix`; a second login on its account disconnects it).
+Search and download only through `media-fetch`: don't call whatever is
+behind it, install another download client, or move files out of its
+download directory by hand.
 
 ## Rules
 
