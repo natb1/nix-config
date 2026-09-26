@@ -71,10 +71,14 @@
     # Icons named by notifications and tray items (notify-send -i phone)
     # come from a theme, and desk had only hicolor, so most had no icon.
     #
-    # The wallpaper is NixOS's own, cropped to fill the ultrawide.
+    # The wallpaper is from dharmx/walls (a community collection, pinned to a
+    # commit), cropped to fill the ultrawide.
     Service.Environment = [
       "QS_ICON_THEME=Adwaita"
-      "DESK_WALLPAPER=${pkgs.nixos-artwork.wallpapers.waterfall.gnomeFilePath}"
+      "DESK_WALLPAPER=${pkgs.fetchurl {
+        url = "https://raw.githubusercontent.com/dharmx/walls/6bf4d733ebf2b484a37c17d742eb47e5139e6a14/nord/a_planet_in_space_with_stars.png";
+        hash = "sha256-K6EXvcqJVGqhnULomvG/LeQHnCyCJU5DgGZTzgJ0Bn8=";
+      }}"
     ];
   };
   home.packages = [ pkgs.adwaita-icon-theme ];
