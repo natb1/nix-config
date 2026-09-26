@@ -4256,9 +4256,15 @@ up to the date recorded above.
       11). Then n8's test shot, `IMG_0220.HEIC` (EXIF: iPhone 13 mini), came
       down on the next run. Both cameras reach the backup*
 - [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the pop-up; restore it
-- [ ] [BIOS tuning](#bios-tuning) validated
-- [ ] Backfill `icloudpd@n8`, then `icloudpd@lindsey`. Counts match;
-      a second start downloads nothing. Then `icloudpd-forget lindsey`
+- [x] `icloudpd-verify` — *2026-09-26. The negative test also passed: one bit
+      flipped in a reflink copy of `n8/` (`IMG_0001.HEIC`, 4.3 MB) was
+      reported, and the command exited 1*
+- [x] Backfill `icloudpd@n8`, verified — *2026-09-26, 13:30–13:35: 370
+      items, 607 files (237 of them Live Photo videos), 2.2 GB, 0 errors.
+      `icloudpd-verify n8`: 607 of 607 byte-exact against Apple's checksums,
+      exit 0, in 13 s. A second start downloaded nothing*
+- [ ] Backfill `icloudpd@lindsey`, verified (`icloudpd-verify lindsey`
+      exits 0). Then `icloudpd-forget lindsey`
 - [ ] Two weeks later: `systemctl --user list-timers 'icloudpd@*'` shows daily
       runs, and new photos from both phones are on the share
 
