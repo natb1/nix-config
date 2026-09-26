@@ -3637,7 +3637,7 @@ the library path so the two cannot drift apart:
 | PDF | Info Title and Author; XMP `dc:title` (the whole name, variant and all: `Saving Saxham (Cairn, version 1)`), `dc:creator` for `books/`, `calibre:series` (the folder) and `calibreSI:series_index` (a `Vol. <N>`), `dc:source` = the original's sha256 | pikepdf: the file written out as **one revision**, plain xref table, no object streams, every stream copied as it is; an encrypted PDF is left alone |
 | EPUB | `dc:title` first (the series folder, or a volume's title; the publisher's titles kept after it), `calibre:series` and `calibre:series_index` for a volume and no other series or collection, `dc:creator` only where missing, `dc:source` = the original's sha256 | the OPF, rewritten in place |
 | CBZ | `ComicInfo.xml`: Series, Title, Volume, Writer; the original's sha256 in the zip comment | the zip, rewritten |
-| Video | the container's title: `Heat (1995)`, `The Wire - S01E01 - The Target`, the YouTube title | `mkvpropedit` in place for MKV/WebM; a stream-copy remux for MP4/MOV |
+| Video | the container's title: `Heat (1995)`, `The Wire - S01E01 - The Target`, the YouTube title | `mkvpropedit` in place for MKV/WebM, including a release's own `TITLE` tag, which players prefer; `exiftool` in place for MP4/M4V/MOV, which keeps QuickTime text subtitles; a stream-copy remux for AVI, kept only if no packet is lost |
 | Music | album artist, artist, album, title, track (disc, year where known) | beets, from MusicBrainz or by hand |
 
 **From the Mac.** Two shares, mounted by the same launchd agent

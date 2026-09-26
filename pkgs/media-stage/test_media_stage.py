@@ -785,6 +785,34 @@ class Copies(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("the same volume as books/X/Saga/Saga Vol. 1 - One (pages).pdf", out)
 
+    def test_video_titles_are_written(self):
+        # A release's global TITLE tag in an MKV, a QuickTime subtitle track
+        # that a remux would drop, and AVI's INFO title.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            clip = ["-f", "lavfi", "-i", "testsrc=size=64x48:rate=5", "-f", "lavfi", "-i", "sine=f=440", "-t", "1",
+                    "-c:v", "mpeg4", "-shortest"]
+            srt = lib / "s.srt"
+            srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+            rels = {e: f"movies/Heat (1995) {{tmdb-949}}/Heat (1995) {{tmdb-949}}.{e}" for e in ("mkv", "m4v", "avi")}
+            for e, rel in rels.items():
+                (lib / rel).parent.mkdir(parents=True, exist_ok=True)
+            ffmpeg(*clip, "-c:a", "aac", str(lib / rels["mkv"]))
+            tags = lib / "tags.xml"
+            tags.write_text("<Tags><Tag><Targets><TargetTypeValue>50</TargetTypeValue></Targets>"
+                            "<Simple><Name>TITLE</Name><String>Heat.1995.x264-GRP</String></Simple></Tag></Tags>")
+            subprocess.run(["mkvpropedit", "-q", str(lib / rels["mkv"]), "--tags", f"global:{tags}"], check=True)
+            ffmpeg(*clip[:8], "-i", str(srt), "-map", "0", "-map", "1", "-map", "2", "-c:v", "mpeg4", "-c:a", "aac",
+                   "-c:s", "mov_text", "-t", "1", "-metadata", "title=Heat.1995.GRP", str(lib / rels["m4v"]))
+            ffmpeg(*clip, "-c:a", "mp3", "-metadata", "title=Heat.1995.DVDRip", str(lib / rels["avi"]))
+            for e, rel in rels.items():
+                streams = len(ms.ffprobe(lib / rel)["streams"])
+                self.assertNotEqual(ms.current_meta(lib / rel).get("title"), "Heat (1995)", e)
+                self.assertEqual(ms.tag_file(lib, rel), ["title=Heat (1995)"], e)
+                self.assertEqual(ms.current_meta(lib / rel).get("title"), "Heat (1995)", e)
+                self.assertEqual(len(ms.ffprobe(lib / rel)["streams"]), streams, e)
+                self.assertEqual(ms.tag_file(lib, rel), [], e)
+
     def test_best_copy_is_kept(self):
         with tempfile.TemporaryDirectory() as d:
             lib = Path(d)

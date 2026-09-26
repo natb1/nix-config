@@ -2004,21 +2004,79 @@ def tag_file(library, rel, dry_run=False, source=None):
         return [f"{x}={v}" for x, v in todo.items()] if dry_run else []
     if k == "video" and "title" in todo:
         e = ext_of(rel)
-        if e in ("mkv", "webm"):
-            r = run(["mkvpropedit", "-q", str(path), "--edit", "info", "--set", f"title={todo['title']}"])
-        elif e in ("mp4", "m4v", "mov"):
-            tmp = path.with_name(f".tagging.{socket.gethostname()}.{os.getpid()}.{path.name}")
-            r = run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-map", "0", "-c", "copy",
-                     "-map_metadata", "0", "-metadata", f"title={todo['title']}", str(tmp)])
-            if r.returncode == 0:
-                os.replace(tmp, path)
-            elif tmp.exists():
-                tmp.unlink()
-        else:
+        write = {"mkv": mkv_title, "webm": mkv_title, "mp4": mp4_title, "m4v": mp4_title,
+                 "mov": mp4_title, "avi": avi_title}.get(e)
+        if not write:
             return [f"title not written: .{e} has no title tag we write"]
-        if r.returncode:
-            return [f"title not written: {r.stderr.strip()[:200]}"]
+        err = write(path, todo["title"])
+        if err:
+            return [f"title not written: {err.strip()[:200]}"]
     return [f"{x}={v}" for x, v in todo.items()]
+
+
+def mkv_title(path, title):
+    """The segment title, and a TITLE tag on the whole file, which players
+    (and ffprobe) prefer to it when a release left one."""
+    r = run(["mkvpropedit", "-q", str(path), "--edit", "info", "--set", f"title={title}"])
+    if r.returncode:
+        return r.stderr or r.stdout
+    x = run(["mkvextract", str(path), "tags", "-"])
+    if x.returncode or "<Tags" not in x.stdout:
+        return None
+    root = ET.fromstring(x.stdout.lstrip("﻿"))
+    changed = False
+    for tag in root.iter("Tag"):
+        t = tag.find("Targets")
+        if t is not None and (any(c.tag.endswith("UID") for c in t)
+                              or (t.findtext("TargetTypeValue") or "50") != "50"):
+            continue
+        for s in tag.findall("Simple"):
+            if s.findtext("Name") == "TITLE" and s.find("String") is not None and s.findtext("String") != title:
+                s.find("String").text = title
+                changed = True
+    if not changed:
+        return None
+    fd, tmp = tempfile.mkstemp(suffix=".xml")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            ET.ElementTree(root).write(f, encoding="utf-8", xml_declaration=True)
+        r = run(["mkvpropedit", "-q", str(path), "--tags", f"all:{tmp}"])
+        return r.stderr or r.stdout if r.returncode else None
+    finally:
+        os.unlink(tmp)
+
+
+def mp4_title(path, title):
+    """exiftool edits the atoms in place, so every track stays, including
+    QuickTime text subtitles that ffmpeg can't copy."""
+    r = run(["exiftool", "-q", "-overwrite_original", "-Keys:Title=",
+             f"-ItemList:Title={title}", f"-UserData:Title={title}", str(path)])
+    return r.stderr or r.stdout if r.returncode else None
+
+
+def packets(path):
+    r = run(["ffprobe", "-v", "error", "-count_packets", "-of", "json",
+             "-show_entries", "stream=index,codec_name,nb_read_packets", str(path)])
+    return json.loads(r.stdout or "{}").get("streams") if r.returncode == 0 else None
+
+
+def avi_title(path, title):
+    """AVI's title (INFO INAM) is written by remuxing; the copy replaces the
+    file only when it has every packet of every stream."""
+    tmp = path.with_name(f".tagging.{socket.gethostname()}.{os.getpid()}.{path.name}")
+    try:
+        r = run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-map", "0", "-c", "copy",
+                 "-map_metadata", "0", "-metadata", f"title={title}", str(tmp)])
+        if r.returncode:
+            return r.stderr
+        before = packets(path)
+        if not before or packets(tmp) != before:
+            return "the remuxed copy lost packets; the file is unchanged"
+        os.replace(tmp, path)
+        return None
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def cmd_tag(a):
