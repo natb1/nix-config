@@ -111,9 +111,9 @@ binds {
     Mod+Return hotkey-overlay-title="Terminal" { spawn "xdg-terminal-exec"; }
     Mod+D hotkey-overlay-title="Launcher" { spawn "fuzzel"; }
     Mod+Shift+N hotkey-overlay-title="Notifications and status" { spawn "qs" "-c" "desk" "ipc" "call" "panel" "toggle"; }
-    // Pull ~/natb1/nix-config and switch (modules/home/rebuild.nix), in a
-    // terminal for the sudo prompt, held open afterwards to read the result.
-    Mod+Shift+R hotkey-overlay-title="Rebuild (pull + switch)" { spawn "xdg-terminal-exec" "zsh" "-c" "rebuild; print; read -sk '?Done. Press any key to close.'"; }
+    // Pick a worktree of ~/natb1/nix-config (main first), then pull and
+    // switch to it in a terminal — hosts/desk/rebuild-menu.nix.
+    Mod+Shift+R hotkey-overlay-title="Rebuild (pick worktree, pull + switch)" { spawn "rebuild-menu"; }
 
     Mod+Q { close-window; }
 
