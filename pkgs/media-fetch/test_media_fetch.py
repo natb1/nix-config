@@ -211,7 +211,7 @@ class MediaFetchTest(unittest.TestCase):
         self.assertIn("02 Two.flac", out)
         code, out = self.cli("get", cid, "--batch", "slsk-test", "--files", "1,3")
         self.assertEqual(code, 0, out)
-        code, out = self.cli("wait", "slsk-test", "--timeout", "0", "--json")
+        code, out = self.cli("wait", "slsk-test", "--timeout", "5", "--interval", "0", "--json")
         self.assertEqual(code, 0, out)
         [s] = json.loads(out)
         self.assertEqual(s["state"], "delivered")
@@ -225,7 +225,7 @@ class MediaFetchTest(unittest.TestCase):
         cid = self.search()["candidates"][0]["id"]
         self.fake.fail.add("M\\Album\\02.flac")
         self.cli("get", cid, "--batch", "b")
-        code, out = self.cli("wait", cid, "--timeout", "0")
+        code, out = self.cli("wait", cid, "--timeout", "5", "--interval", "0")
         self.assertEqual(code, 1)
         self.assertIn("failed: 02.flac (timed out)", out)
         code, out = self.cli("status", cid, "--json")
@@ -233,9 +233,55 @@ class MediaFetchTest(unittest.TestCase):
         self.assertFalse((self.staging / "b").exists())
         code, out = self.cli("get", cid)
         self.assertIn("retrying 1", out)
-        code, out = self.cli("wait", cid, "--timeout", "0")
+        code, out = self.cli("wait", cid, "--timeout", "5", "--interval", "0")
         self.assertEqual(code, 0, out)
         self.assertTrue((self.staging / "b" / "Album" / "02.flac").is_file())
+
+    def test_one_file_at_a_time_per_source(self):
+        self.fake.responses = [response("peer", "M\\A", ["01", "02"]),
+                               response("peer", "M\\B", ["01"]),
+                               response("other", "N\\C", ["01"])]
+        ids = [c["id"] for c in self.search()["candidates"]]
+        self.fake.hold = True
+        for cid in ids:
+            code, out = self.cli("get", cid, "--batch", "b")
+            self.assertEqual(code, 0, out)
+        asked = lambda user: [t["filename"] for t in self.fake.transfers.get(user, [])]
+        self.assertEqual(asked("peer"), ["M\\A\\01.flac"])  # the rest wait here
+        self.assertEqual(asked("other"), ["N\\C\\01.flac"])  # a source of its own
+        code, out = self.cli("status", "--json")
+        self.assertEqual({s["title"]: s["state"] for s in json.loads(out)},
+                         {"A": "queued", "B": "queued", "C": "queued"})
+        self.assertEqual(len(asked("peer")), 1)
+        self.fake.hold = False
+        code, out = self.cli("wait", "b", "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(asked("peer"), [])  # all delivered, then forgotten
+        self.assertEqual(sorted(p.name for p in (self.staging / "b").iterdir()), ["A", "B", "C"])
+
+    def test_per_source_limit_is_configurable(self):
+        self.fake.responses = [response("peer", "M\\A", ["01", "02", "03"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.fake.hold = True
+        os.environ["MEDIA_FETCH_PER_SOURCE"] = "2"
+        self.addCleanup(os.environ.pop, "MEDIA_FETCH_PER_SOURCE", None)
+        self.cli("get", cid, "--batch", "b")
+        self.assertEqual(len(self.fake.transfers["peer"]), 2)
+        os.environ["MEDIA_FETCH_PER_SOURCE"] = "0"
+        self.assertIn("MEDIA_FETCH_PER_SOURCE", self.cli("status")[1])
+
+    def test_refusal_while_waiting_fails_the_rest(self):
+        self.fake.responses = [response("peer", "M\\A", ["01", "02"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.cli("get", cid, "--batch", "b")
+        self.fake.offline.add("peer")
+        code, out = self.cli("wait", cid, "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 1)
+        self.assertIn("failed: 02.flac (the source is offline", out)
+        self.fake.offline.discard("peer")
+        self.assertIn("retrying 1", self.cli("get", cid)[1])
+        code, out = self.cli("wait", cid, "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 0, out)
 
     def test_file_the_source_never_queued_says_so(self):
         self.fake.responses = [response("peer", "M\\Album", ["01"])]

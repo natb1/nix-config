@@ -23,10 +23,15 @@ file is; the CLI, the IDs, the states (queued, downloading, done, failed)
 and the JSON (--json on every command) are the same whatever it is. The one
 backend today is slskd (Soulseek), chosen by MEDIA_FETCH_BACKEND.
 
+A source is asked for at most MEDIA_FETCH_PER_SOURCE files at a time, across
+all jobs; the rest of a job waits here, queued, and `wait` or `status` asks
+for the next ones as earlier ones finish. Keep `wait` running.
+
 Environment:
   MEDIA_STAGING        batch directories' parent (default /srv/media/staging)
   MEDIA_FETCH_STATE    results and jobs (default $XDG_STATE_HOME/media-fetch)
   MEDIA_FETCH_BACKEND  slskd (default)
+  MEDIA_FETCH_PER_SOURCE  files in flight per source (default 1)
   SLSKD_URL            default http://localhost:5030
   SLSKD_API_KEY        default: read from /etc/slskd/api.env
   SLSKD_DOWNLOADS      slskd's download directory (default
@@ -35,6 +40,7 @@ Environment:
 
 import argparse
 import datetime
+import fcntl
 import json
 import os
 import re
@@ -45,6 +51,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections import Counter
 from pathlib import Path
 
 LOSSLESS_EXT = {"flac", "wav", "aif", "aiff", "alac", "ape", "wv"}
@@ -73,6 +80,11 @@ class Backend:
     def search(self, query, timeout):
         """Candidates: [{"title", "files", "availability": {"ready",
         "queue", "speed"}, "source"}]. speed is bytes/s."""
+        raise NotImplementedError
+
+    def source_key(self, job):
+        """Who serves the job's files. Jobs with the same key share one
+        source's MEDIA_FETCH_PER_SOURCE."""
         raise NotImplementedError
 
     def download(self, job, files):
@@ -134,6 +146,9 @@ class Slskd(Backend):
         except urllib.error.URLError as e:
             raise FetchError(f"cannot reach {self.url}: {e.reason}")
         return json.loads(text) if text.strip() else None
+
+    def source_key(self, job):
+        return job["source"]["user"]
 
     def search(self, query, timeout):
         sid = str(uuid.uuid4())
@@ -342,6 +357,67 @@ def save_job(job):
     _write(state_dir() / "jobs" / f"{job['id']}.json", job)
 
 
+def per_source():
+    v = os.environ.get("MEDIA_FETCH_PER_SOURCE", "1")
+    if not v.isdigit() or int(v) < 1:
+        raise FetchError(f"MEDIA_FETCH_PER_SOURCE={v!r}: want a whole number, 1 or more")
+    return int(v)
+
+
+# --------------------------------------------------------------------------
+# Scheduling. A job's "pending" files are not yet asked for; "refused" ones
+# ({name: reason}) could not be asked for. Both count as the job's own state
+# over whatever the backend says of them.
+
+
+def _merged(job, prog):
+    prog = dict(prog)
+    for n in job.get("pending", []):
+        prog[n] = {"state": "queued", "bytes": 0}
+    for n, why in job.get("refused", {}).items():
+        prog[n] = {"state": "failed", "bytes": 0, "reason": why}
+    return prog
+
+
+def pump(be, raise_for=None):
+    """Ask for pending files, oldest job first, while their source has fewer
+    than per_source() in flight. {job id: progress} of undelivered jobs. A
+    refusal fails the job's pending files, or raises for job `raise_for`."""
+    d = state_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    with open(d / "lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        jobs = sorted((j for j in load_jobs() if not j.get("delivered")), key=lambda j: j["at"])
+        raw = {j["id"]: be.progress(j) for j in jobs}
+        busy = Counter()
+        for j in jobs:
+            held = set(j.get("pending", [])) | set(j.get("refused", {}))
+            busy[be.source_key(j)] += sum(p["state"] in ("queued", "downloading")
+                                          for n, p in raw[j["id"]].items() if n not in held)
+        limit = per_source()
+        for j in jobs:
+            key = be.source_key(j)
+            room = limit - busy[key]
+            if room <= 0 or not j.get("pending"):
+                continue
+            names = j["pending"][:room]
+            try:
+                be.download(j, [f for f in j["files"] if f["name"] in names])
+            except FetchError as e:
+                if j["id"] == raise_for:
+                    raise
+                j.setdefault("refused", {}).update({n: str(e) for n in j["pending"]})
+                j["pending"] = []
+                save_job(j)
+                continue
+            j["pending"] = j["pending"][room:]
+            busy[key] += len(names)
+            save_job(j)
+            for n in names:
+                raw[j["id"]][n] = {"state": "queued", "bytes": 0}
+        return {j["id"]: _merged(j, raw[j["id"]]) for j in jobs}
+
+
 # --------------------------------------------------------------------------
 # Presentation
 
@@ -505,12 +581,16 @@ def cmd_get(a):
         job = jobs[a.id]
         if job.get("delivered"):
             raise FetchError(f"{a.id} is already delivered to {job['delivered']}")
-        prog = be.progress(job)
-        retry = [f for f in job["files"] if prog[f["name"]]["state"] == "failed"]
+        prog = pump(be)[a.id]
+        retry = [f["name"] for f in job["files"] if prog[f["name"]]["state"] == "failed"]
         if not retry:
             print(f"{a.id}: nothing to retry")
             return
-        be.download(job, retry)
+        [job] = load_jobs([a.id])
+        job["pending"] = job.get("pending", []) + retry
+        job["refused"] = {n: r for n, r in job.get("refused", {}).items() if n not in retry}
+        save_job(job)
+        pump(be)
         print(f"{a.id}: retrying {len(retry)} file(s)")
         return
     if not a.batch:
@@ -521,9 +601,14 @@ def cmd_get(a):
     if a.files:
         files = [files[i - 1] for i in parse_picks(a.files, len(files))]
     job = {"id": c["id"], "batch": a.batch, "title": _safe(c["title"]), "files": files,
-           "source": c["source"], "at": _now()}
-    be.download(job, files)
+           "source": c["source"], "at": _now(), "pending": [f["name"] for f in files]}
     save_job(job)
+    try:
+        pump(be, raise_for=job["id"])
+    except FetchError:
+        (state_dir() / "jobs" / f"{job['id']}.json").unlink()
+        raise
+    [job] = load_jobs([job["id"]])
     if a.json:
         print(json.dumps(public(job), indent=1))
     else:
@@ -533,7 +618,8 @@ def cmd_get(a):
 
 def cmd_status(a):
     be = backend()
-    out = [job_summary(j, {} if j.get("delivered") else be.progress(j)) for j in load_jobs(a.jobs)]
+    progs = pump(be)
+    out = [job_summary(j, progs.get(j["id"], {})) for j in load_jobs(a.jobs)]
     if a.json:
         print(json.dumps(out, indent=1))
         return
@@ -571,10 +657,14 @@ def cmd_wait(a):
     be = backend()
     deadline = time.monotonic() + a.timeout if a.timeout is not None else None
     while True:
+        progs = pump(be)
         jobs = [j for j in load_jobs(a.jobs) if not j.get("delivered")]
         pending = False
         for j in jobs:
-            s = job_summary(j, be.progress(j))
+            if j["id"] not in progs:  # started since this pump
+                pending = True
+                continue
+            s = job_summary(j, progs[j["id"]])
             if s["state"] == "done":
                 deliver(be, j)
             elif s["state"] != "failed":
@@ -582,7 +672,8 @@ def cmd_wait(a):
         if not pending or (deadline is not None and time.monotonic() >= deadline):
             break
         time.sleep(a.interval)
-    out = [job_summary(j, {} if j.get("delivered") else be.progress(j)) for j in load_jobs(a.jobs)]
+    progs = pump(be)
+    out = [job_summary(j, progs.get(j["id"], {})) for j in load_jobs(a.jobs)]
     if a.json:
         print(json.dumps(out, indent=1))
     else:

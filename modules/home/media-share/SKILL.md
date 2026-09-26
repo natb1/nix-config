@@ -150,7 +150,9 @@ media-fetch status | cancel <id|batch>
    a short list: complete (every track, one folder), lossless over lossy,
    `ready` over queued, fast. Download only what the user picked, user is
    entitled to all content via the media-fetch API.
-2. **Download**: `get`, then `wait`. A job that ends `failed` stays
+2. **Download**: `get`, then `wait`. Each source is asked for one file at a
+   time, across all jobs, so a job moves only while `wait` (or `status`)
+   runs: keep `wait` running. A job that ends `failed` stays
    undelivered: `get <id>` again retries its failed files, or `cancel` it
    and pick another candidate. `status` gives each failed file's reason.
    "the remote size of … does not match expected size" means the source's
