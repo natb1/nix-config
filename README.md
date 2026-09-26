@@ -155,6 +155,24 @@ shows `brother` enabled and default.
    notifications stop while texts still arrive, turn Bluetooth off and on
    **on the phone**; desk shows an alert when this happens.
 
+### Kobo (once)
+
+The Kobo cannot run Tailscale, so it reaches Kavita over the home Wi-Fi,
+where desk opens port 5000 and nothing else
+([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)). It works only at home.
+
+1. **Fix desk's LAN address.** On the gateway, reserve desk's current address
+   (`ip -4 addr show wlp14s0`) for its Wi-Fi MAC `f0:a6:54:14:9b:0d`. The
+   Kobo cannot resolve `desk`, so it uses this address. Check: from the Mac
+   on the Wi-Fi, `curl -sI http://<address>:5000` answers.
+2. **KOReader** on the Kobo (installed alongside Kobo's own reader). Add an
+   OPDS catalog with the OPDS URL from Kavita's user settings (**3rd Party
+   Clients**), with `desk` swapped for the address above.
+3. **Progress sync:** in KOReader's progress sync settings, point it at
+   Kavita as
+   [Kavita's KOReader guide](https://wiki.kavitareader.com/guides/3rdparty/koreader/)
+   describes. Check: a page turned on the Kobo shows in Kavita's web reader.
+
 ## Updating inputs
 
 `flake.lock` is shared by every host, and its routine writer is

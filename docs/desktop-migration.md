@@ -3679,8 +3679,10 @@ six-hourly scan as the backstop.
 
 #### Watching and reading
 
-Added 2026-09-26. Two more servers beside Navidrome, both tailnet-only and
-read-only over the library:
+Added 2026-09-26. Two more servers beside Navidrome, both read-only over the
+library. Jellyfin is tailnet-only like Navidrome; Kavita is also open to the
+home Wi-Fi on its port alone, for a Kobo, which cannot join the tailnet
+([`hosts/desk/kavita.nix`](../hosts/desk/kavita.nix)):
 
 | Server | Serves | Port | Config |
 | --- | --- | --- | --- |
@@ -3704,6 +3706,7 @@ is for the phone on a slow link.
 | desk (NixOS) | **Jellyfin Desktop** (`pkgs.jellyfin-desktop`, [`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)) — the official client, mpv underneath, so almost everything direct-plays | Kavita's web reader in Chrome |
 | mba | **Jellyfin Desktop** too ([`hosts/mba/desk.nix`](../hosts/mba/desk.nix)), the same package built for aarch64-darwin | Kavita's web reader |
 | iPhone | **Jellyfin** (App Store, free); Infuse (paid) is the more polished alternative and reads Jellyfin or the share | Kavita's web reader, or an OPDS app (Panels, Chunky) |
+| Kobo | — | **KOReader** over the home Wi-Fi: Kavita's OPDS catalog at desk's LAN address, and KOReader's progress sync pointed at Kavita |
 
 Feishin also speaks Jellyfin, but it stays pointed at Navidrome: that is
 where the phone's favourites and playlists live.

@@ -4,7 +4,8 @@
 # every device on the tailnet, without mounting SMB. It also serves OPDS, so
 # e-reader apps (KOReader, and on the iPhone Panels or Chunky) can browse and
 # download from it: the OPDS URL is per user, under the user's settings,
-# "3rd Party Clients".
+# "3rd Party Clients". Since 0.8.7 KOReader can also sync reading progress
+# with it both ways (KOReader's progress sync, pointed at Kavita).
 #
 # Libraries, as set up from http://desk:5000 after the first login (they are
 # Kavita's database, not this file), both of type "Book":
@@ -15,9 +16,14 @@
 # metadata (docs/desktop-migration.md, "Books and RPGs in Kavita").
 # Kavita reads, never writes: covers and progress stay in /var/lib/kavita.
 #
-# Tailnet-only, like Navidrome and Jellyfin: it listens on every interface,
-# the firewall opens nothing for it, and tailscale0 is trusted
-# (modules/nixos/tailscale.nix).
+# Tailnet and home Wi-Fi, unlike Navidrome and Jellyfin, which are
+# tailnet-only. It listens on every interface; tailscale0 is trusted
+# (modules/nixos/tailscale.nix), and port 5000 alone is opened on wlp14s0 for
+# the Kobo, which cannot join the tailnet. From the LAN it is
+# http://<desk's LAN address>:5000: the Kobo cannot resolve MagicDNS's
+# "desk", so the address is kept fixed by a DHCP reservation on the gateway
+# (README, "Kobo (once)"). Anyone on the Wi-Fi reaches Kavita's login page;
+# nothing else on desk is opened to the LAN.
 #
 # Not managed by this repo: Kavita's accounts and libraries. The first visit
 # to http://desk:5000 creates the admin. State is in /var/lib/kavita
@@ -59,6 +65,9 @@ in
     after = [ "srv-media.mount" ];
     requires = [ "srv-media.mount" ];
   };
+
+  # The Kobo's way in; see the header.
+  networking.firewall.interfaces.wlp14s0.allowedTCPPorts = [ 5000 ];
 
   # A library needs its folder to exist; media-stage would otherwise create
   # them only on the first batch that files there.
