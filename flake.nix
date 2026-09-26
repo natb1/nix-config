@@ -19,6 +19,29 @@
       url = "github:nix-community/NixOS-WSL";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Declarative partitioning for the `desk` host's bulk drive. Used at
+    # install time (Phase 2) and for the fileSystems entries it generates from
+    # the same declaration — see hosts/desk/disko.nix.
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # The libvirt domain for the Windows guest (Phase 4). Declared here rather
+    # than in Phase 4 because flake inputs are cheap to carry and expensive to
+    # add mid-install; the module is imported by `desk` but defines nothing
+    # until virtualisation.libvirt is enabled.
+    NixVirt = {
+      url = "https://flakehub.com/f/AshleyYakeley/NixVirt/*.tar.gz";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # iPhone notifications and messages on `desk` over Bluetooth — see
+    # hosts/desk/iphone.nix. Pinned to a rev in the URL, so the weekly
+    # `nix flake update` leaves it alone: it is a fast-moving beta that
+    # changes how bluetoothd runs, so a bump is a deliberate edit here.
+    tether = {
+      url = "github:zackb/tether/779b8a4d970f3aa34f105fc9a84d06f186670ec1";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, home-manager, claude-code-nix, darwin, nixos-wsl, ... }:
@@ -37,9 +60,16 @@
         direnvSkipTestsOverlay
       ];
 
-      # claude-code is unfree; allow it by name rather than blanket-allowing.
+      # Unfree packages, allowed by name rather than blanket-allowing.
+      # google-chrome is desk's browser (hosts/desk/desktop.nix). Naming it
+      # here rather than in that host is not a choice: nixpkgs.config is set
+      # once by the `home` helper below, so a second definition in a host
+      # module conflicts with it instead of extending it.
       unfreePredicate =
-        pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "claude-code" ];
+        pkg: builtins.elem (nixpkgs.lib.getName pkg) [
+          "claude-code"
+          "google-chrome"
+        ];
 
       # Home-manager wiring shared by every host. hostPlatform in-module is the
       # current idiom (the legacy `system` arg to nixosSystem/darwinSystem is
@@ -97,6 +127,27 @@
         ];
       };
 
+      # The native desktop. Built from docs/desktop-migration.md; it boots
+      # NixOS on the 1 TB NVMe and (from Phase 4) runs the existing Windows
+      # install as a GPU-passthrough guest off the 2 TB one.
+      nixosConfigurations.desk = nixpkgs.lib.nixosSystem {
+        specialArgs = { inherit inputs; };
+        modules = [
+          # Reached via `inputs` rather than the outputs argument list, which
+          # does not name disko — matching how the list above is written.
+          inputs.disko.nixosModules.disko
+          inputs.NixVirt.nixosModules.default
+          inputs.tether.nixosModules.tether
+          ./hosts/desk
+          home-manager.nixosModules.home-manager
+          (home {
+            hostPlatform = "x86_64-linux";
+            homeDirectory = "/home/n8";
+            extraModules = [ ./hosts/desk/home ];
+          })
+        ];
+      };
+
       darwinConfigurations.mba = darwin.lib.darwinSystem {
         specialArgs = { inherit inputs; };
         modules = [
@@ -122,6 +173,9 @@
       # scripts/sync-wezterm.sh can resolve the vendor hash against it.
       packages = forAllSystems ({ pkgs, ... }: {
         wezterm = pkgs.callPackage ./modules/home/wezterm-package.nix { };
+        # Media filing for /srv/media (docs/desktop-migration.md, "Layout on
+        # the share"); `nix run .#media-stage -- --help`.
+        media-stage = pkgs.callPackage ./pkgs/media-stage { };
       });
 
       # Module regression tests. `nix flake check` is the gate before a switch.
@@ -133,9 +187,21 @@
         {
           wezterm-test-suite = weztermTests.wezterm-test-suite;
           claude-daemon-test-suite = claudeDaemonTests.claude-daemon-test-suite;
+          # Its unit and pipeline tests run in the build.
+          media-stage = pkgs.callPackage ./pkgs/media-stage { };
         }
         // weztermTests.wezterm-tests
         // claudeDaemonTests.claude-daemon-tests
+        # desk's niri config, parsed by the niri that will read it. A typo in
+        # the KDL is otherwise only found at the next tty1 login, where it is
+        # expensive: niri.service dies, and tty1 is the session. Linux only —
+        # niri does not build for darwin.
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          niri-config = pkgs.runCommand "niri-config-valid" { } ''
+            ${pkgs.niri}/bin/niri validate -c ${./hosts/desk/home/niri.kdl}
+            touch "$out"
+          '';
+        }
       );
     };
 }

@@ -1,0 +1,62 @@
+[    0.074688] AMD-Vi: ivrs, add hid:AMDI0020, uid:ID00, rdevid:0xa0
+[    0.074689] AMD-Vi: ivrs, add hid:AMDI0020, uid:ID01, rdevid:0xa0
+[    0.074689] AMD-Vi: ivrs, add hid:AMDI0020, uid:ID02, rdevid:0xa0
+[    0.074690] AMD-Vi: ivrs, add hid:AMDI0020, uid:ID03, rdevid:0x98
+[    0.074690] AMD-Vi: ivrs, add hid:AMDI0020, uid:ID04, rdevid:0x98
+[    0.074691] AMD-Vi: Using global IVHD EFR:0x246577efa2254afa, EFR2:0x0
+[    0.357490] iommu: Default domain type: Translated
+[    0.357490] iommu: DMA domain TLB invalidation policy: lazy mode
+[    0.403383] pci 0000:00:00.2: AMD-Vi: IOMMU performance counters supported
+[    0.403435] pci 0000:00:01.0: Adding to iommu group 0
+[    0.403448] pci 0000:00:01.1: Adding to iommu group 1
+[    0.403479] pci 0000:00:02.0: Adding to iommu group 2
+[    0.403548] pci 0000:00:02.1: Adding to iommu group 3
+[    0.403561] pci 0000:00:02.2: Adding to iommu group 4
+[    0.403578] pci 0000:00:03.0: Adding to iommu group 5
+[    0.403596] pci 0000:00:04.0: Adding to iommu group 6
+[    0.403626] pci 0000:00:08.0: Adding to iommu group 7
+[    0.403639] pci 0000:00:08.1: Adding to iommu group 8
+[    0.403652] pci 0000:00:08.3: Adding to iommu group 9
+[    0.403675] pci 0000:00:14.0: Adding to iommu group 10
+[    0.403686] pci 0000:00:14.3: Adding to iommu group 10
+[    0.403744] pci 0000:00:18.0: Adding to iommu group 11
+[    0.403755] pci 0000:00:18.1: Adding to iommu group 11
+[    0.403767] pci 0000:00:18.2: Adding to iommu group 11
+[    0.403778] pci 0000:00:18.3: Adding to iommu group 11
+[    0.403789] pci 0000:00:18.4: Adding to iommu group 11
+[    0.403801] pci 0000:00:18.5: Adding to iommu group 11
+[    0.403813] pci 0000:00:18.6: Adding to iommu group 11
+[    0.403825] pci 0000:00:18.7: Adding to iommu group 11
+[    0.403838] pci 0000:01:00.0: Adding to iommu group 12
+[    0.403852] pci 0000:02:00.0: Adding to iommu group 13
+[    0.403870] pci 0000:03:00.0: Adding to iommu group 14
+[    0.403887] pci 0000:03:00.1: Adding to iommu group 15
+[    0.403899] pci 0000:04:00.0: Adding to iommu group 16
+[    0.403912] pci 0000:05:00.0: Adding to iommu group 17
+[    0.403924] pci 0000:05:04.0: Adding to iommu group 18
+[    0.403937] pci 0000:05:05.0: Adding to iommu group 19
+[    0.403949] pci 0000:05:06.0: Adding to iommu group 20
+[    0.403961] pci 0000:05:07.0: Adding to iommu group 21
+[    0.403974] pci 0000:05:08.0: Adding to iommu group 22
+[    0.403986] pci 0000:05:09.0: Adding to iommu group 23
+[    0.403998] pci 0000:05:0a.0: Adding to iommu group 24
+[    0.404010] pci 0000:05:0b.0: Adding to iommu group 25
+[    0.404025] pci 0000:05:0c.0: Adding to iommu group 26
+[    0.404038] pci 0000:05:0d.0: Adding to iommu group 27
+[    0.404042] pci 0000:06:00.0: Adding to iommu group 17
+[    0.404047] pci 0000:0d:00.0: Adding to iommu group 24
+[    0.404051] pci 0000:0e:00.0: Adding to iommu group 25
+[    0.404055] pci 0000:0f:00.0: Adding to iommu group 26
+[    0.404060] pci 0000:10:00.0: Adding to iommu group 27
+[    0.404073] pci 0000:11:00.0: Adding to iommu group 28
+[    0.404102] pci 0000:12:00.0: Adding to iommu group 29
+[    0.404116] pci 0000:12:00.1: Adding to iommu group 30
+[    0.404129] pci 0000:12:00.2: Adding to iommu group 31
+[    0.404143] pci 0000:12:00.3: Adding to iommu group 32
+[    0.404157] pci 0000:12:00.4: Adding to iommu group 33
+[    0.404170] pci 0000:12:00.6: Adding to iommu group 34
+[    0.404184] pci 0000:13:00.0: Adding to iommu group 35
+[    0.406183] AMD-Vi: Extended features (0x246577efa2254afa, 0x0): PPR NX GT [5] IA GA PC GA_vAPIC
+[    0.406189] AMD-Vi: Interrupt remapping enabled
+[    0.461994] AMD-Vi: Virtual APIC enabled
+[    0.464685] perf/amd_iommu: Detected AMD IOMMU #0 (2 banks, 4 counters/bank).

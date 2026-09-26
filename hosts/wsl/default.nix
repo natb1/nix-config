@@ -16,6 +16,7 @@
   imports = [
     ../../modules/nixos
     ./mounts.nix
+    ./tailscale-rebind.nix
   ];
 
   wsl.enable = true;

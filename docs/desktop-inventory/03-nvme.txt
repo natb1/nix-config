@@ -1,0 +1,13 @@
+## lspci -nnk -d ::0108
+06:00.0 Non-Volatile memory controller [0108]: SK hynix Platinum P41/PC801 NVMe Solid State Drive [1c5c:1959]
+	Subsystem: SK hynix Platinum P41/PC801 NVMe Solid State Drive [1c5c:1959]
+	Kernel driver in use: nvme
+	Kernel modules: nvme
+11:00.0 Non-Volatile memory controller [0108]: SK hynix Platinum P41/PC801 NVMe Solid State Drive [1c5c:1959]
+	Subsystem: SK hynix Platinum P41/PC801 NVMe Solid State Drive [1c5c:1959]
+	Kernel driver in use: nvme
+	Kernel modules: nvme
+
+## controller PCI address per drive
+lrwxrwxrwx 1 root root 0 Sep 24 01:14 /sys/block/nvme0n1/device/device -> ../../../0000:06:00.0
+lrwxrwxrwx 1 root root 0 Sep 24 01:14 /sys/block/nvme1n1/device/device -> ../../../0000:11:00.0

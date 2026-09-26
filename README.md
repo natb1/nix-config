@@ -6,6 +6,10 @@ all the hosts that consume it lands atomically.
 
 ## Hosts
 
+On every host, `rebuild` does the pull and the switch below in one command
+([`modules/home/rebuild.nix`](modules/home/rebuild.nix)); the checkout is
+`~/natb1/nix-config` everywhere.
+
 Run the update from a clone of this repo **on the machine being updated** — a
 host can only build and activate itself, and activation needs root on both
 platforms. A host applies `main` **as locked**: it pulls and switches, and never
@@ -23,6 +27,17 @@ If a switch restarts systemd (any nixpkgs bump that moves it), WSL loses its
 fails the Windows-side home-manager steps. Run `wsl --shutdown` from Windows and
 reopen the distro; boot re-registers interop and re-runs home-manager.
 
+### `desk` — native NixOS on the desktop
+
+```sh
+cd ~/natb1/nix-config && git pull
+sudo nixos-rebuild switch --flake .#desk
+```
+
+Or `Mod+Shift+R` in niri, which runs `rebuild` in a terminal. `desk` is the
+desktop's Linux when NixOS is booted; `wsl` stays for Linux on bare-metal Windows. See
+[`docs/desktop-migration.md`](docs/desktop-migration.md).
+
 ### `mba` — Apple Silicon MacBook Air
 
 ```sh
@@ -33,6 +48,87 @@ sudo darwin-rebuild switch --flake .#mba
 Home-manager is integrated as a NixOS / nix-darwin module, so one rebuild does
 both system and user config. There is no standalone `home-manager switch`
 entry point.
+
+## Setting up a device
+
+What a switch cannot do: the sign-ins, passwords and pairings, once per
+device. Everything desk serves — the media shares, the printer, the music
+server — is **tailnet-only**, so Tailscale comes first on every device. What
+each step creates is listed under [State this repo does not
+manage](#state-this-repo-does-not-manage).
+
+### Tailscale (every device)
+
+| Device | Steps |
+| --- | --- |
+| desk, wsl | After the first switch, `sudo tailscale up` and follow the login URL ([`modules/nixos/tailscale.nix`](modules/nixos/tailscale.nix)). |
+| mba | After the first switch, `sudo tailscale up` ([`modules/darwin/tailscale.nix`](modules/darwin/tailscale.nix) runs the open-source `tailscaled`, not the App Store app). |
+| iPhone | Install **Tailscale** from the App Store, sign in to the same tailnet, and leave the VPN on. |
+
+Check: `tailscale status` lists `desk`, and `tailscale ping desk` answers. The
+short name `desk` works everywhere through MagicDNS.
+
+### desk (once, after its first switch)
+
+1. **Samba password** for the media shares: `sudo smbpasswd -a n8`. It is
+   Samba's own, not the login password.
+2. **Music server account:** open `http://desk:4533` and create the admin
+   ([`hosts/desk/music.nix`](hosts/desk/music.nix)). Then start **Feishin**
+   and add the server `http://localhost:4533` with that account.
+3. **iPhone over Bluetooth** (notifications and texts,
+   [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):
+   `tether --bt-status` should report MAP + PBAP + ANCS. Pair from
+   `tether-gtk` (Devices) or `tether --bt-pair <phone address>`, and on the
+   phone allow **Show Notifications** and **Sync Contacts**.
+   `tether --bt-setup` names anything missing.
+4. The rest (Google Drive, iCloud Photos, the restic backup) have their own
+   steps in [State this repo does not manage](#state-this-repo-does-not-manage).
+
+The printer needs nothing: the queue is declared
+([`hosts/desk/printing.nix`](hosts/desk/printing.nix)). Check: `lpstat -t`
+shows `brother` enabled and default.
+
+### mba (once, after its first switch)
+
+1. **Media shares.** The launchd agent in
+   [`hosts/mba/desk.nix`](hosts/mba/desk.nix) mounts both at login and
+   every five minutes while desk is up. The first time, macOS asks for the
+   Samba password: enter it and tick **Remember this password in my
+   keychain**. Check: `/Volumes/media` (the library, **read-only**) and
+   `/Volumes/media-staging` (writable) both exist, and
+   `touch /Volumes/media/x` fails.
+2. **Printer.** Nothing to do: every switch runs `lpadmin` for the
+   `desk_brother` queue. A switch made while desk was down only warns, so
+   switch again once it is up. Check: `lpstat -p desk_brother`. To add it by
+   hand, use Terminal, not the Add Printer window:
+   `lpadmin -p desk_brother -D "Brother (desk)" -E -v ipp://desk/printers/brother -m everywhere`.
+3. **ssh to desk,** for filing media (`ssh desk media-stage …`): nothing to
+   do. The Mac's public key is in `services.sshAuthorizedKeys.keys` in
+   [`modules/home/default.nix`](modules/home/default.nix), which every host
+   accepts. A new device adds its key there. Check: `ssh desk true`.
+4. **Music:** open **Feishin** (in `~/Applications/Home Manager Apps`), add
+   the server `http://desk:4533`, and log in with the Navidrome account from
+   desk step 2. The web player at `http://desk:4533` works too.
+
+### iPhone (once)
+
+1. **Tailscale**, as above.
+2. **Printer.** iOS has no screen for a printer by address, so it takes a
+   profile: AirDrop
+   [`hosts/desk/airprint-desk.mobileconfig`](hosts/desk/airprint-desk.mobileconfig)
+   from the Mac, then **Settings → Profile Downloaded → Install**. Check: the
+   share sheet's Print lists **Brother on desk** and a page prints. (A
+   profile can add a printer; it cannot install or configure an app.)
+3. **Media in Files:** Files → ⋯ → **Connect to Server** → `smb://desk/media`,
+   as **Registered User** `n8` with the Samba password. It is read-only; add
+   `smb://desk/media-staging` too for putting files on the share (they are
+   filed from there, [Filing a batch](docs/desktop-migration.md#filing-a-batch)).
+4. **Music: Amperfy** from the App Store. Server `http://desk:4533`, the
+   Navidrome account from desk step 2. Downloads play offline; CarPlay works.
+5. **Notifications and texts on desk:** pair from desk (desk step 3); allow
+   **Show Notifications** and **Sync Contacts** when the phone asks. If
+   notifications stop while texts still arrive, turn Bluetooth off and on
+   **on the phone**; desk shows an alert when this happens.
 
 ## Updating inputs
 
@@ -74,6 +170,7 @@ modules/home/      shared by every host, every platform
 tests/             module regression tests, exposed as flake checks
 .github/workflows/ the weekly flake.lock bump
 scripts/           maintenance scripts (wezterm pin refresh)
+docs/              migration plans and design notes
 ```
 
 **Host vs. platform.** A module lives in `modules/` only if it evaluates
@@ -118,6 +215,19 @@ Add `hosts/<name>/` (with the `nixos-generate-config`-produced
 `flake.nix` importing `./modules/nixos`, then use the `wsl` commands with the new
 attribute.
 
+The concrete case — the desktop gaining a native NixOS install on its second
+SSD, with its existing Windows kept intact on the first and startable as a
+GPU-passthrough guest — is planned in
+[docs/desktop-migration.md](docs/desktop-migration.md). That plan supersedes this
+paragraph once it starts. The WSL host stays alongside it, for Linux on
+bare-metal Windows.
+
+Note that it brings **Windows configuration into this repo** under
+`hosts/desk/windows/`: a Nix-rendered WinGet DSC profile that Windows pulls and
+applies to itself. There is one Windows install, booted either bare metal or
+virtualized, so one profile covers both. The name `nix-config` is about the tool
+that generates the configuration, not a restriction on what it configures.
+
 ## State this repo does not manage
 
 These are provisioned by hand and a clean rebuild will not recreate them:
@@ -129,6 +239,45 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   (`modules/home/default.nix`).
 - The Windows-side WezTerm GUI install, and the `G:` Google Drive volume that
   `hosts/wsl/mounts.nix` mounts — both depend on Windows-side software running.
+- `desk`'s Google Drive credentials, which `hosts/desk/gdrive.nix` mounts at
+  `/mnt/g`. Two pieces, and each is useless without the other:
+  `~/.config/rclone/rclone.conf` (mode 600, **encrypted**: the `gdrive`
+  remote, its OAuth client, and a refresh token with full access to Drive),
+  and its random password, which lives in gnome-keyring under
+  `service=rclone`. Neither is backed up, on purpose: both can be recreated
+  in a minute, and a copy elsewhere would only be a second place to leak the
+  token from. The OAuth client comes from Google Cloud project
+  `nix-config-509614`. To recreate, follow the comment at the top of
+  `hosts/desk/gdrive.nix`; if only the token has expired,
+  `rclone config reconnect gdrive:`.
+- `desk`'s Samba password for n8, which the `media` and `media-staging`
+  shares in `hosts/desk/media.nix` check. Samba keeps its own database, separate from
+  Unix accounts; set it with `sudo smbpasswd -a n8`. On `mba` the same
+  password sits in the login keychain, saved the first time
+  `hosts/mba/desk.nix` mounts the share ("Remember this password").
+- `desk`'s Navidrome accounts (`hosts/desk/music.nix`): the admin is created
+  on the first visit to `http://desk:4533`, and Feishin on desk and Amperfy on
+  the phone log in with it. The database in `/var/lib/navidrome` is rebuilt
+  by a rescan if lost, except playlists, favourites and play counts.
+- `desk`'s restic credentials for the media backup in `hosts/desk/media.nix`,
+  in `/etc/restic/` (root, dir 0700, files 0600). `media.password` is the
+  repository's **encryption key**: there is no reset, and without it the
+  backup on the Hetzner Storage Box is unreadable. `id_ed25519` is the SSH key
+  the box's `authorized_keys` pins to append-only
+  (`rclone serve restic --stdio --append-only restic/media`). A lost key is
+  replaced by generating a new one and swapping the line on the box; a lost
+  password cannot be replaced. See `docs/desktop-migration.md`, "Before any
+  original is retired", for where the off-machine copies go.
+- `desk`'s iCloud Photos backup state, for `hosts/desk/icloud.nix`: one env
+  file per instance in `~/.config/icloudpd/` (Apple ID and library name), each
+  Apple ID's password in gnome-keyring under `service=pyicloud://icloud-password`,
+  and the session cookies in `~/.local/state/icloudpd/<apple-id>/`, which are
+  **not** encrypted. `icloudpd-login <instance>` recreates the last two; the
+  session lapses every couple of months anyway. `icloudpd-forget <instance>`
+  removes them.
+- `desk`'s Bluetooth bond with the iPhone (`/var/lib/bluetooth`) and Tether's
+  settings (`~/.config/tether`), from pairing once — see
+  `hosts/desk/iphone.nix`. Lost bond: unpair on the phone, pair again.
 
 ## Naming
 

@@ -1,0 +1,13 @@
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+2: enp13s0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc mq state DOWN mode DEFAULT group default qlen 1000
+    link/ether 74:56:3c:47:e8:ff brd ff:ff:ff:ff:ff:ff
+    altname enx74563c47e8ff
+3: wlp14s0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DORMANT group default qlen 1000
+    link/ether f0:a6:54:14:9b:0d brd ff:ff:ff:ff:ff:ff
+    altname wlxf0a654149b0d
+
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp13s0          DOWN           
+wlp14s0          UP             192.168.12.158/24 fdfe:5e6c:2e69:98de:4735:3ca6:f058:c990/64 fdfe:5e6c:2e69:98de:e44c:1210:872d:495c/64 <redacted global IPv6>/64 <redacted global IPv6>/64 fe80::f2c7:1fd2:b0ea:b67/64 
+# NOTE: global IPv6 addresses redacted — public repo. Private (fd../fe80) left as is.

@@ -7,6 +7,7 @@
 {
   imports = [
     ../../modules/darwin/tailscale.nix
+    ./desk.nix
   ];
 
   # Required for flake-based darwin-rebuild.

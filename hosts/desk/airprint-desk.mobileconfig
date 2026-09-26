@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Adds desk's Brother queue (hosts/desk/printing.nix) to an iPhone or iPad by
+  address. The queue is tailnet-only and unadvertised, and iOS has no settings
+  screen for adding a printer by address — but it accepts this payload from a
+  hand-installed profile (com.apple.airprint: supervised false,
+  allowmanualinstall true). AirDrop it to the phone, then Settings → Profile
+  Downloaded → Install. Printing needs the Tailscale VPN on.
+
+  `desk` is the MagicDNS short name, the same one Files resolves for
+  smb://desk/media. No TLS: the path is already WireGuard.
+
+  The media share is not in here. iOS has no payload for Files' server list,
+  and a Web Clip to smb://n8@desk was tried (2026-09-25): Web Clips open in
+  the default browser — Chrome on this phone — which does not hand smb:// to
+  Files. Files keeps the server under Browse → Shared once connected by hand.
+-->
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>AirPrint</key>
+			<array>
+				<dict>
+					<key>IPAddress</key>
+					<string>desk</string>
+					<key>ResourcePath</key>
+					<string>printers/brother</string>
+					<key>Port</key>
+					<integer>631</integer>
+					<key>ForceTLS</key>
+					<false/>
+				</dict>
+			</array>
+			<key>PayloadDisplayName</key>
+			<string>Brother on desk</string>
+			<key>PayloadIdentifier</key>
+			<string>com.natb1.desk.airprint.brother</string>
+			<key>PayloadType</key>
+			<string>com.apple.airprint</string>
+			<key>PayloadUUID</key>
+			<string>66607332-E0AB-4ACF-9646-861C966F1C4E</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>The Brother HL-L2305 shared from desk over Tailscale.</string>
+	<key>PayloadDisplayName</key>
+	<string>Brother on desk (AirPrint)</string>
+	<key>PayloadIdentifier</key>
+	<string>com.natb1.desk.airprint</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>A23E23EF-914F-4DF4-91BC-0A6A19F43F63</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
