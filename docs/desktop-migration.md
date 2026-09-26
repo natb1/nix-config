@@ -3742,9 +3742,18 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       *Collection CD 4 / CD 6* folders (two copies of many tracks — to sort
       by hand), and 1 track the Together Again CD does not list*
 - [x] `media-stage lint` clean — *2026-09-25: 891 files, 0 problems*
-- [ ] Merge the two spellings of Brandish Gilhelm's *CROWN and SKULL* Volume
-      I and Volume 2 (`…- The Album` / `…: The Album`), tagged by hand in two
-      forms; then delete the staging leftovers above once checked
+- [x] Merge the two spellings of Brandish Gilhelm's *CROWN and SKULL* Volume
+      I and Volume 2 (`…- The Album` / `…: The Album`) — *2026-09-25: one
+      album each, colon spelling. Checked first: the Drive names every file
+      `… Volume I- The Album - NN …` (`- ` for the colon), the tagged half
+      numbers itself `n/23` and `n/29`, and the untagged half fills exactly
+      the gaps. Volume I is complete (23); Volume 2 has 28, and track 05 was
+      never on the Drive*
+- [ ] Runehammer Games' *Crown and Skull*, *Crown and Skull, Volume 2* and
+      *Daisy Crown* (23 files) are copies of Brandish Gilhelm's recordings —
+      same sizes and durations, some byte-identical — filed under the game's
+      publisher. Remove them once confirmed
+- [ ] Delete the staging leftovers above once checked
 - [ ] Library read-only from the Mac: after both switches, `/Volumes/media`
       and `/Volumes/media-staging` mount; `touch /Volumes/media/x` fails;
       `README.md` is on both; a fresh `claude` on the Mac asked to "put this
