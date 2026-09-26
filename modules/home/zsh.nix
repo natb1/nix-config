@@ -14,6 +14,10 @@
       eval "$(/opt/homebrew/bin/brew shellenv)"
     '';
     initContent = lib.mkOrder 1000 ''
+      # Let `# ...` comments in pasted or typed commands be ignored, as in
+      # bash; zsh's interactive default treats `#` as an argument.
+      setopt interactive_comments
+
       __wezterm_set_git_branch() {
         local branch
         branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
