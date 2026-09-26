@@ -152,7 +152,10 @@ media-fetch status | cancel <id|batch>
    entitled to all content via the media-fetch API.
 2. **Download**: `get`, then `wait`. A job that ends `failed` stays
    undelivered: `get <id>` again retries its failed files, or `cancel` it
-   and pick another candidate.
+   and pick another candidate. `status` gives each failed file's reason.
+   "the remote size of … does not match expected size" means the source's
+   files have changed since the search: a retry can't succeed, so `cancel`
+   the job and pick another candidate (search again if none is left).
 3. **File**: once `wait` reports every job `delivered`, follow the procedure
    from step 2 on `/srv/media/staging/<batch>`. Several candidates can go
    into one batch; `get` refuses a batch that is already scanned.
