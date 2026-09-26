@@ -56,7 +56,7 @@
   };
 
   # The default terminal, by the freedesktop Default Terminal spec: anything
-  # that asks for "a terminal" (niri's Mod+Return, fuzzel, GLib apps) runs
+  # that asks for "a terminal" (niri's Mod+Return, the launcher, GLib apps) runs
   # xdg-terminal-exec, which opens this desktop entry. Ghostty itself is
   # installed by home-manager (home/desktop.nix).
   xdg.terminal-exec = {
@@ -67,7 +67,6 @@
   environment.systemPackages = with pkgs; [
     # niri has no built-in Xwayland; it starts this on demand. Steam needs it.
     xwayland-satellite
-    fuzzel
     wl-clipboard
     pwvucontrol
 

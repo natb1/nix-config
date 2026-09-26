@@ -7,10 +7,9 @@
 # alone rebuilds main, as the binding did before there was a menu. Worktrees
 # whose directory is gone (prunable) are left out.
 #
-# The list is `pick` (./pick), since its entries can be three lines, which
-# fuzzel's can't: the open pull request's number and title (from gh, which is
-# already logged in), the last commit's subject, and the worktree's
-# directory. Without a pull request — main, or never seen online — the first
+# The list is `pick` (./pick), three lines per entry: the open pull
+# request's number and title (from gh, which is already logged in), the last
+# commit's subject, and the worktree's directory. Without a pull request — main, or never seen online — the first
 # line is the branch.
 #
 # It opens at once, with the pull requests as of the last run, and fills in

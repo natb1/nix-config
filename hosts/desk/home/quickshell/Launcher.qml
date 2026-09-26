@@ -4,7 +4,7 @@ import Quickshell.Io
 
 // The application launcher, Mod+D (niri.kdl): the installed applications in
 // the Picker, most launched first. Terminal apps (Terminal=true) run in
-// xdg-terminal-exec, as fuzzel ran them.
+// xdg-terminal-exec.
 Scope {
     id: launcher
 

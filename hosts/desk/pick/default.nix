@@ -10,26 +10,22 @@
 # showing, and its output replaces the rows: a menu can open at once from
 # what it already knows and fill in behind.
 #
-# The shell answers on a FIFO. If it isn't running, the menu is fuzzel, one
-# line per row, after the refresh.
+# The shell answers on a FIFO. If it can't open the list, pick says so and
+# exits 2.
 
 {
   writeShellApplication,
   quickshell,
-  fuzzel,
   coreutils,
-  gawk,
-  gnused,
+  libnotify,
 }:
 
 writeShellApplication {
   name = "pick";
   runtimeInputs = [
     quickshell
-    fuzzel
     coreutils
-    gawk
-    gnused
+    libnotify
   ];
   text = ''
     prompt="" refresh=""
@@ -59,24 +55,26 @@ writeShellApplication {
       fi
     }
 
-    if picker open "$run/rows" "$run/choice" "$prompt"; then
-      if [ -n "$refresh" ]; then
-        picker busy "$run/rows" || true
-        # Not on this script's stdout, which the caller is reading to its
-        # end; and the run directory may be gone by the end, once picked.
-        (
-          refresh || true
-          [ ! -d "$run" ] || picker reload "$run/rows" || true
-        ) >/dev/null 2>&1 &
-      fi
-      key=""
-      read -r key <"$run/choice" || true
-    else
-      [ -z "$refresh" ] || refresh
-      n=$(cut -f 2- "$run/rows" | sed 's/\t/  ·  /g' |
-        fuzzel --dmenu --index --prompt "$prompt " --lines 15 --width 120) || n=-1
-      key=$(awk -F '\t' -v n="$n" 'NR == n + 1 { print $1 }' "$run/rows")
+    # The shell is also the notification daemon, so with no shell at all
+    # there is no notification either: stderr, then.
+    if ! picker open "$run/rows" "$run/choice" "$prompt"; then
+      msg="The desk shell isn't running, or is too old for pick (systemctl --user status quickshell)"
+      echo "pick: $msg" >&2
+      notify-send -u critical -a pick "The menu didn't open" "$msg" 2>/dev/null || true
+      exit 2
     fi
+
+    if [ -n "$refresh" ]; then
+      picker busy "$run/rows" || true
+      # Not on this script's stdout, which the caller is reading to its end;
+      # and the run directory may be gone by the end, once picked.
+      (
+        refresh || true
+        [ ! -d "$run" ] || picker reload "$run/rows" || true
+      ) >/dev/null 2>&1 &
+    fi
+    key=""
+    read -r key <"$run/choice" || true
     [ -n "$key" ] || exit 1
     printf '%s\n' "$key"
   '';

@@ -512,7 +512,8 @@ fonts, browser") but no desktop in it. Settled here, in full in
 - **niri**, assembled à la carte: waybar, **swaync** for notifications,
   fuzzel, swayidle. No prebuilt shell. *Changed 2026-09-26:* waybar and
   swaync are replaced by one hand-written **Quickshell** config — no bar,
-  notifications and status in one panel. See
+  notifications and status in one panel — and fuzzel by that config's
+  launcher and menus. See
   [The desktop session](#the-desktop-session).
 - **getty autologin straight into niri, and no screen lock.** Anything
   sensitive sits behind its own encryption — **gnome-keyring** holds Chrome's
@@ -1174,7 +1175,7 @@ the cooler, not the curves, is the limit. The options, and why:
 | Question | Answer | What it rules out |
 | --- | --- | --- |
 | GPU topology | AMD iGPU → the NixOS desktop, always. dGPU → guest, **lent to the host on demand** for native/Proton games | Single-GPU teardown hooks; the host never goes headless; the compositor ever holding the dGPU |
-| Desktop session | niri, à la carte (Quickshell panel — no bar — fuzzel, swayidle; waybar and swaync until 2026-09-26); getty autologin, no lock; suspend on idle only if Wake-on-WLAN proves reliable | A display manager; a screen locker; a prebuilt shell (Noctalia, DankMaterialShell) |
+| Desktop session | niri, à la carte (Quickshell panel and launcher — no bar — swayidle; waybar, swaync and fuzzel until 2026-09-26); getty autologin, no lock; suspend on idle only if Wake-on-WLAN proves reliable | A display manager; a screen locker; a prebuilt shell (Noctalia, DankMaterialShell) |
 | How many Windows installs | **One.** The existing one, booted bare metal *or* as a guest | A separate VM image; an unactivated second copy; two config profiles |
 | How the guest gets its disk | **VFIO the whole fast NVMe controller** | Repartitioning Windows; a `qcow2`; virtio storage drivers |
 | Where NixOS lives | Entirely on the bulk drive, which disko owns outright | Disko ever meeting a Windows partition |
@@ -1833,7 +1834,7 @@ hosts/desk/
   media.nix                   # Samba, btrfs scrub, restic (Media storage)
   windows/                    # the DSC profile Windows pulls and applies (§6)
   home/                       # host-only home modules
-    desktop.nix               # Quickshell, fuzzel, swayidle, the niri-session exec
+    desktop.nix               # Quickshell, swayidle, the niri-session exec
     niri.kdl                  # niri's config; `niri validate` runs as a flake check
     quickshell/               # the panel and notification daemon; loaded by a flake check
 ```
@@ -2610,7 +2611,7 @@ never touches the others.
 | Screen lock | **None** | Decided: nothing sensitive is protected by the session. It sits behind its own encryption |
 | Bar | **None** | Replaced 2026-09-26 (it was waybar). The clock and status moved into the panel below |
 | Notifications and status | **Quickshell**, a hand-written config in `hosts/desk/home/quickshell/` | One panel on `Mod+Shift+N`: clock; tiles for Tailscale (up/down, exit node), Bluetooth, Wi-Fi and CPU/memory; volume; now playing; tray icons for apps that insist (Steam); then the notification history with do-not-disturb. It is also the notification daemon: pop-ups, action buttons, and critical alerts that stay until dismissed. The history matters once a phone is forwarding everything ([ANCS](#iphone-notifications-over-ancs)). Chosen over swaync (widgets too fixed: a toggle's label cannot change) and over Noctalia/DMS (their panels show notifications on a separate tab from status) |
-| Launcher | **fuzzel** | Wayland-native. niri's default config already binds it |
+| Launcher and menus | **Quickshell** (`Launcher.qml`, `Picker.qml`) | Replaced 2026-09-26 (it was fuzzel, whose entries are one line). `Mod+D` launches apps, most-used first; the rebuild and power menus use the same list through `pick` (`hosts/desk/pick`). Rows can be several lines with an icon, and the first ten are numbered for one-key picks |
 | Idle | **swayidle** | Screens off, then the guarded suspend ([Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)). It honours Wayland idle inhibitors, so a playing video holds it off |
 | Secrets | **gnome-keyring** (Secret Service) | What Chrome and most apps expect. Locked at boot (autologin has no password to unlock it with), and it asks for its own password on first use |
 | X11 apps | **xwayland-satellite** on `PATH` | niri has no built-in Xwayland and starts this on demand. Steam needs it |
