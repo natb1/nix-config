@@ -32,6 +32,7 @@
     ./eco.nix
     ./sensors.nix
     ./power-menu.nix
+    ./rebuild-menu.nix
     ./drlindsey.nix
   ];
 
