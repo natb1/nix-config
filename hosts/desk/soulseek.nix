@@ -9,8 +9,11 @@
 # fight this one. Use media-fetch instead.
 #
 # Downloads land in /srv/media/staging/soulseek, not the library, one
-# folder per media-fetch job. `media-fetch wait` moves each finished job into
-# its staging/<batch>, which is then filed like any other (media-share skill).
+# folder per media-fetch job. The media-fetch service below (`media-fetch
+# pump`) asks each source for one file at a time, as earlier ones finish, and
+# moves each finished job into its staging/<batch>, which is then filed like
+# any other (media-share skill). One file at a time: six albums queued at
+# once from one peer were all refused, "Overwhelmed with requests".
 # slskd runs as n8, like the Samba shares' `force user`, so media-fetch can
 # move what it downloaded; the module's sandbox still limits it to its state, the two
 # directories below (read-write) and the share (read-only).
@@ -41,6 +44,7 @@ let
   credentials = "/etc/slskd/credentials";
   apiEnv = "/etc/slskd/api.env";
   downloads = "/srv/media/staging/soulseek";
+  media-fetch = pkgs.callPackage ../../pkgs/media-fetch { };
 in
 {
   services.slskd = {
@@ -93,6 +97,28 @@ in
       chown n8:users ${apiEnv}
       chmod 0400 ${apiEnv}
     '';
+  };
+
+  # media-fetch's scheduler, so a download moves with no `media-fetch`
+  # command running. As n8, on n8's media-fetch state (the CLI's default,
+  # ~/.local/state/media-fetch): the jobs an agent starts with `get` are the
+  # ones it serves. A loop, not a timer, so the journal gets a line only when
+  # a job is delivered or a round fails.
+  systemd.services.media-fetch = {
+    description = "media-fetch: ask sources for queued files, deliver finished downloads";
+    wantedBy = [ "multi-user.target" ];
+    requires = [ "slskd.service" ];
+    after = [ "slskd.service" ];
+    environment.MEDIA_FETCH_STATE = "/home/n8/.local/state/media-fetch";
+    serviceConfig = {
+      User = "n8";
+      Group = "users";
+      ExecStart = "${media-fetch}/bin/media-fetch pump --every 15";
+      Restart = "always";
+      RestartSec = 30;
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
   };
 
   systemd.tmpfiles.rules = [

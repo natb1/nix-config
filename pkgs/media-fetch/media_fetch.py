@@ -7,6 +7,7 @@
   status [JOB|BATCH ...]     progress of each download
   wait   [JOB|BATCH ...]     block until downloads finish; deliver the finished ones
   cancel JOB|BATCH ...       stop downloads and forget them
+  pump   [--every S]         ask for queued files, deliver finished jobs (the service)
 
 A candidate is what a source offers in one folder: an album, a book, a
 season. Its ID (`3fa2c1.4`: search, then rank) names it until the next
@@ -24,9 +25,11 @@ and the JSON (--json on every command) are the same whatever it is. The one
 backend today is slskd (Soulseek), chosen by MEDIA_FETCH_BACKEND.
 
 A source is asked for at most MEDIA_FETCH_PER_SOURCE files at a time, across
-all jobs; the rest of a job waits here, queued, and `wait` or `status` asks
-for the next ones as earlier ones finish. Keep `wait` running: it prints a
-line whenever a job moves. `status`, `wait` and `get` estimate the time
+all jobs; the rest of a job waits here, queued. `pump` asks for the next ones
+as earlier ones finish and delivers finished jobs; on desk a service runs it
+all the time (hosts/desk/soulseek.nix), and `get` and `wait` do the same
+while they run, so nothing needs to be kept running. `wait` prints a line
+whenever a job moves. `status`, `wait` and `get` estimate the time
 left: what is left of the job and of the jobs ahead of it at its source,
 at the source's measured speed (before a file starts: the speed it offered
 in the search). Time spent in a source's own queue is not counted.
@@ -385,43 +388,71 @@ def _merged(job, prog):
     return prog
 
 
-def pump(be, raise_for=None):
+class locked:
+    """Every change to jobs/ holds this: the service, get, wait and cancel
+    all write job files. Not reentrant."""
+
+    def __enter__(self):
+        d = state_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        self.f = open(d / "lock", "w")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+
+    def __exit__(self, *exc):
+        self.f.close()
+
+
+def progress(be):
+    """{job id: progress} of undelivered jobs, as they stand. Changes nothing."""
+    return {j["id"]: _merged(j, be.progress(j)) for j in load_jobs() if not j.get("delivered")}
+
+
+def advance(be, raise_for=None):
+    """One round of the scheduler: ask for pending files, then deliver the
+    jobs whose files have all arrived. {job id: progress} of the jobs still
+    undelivered."""
+    with locked():
+        progs = _submit(be, raise_for)
+        for j in load_jobs():
+            if j["id"] in progs and job_summary(j, progs[j["id"]])["state"] == "done":
+                deliver(be, j)
+                del progs[j["id"]]
+        return progs
+
+
+def _submit(be, raise_for):
     """Ask for pending files, oldest job first, while their source has fewer
-    than per_source() in flight. {job id: progress} of undelivered jobs. A
-    refusal fails the job's pending files, or raises for job `raise_for`."""
-    d = state_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    with open(d / "lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        jobs = sorted((j for j in load_jobs() if not j.get("delivered")), key=lambda j: j["at"])
-        raw = {j["id"]: be.progress(j) for j in jobs}
-        busy = Counter()
-        for j in jobs:
-            held = set(j.get("pending", [])) | set(j.get("refused", {}))
-            busy[be.source_key(j)] += sum(p["state"] in ("queued", "downloading")
-                                          for n, p in raw[j["id"]].items() if n not in held)
-        limit = per_source()
-        for j in jobs:
-            key = be.source_key(j)
-            room = limit - busy[key]
-            if room <= 0 or not j.get("pending"):
-                continue
-            names = j["pending"][:room]
-            try:
-                be.download(j, [f for f in j["files"] if f["name"] in names])
-            except FetchError as e:
-                if j["id"] == raise_for:
-                    raise
-                j.setdefault("refused", {}).update({n: str(e) for n in j["pending"]})
-                j["pending"] = []
-                save_job(j)
-                continue
-            j["pending"] = j["pending"][room:]
-            busy[key] += len(names)
+    than per_source() in flight. A refusal fails the job's pending files, or
+    raises for job `raise_for`."""
+    jobs = sorted((j for j in load_jobs() if not j.get("delivered")), key=lambda j: j["at"])
+    raw = {j["id"]: be.progress(j) for j in jobs}
+    busy = Counter()
+    for j in jobs:
+        held = set(j.get("pending", [])) | set(j.get("refused", {}))
+        busy[be.source_key(j)] += sum(p["state"] in ("queued", "downloading")
+                                      for n, p in raw[j["id"]].items() if n not in held)
+    limit = per_source()
+    for j in jobs:
+        key = be.source_key(j)
+        room = limit - busy[key]
+        if room <= 0 or not j.get("pending"):
+            continue
+        names = j["pending"][:room]
+        try:
+            be.download(j, [f for f in j["files"] if f["name"] in names])
+        except FetchError as e:
+            if j["id"] == raise_for:
+                raise
+            j.setdefault("refused", {}).update({n: str(e) for n in j["pending"]})
+            j["pending"] = []
             save_job(j)
-            for n in names:
-                raw[j["id"]][n] = {"state": "queued", "bytes": 0}
-        return {j["id"]: _merged(j, raw[j["id"]]) for j in jobs}
+            continue
+        j["pending"] = j["pending"][room:]
+        busy[key] += len(names)
+        save_job(j)
+        for n in names:
+            raw[j["id"]][n] = {"state": "queued", "bytes": 0}
+    return {j["id"]: _merged(j, raw[j["id"]]) for j in jobs}
 
 
 # --------------------------------------------------------------------------
@@ -619,16 +650,17 @@ def cmd_get(a):
         job = jobs[a.id]
         if job.get("delivered"):
             raise FetchError(f"{a.id} is already delivered to {job['delivered']}")
-        prog = pump(be)[a.id]
-        retry = [f["name"] for f in job["files"] if prog[f["name"]]["state"] == "failed"]
-        if not retry:
-            print(f"{a.id}: nothing to retry")
-            return
-        [job] = load_jobs([a.id])
-        job["pending"] = job.get("pending", []) + retry
-        job["refused"] = {n: r for n, r in job.get("refused", {}).items() if n not in retry}
-        save_job(job)
-        pump(be)
+        with locked():
+            [job] = load_jobs([a.id])
+            prog = _merged(job, be.progress(job))
+            retry = [f["name"] for f in job["files"] if prog[f["name"]]["state"] == "failed"]
+            if not retry:
+                print(f"{a.id}: nothing to retry")
+                return
+            job["pending"] = job.get("pending", []) + retry
+            job["refused"] = {n: r for n, r in job.get("refused", {}).items() if n not in retry}
+            save_job(job)
+        advance(be)
         print(f"{a.id}: retrying {len(retry)} file(s)")
         return
     if not a.batch:
@@ -643,7 +675,7 @@ def cmd_get(a):
            "speed": c["availability"]["speed"]}
     save_job(job)
     try:
-        progs = pump(be, raise_for=job["id"])
+        progs = advance(be, raise_for=job["id"])
     except FetchError:
         (state_dir() / "jobs" / f"{job['id']}.json").unlink()
         raise
@@ -661,7 +693,7 @@ def cmd_get(a):
 
 def cmd_status(a):
     be = backend()
-    out = with_eta(be, pump(be), a.jobs)
+    out = with_eta(be, progress(be), a.jobs)
     if a.json:
         print(json.dumps(out, indent=1))
         return
@@ -700,17 +732,14 @@ def cmd_wait(a):
     deadline = time.monotonic() + a.timeout if a.timeout is not None else None
     seen = {}
     while True:
-        progs = pump(be)
-        jobs = [j for j in load_jobs(a.jobs) if not j.get("delivered")]
+        progs = advance(be)
         pending = False
-        for j in jobs:
-            if j["id"] not in progs:  # started since this pump
-                pending = True
+        for j in load_jobs(a.jobs):
+            if j.get("delivered"):
                 continue
-            s = job_summary(j, progs[j["id"]])
-            if s["state"] == "done":
-                deliver(be, j)
-            elif s["state"] != "failed":
+            if j["id"] not in progs:  # started since this round
+                pending = True
+            elif job_summary(j, progs[j["id"]])["state"] != "failed":
                 pending = True
         if not a.json:  # a line whenever a job moves: what a background run shows
             for s in with_eta(be, progs, a.jobs):
@@ -722,7 +751,7 @@ def cmd_wait(a):
         if not pending or (deadline is not None and time.monotonic() >= deadline):
             break
         time.sleep(a.interval)
-    out = with_eta(be, pump(be), a.jobs)
+    out = with_eta(be, progress(be), a.jobs)
     if a.json:
         print(json.dumps(out, indent=1))
     else:
@@ -735,11 +764,28 @@ def cmd_wait(a):
 
 def cmd_cancel(a):
     be = backend()
-    for j in load_jobs(a.jobs):
-        if not j.get("delivered"):
-            be.cancel(j)
-        (state_dir() / "jobs" / f"{j['id']}.json").unlink()
-        print(f"{j['id']}: cancelled" if not j.get("delivered") else f"{j['id']}: forgotten")
+    with locked():
+        for j in load_jobs(a.jobs):
+            if not j.get("delivered"):
+                be.cancel(j)
+            (state_dir() / "jobs" / f"{j['id']}.json").unlink()
+            print(f"{j['id']}: cancelled" if not j.get("delivered") else f"{j['id']}: forgotten")
+
+
+def cmd_pump(a):
+    be = backend()
+    while True:
+        before = {j["id"] for j in load_jobs() if not j.get("delivered")}
+        try:
+            advance(be)
+        except FetchError as e:
+            print(f"media-fetch: {e}", file=sys.stderr, flush=True)
+        for j in load_jobs():
+            if j["id"] in before and j.get("delivered"):
+                print(f"{j['id']}: delivered to {j['delivered']}", flush=True)
+        if a.every is None:
+            return
+        time.sleep(a.every)
 
 
 def _safe(name):
@@ -788,6 +834,10 @@ def main(argv=None):
     s = sub.add_parser("cancel", help="stop downloads and forget them")
     s.add_argument("jobs", nargs="+", metavar="JOB|BATCH")
     s.set_defaults(fn=cmd_cancel)
+
+    s = sub.add_parser("pump", help="ask for queued files, deliver finished jobs (the service)")
+    s.add_argument("--every", type=float, help="keep going, a round every this many seconds")
+    s.set_defaults(fn=cmd_pump)
 
     for s in sub.choices.values():
         s.add_argument("--json", action="store_true", help="machine-readable output")

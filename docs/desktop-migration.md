@@ -3640,9 +3640,11 @@ that `media-fetch` ([`pkgs/media-fetch`](../pkgs/media-fetch)) drives, so a
 Claude session can search, show the choices and download what the user
 picks. media-fetch's commands, IDs and JSON name no network: slskd is its
 one backend, and another could replace it without changing the `media-share`
-skill. Downloads land in `staging/soulseek/`, never the library;
-`media-fetch wait` moves a finished one into its `staging/<batch>`, filed
-like any other batch ([Filing a batch](#filing-a-batch)).
+skill. Downloads land in `staging/soulseek/`, never the library. The
+`media-fetch` service on desk (`media-fetch pump`) asks each peer for one
+file at a time and moves a finished download into its `staging/<batch>`,
+filed like any other batch ([Filing a batch](#filing-a-batch)). Six albums
+queued at once from one peer were all refused, "Overwhelmed with requests".
 
 - **One client.** Soulseek disconnects the older session when an account
   logs in twice, so nothing else (Nicotine+ on the Mac, sldl) uses the

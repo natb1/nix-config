@@ -262,6 +262,24 @@ class MediaFetchTest(unittest.TestCase):
         self.assertEqual(asked("peer"), [])  # all delivered, then forgotten
         self.assertEqual(sorted(p.name for p in (self.staging / "b").iterdir()), ["A", "B", "C"])
 
+    def test_pump_alone_finishes_a_job_and_status_changes_nothing(self):
+        # What desk's service does between an agent's commands.
+        self.fake.responses = [response("peer", "M\\A", ["01", "02"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.fake.hold = True
+        self.cli("get", cid, "--batch", "b")
+        self.fake.hold = False
+        self.cli("status")  # 01 arrives, but status asks for nothing more
+        self.assertEqual(len(self.fake.transfers["peer"]), 1)
+        code, out = self.cli("pump")  # asks for 02
+        self.assertEqual((code, out), (0, ""))
+        self.assertEqual(len(self.fake.transfers["peer"]), 2)
+        code, out = self.cli("pump")  # 02 arrives: delivered
+        self.assertIn(f"{cid}: delivered to", out)
+        self.assertEqual(sorted(p.name for p in (self.staging / "b" / "A").iterdir()), ["01.flac", "02.flac"])
+        code, out = self.cli("wait", "b", "--timeout", "0", "--json")
+        self.assertEqual((code, json.loads(out)[0]["state"]), (0, "delivered"))
+
     def test_estimates_count_the_jobs_ahead_at_the_source(self):
         # Offered at 1 B/s; the files are 10 and 11 bytes, then 10.
         self.fake.responses = [response("peer", "M\\A", ["01", "02"], speed=1),
@@ -288,7 +306,7 @@ class MediaFetchTest(unittest.TestCase):
         self.cli("get", cid, "--batch", "b")
         self.assertEqual(len(self.fake.transfers["peer"]), 2)
         os.environ["MEDIA_FETCH_PER_SOURCE"] = "0"
-        self.assertIn("MEDIA_FETCH_PER_SOURCE", self.cli("status")[1])
+        self.assertIn("MEDIA_FETCH_PER_SOURCE", self.cli("wait", "--timeout", "0")[1])
 
     def test_refusal_while_waiting_fails_the_rest(self):
         self.fake.responses = [response("peer", "M\\A", ["01", "02"])]

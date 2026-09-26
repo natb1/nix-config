@@ -151,10 +151,9 @@ media-fetch status | cancel <id|batch>
    `ready` over queued, fast. Download only what the user picked, user is
    entitled to all content via the media-fetch API.
 2. **Download**: `get`, then `wait <batch>` as a **background job**, never
-   in the foreground. Each source is asked for one file at a time, across
-   all jobs, so a job moves only while `wait` (or `status`) runs: keep the
-   background `wait` running until every job is `delivered` or `failed`.
-   Keep the user posted:
+   in the foreground. It ends when every job is `delivered` or `failed`.
+   The downloads themselves don't depend on it: a service on desk keeps
+   them moving and delivers them. Keep the user posted:
    - Straight after `get`: each job, its size, and its estimate (`get`
      prints it; `status --json` has `eta` in seconds).
    - While it runs: the background `wait` prints a line whenever a job
