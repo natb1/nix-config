@@ -21,9 +21,11 @@
 # (modules/nixos/tailscale.nix), and port 5000 alone is opened on wlp14s0 for
 # the Kobo, which cannot join the tailnet. From the LAN it is
 # http://<desk's LAN address>:5000: the Kobo cannot resolve MagicDNS's
-# "desk", so the address is kept fixed by a DHCP reservation on the gateway
-# (README, "Kobo (once)"). Anyone on the Wi-Fi reaches Kavita's login page;
-# nothing else on desk is opened to the LAN.
+# "desk", so it uses a fixed address. The T-Mobile gateway has no DHCP
+# reservations, so that is a second address, 192.168.12.250, added by hand to
+# the Wi-Fi's NetworkManager profile beside the DHCP one (README, "Kobo
+# (once)"). Anyone on the Wi-Fi reaches Kavita's login page; nothing else on
+# desk is opened to the LAN.
 #
 # Not managed by this repo: Kavita's accounts and libraries. The first visit
 # to http://desk:5000 creates the admin. State is in /var/lib/kavita

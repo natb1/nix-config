@@ -161,10 +161,27 @@ The Kobo cannot run Tailscale, so it reaches Kavita over the home Wi-Fi,
 where desk opens port 5000 and nothing else
 ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)). It works only at home.
 
-1. **Fix desk's LAN address.** On the gateway, reserve desk's current address
-   (`ip -4 addr show wlp14s0`) for its Wi-Fi MAC `f0:a6:54:14:9b:0d`. The
-   Kobo cannot resolve `desk`, so it uses this address. Check: from the Mac
-   on the Wi-Fi, `curl -sI http://<address>:5000` answers.
+1. **Fix desk's LAN address.** The Kobo cannot resolve `desk`, so it needs
+   an address that does not move. If the gateway offers a DHCP reservation,
+   reserve desk's current address (`ip -4 addr show wlp14s0`) for its Wi-Fi
+   MAC `f0:a6:54:14:9b:0d`. T-Mobile's gateways do not, so instead give
+   desk's Wi-Fi profile a second, fixed address beside the DHCP one:
+
+   ```sh
+   con=$(nmcli -g GENERAL.CONNECTION device show wlp14s0)
+   nmcli connection modify "$con" +ipv4.addresses 192.168.12.250/24
+   nmcli connection up "$con"
+   ```
+
+   The profile stays on DHCP (`ipv4.method auto`), so the gateway, DNS and
+   everything else still come from the gateway; `.250` is only for the Kobo.
+   Pick an address above any the gateway has handed out (its connected
+   devices list shows them). The gateway cannot be told to keep it free, but
+   desk now answers ARP and ping on it, which is what a gateway checks before
+   handing an address out. Like the PSK, this lives in the NetworkManager
+   profile under `/etc/NetworkManager/system-connections/`, not in this repo.
+   Check: `ip -4 addr show wlp14s0` lists both addresses, and from the Mac on
+   the Wi-Fi `curl -sI http://192.168.12.250:5000` answers.
 2. **KOReader** on the Kobo (installed alongside Kobo's own reader). Add an
    OPDS catalog with the OPDS URL from Kavita's user settings (**3rd Party
    Clients**), with `desk` swapped for the address above.

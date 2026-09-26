@@ -3706,7 +3706,7 @@ is for the phone on a slow link.
 | desk (NixOS) | **Jellyfin Desktop** (`pkgs.jellyfin-desktop`, [`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)) — the official client, mpv underneath, so almost everything direct-plays | Kavita's web reader in Chrome |
 | mba | **Jellyfin Desktop** too ([`hosts/mba/desk.nix`](../hosts/mba/desk.nix)), the same package built for aarch64-darwin | Kavita's web reader |
 | iPhone | **Jellyfin** (App Store, free); Infuse (paid) is the more polished alternative and reads Jellyfin or the share | Kavita's web reader, or an OPDS app (Panels, Chunky) |
-| Kobo | — | **KOReader** over the home Wi-Fi: Kavita's OPDS catalog at desk's LAN address, and KOReader's progress sync pointed at Kavita |
+| Kobo | — | **KOReader** over the home Wi-Fi: Kavita's OPDS catalog at desk's fixed LAN address (`192.168.12.250`, [README](../README.md#kobo-once)), and KOReader's progress sync pointed at Kavita |
 
 Feishin also speaks Jellyfin, but it stays pointed at Navidrome: that is
 where the phone's favourites and playlists live.
