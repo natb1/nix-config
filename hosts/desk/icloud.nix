@@ -10,9 +10,14 @@
 #
 # Three instances, two shapes:
 #   shared     n8's Apple ID, the Shared Library. Daily timer, forever.
-#   n8, <wife> each personal library (PrimarySync), once, by hand:
-#              `systemctl --user start --no-block icloudpd@n8`. A rerun
-#              downloads only what is new, so it doubles as the verification.
+#   n8, lindsey  each personal library (PrimarySync), once, by hand:
+#              `systemctl --user start --no-block icloudpd@n8`.
+#
+# Every run ends with `icloudpd-verify <instance>` (icloudpd-verify.py): each
+# original iCloud has must be on disk, byte-exact against Apple's own
+# checksum, or the run fails and alerts. That is what lets a download be
+# trusted without first proving desk's RAM — the reference was computed on
+# Apple's side.
 #
 # Until an instance's env file exists it is skipped by its condition rather
 # than failed, as in gdrive.nix — "never set up" is not a runtime fault.
@@ -68,6 +73,28 @@ let
     '';
   };
 
+  # icloudpd is an application, not a python3Packages library; toPythonModule
+  # lets the verifier import its modules (pyicloud_ipd). The interpreter must
+  # be the one icloudpd was built with — not pkgs.python3, which moved on to
+  # 3.14 while icloudpd stayed on 3.13, and then its modules silently land in
+  # the wrong site-packages. Checked at build time, so a nixpkgs bump that
+  # moves icloudpd fails the rebuild rather than the first verification.
+  icloudpdPython = pkgs.python313;
+  verifyPython = icloudpdPython.withPackages (_: [
+    (icloudpdPython.pkgs.toPythonModule pkgs.icloudpd)
+  ]);
+  verifyImports = pkgs.runCommand "icloudpd-verify-imports" { } ''
+    ${verifyPython}/bin/python3 -c 'import pyicloud_ipd.base, requests, keyring'
+    touch $out
+  '';
+  verifyScript = pkgs.writeShellApplication {
+    name = "icloudpd-verify";
+    text = ''
+      # imports checked at build time: ${verifyImports}
+      exec ${verifyPython}/bin/python3 ${./icloudpd-verify.py} "$@"
+    '';
+  };
+
   # For an account whose backfill is done: drop its session and password, so
   # nothing on this machine can reach it any more.
   forgetScript = pkgs.writeShellApplication {
@@ -86,7 +113,7 @@ let
   };
 in
 {
-  environment.systemPackages = [ pkgs.icloudpd loginScript forgetScript ];
+  environment.systemPackages = [ pkgs.icloudpd loginScript verifyScript forgetScript ];
 
   systemd.user.services."icloudpd@" = {
     description = "iCloud Photos → /srv/media/icloud/%i";
@@ -122,6 +149,9 @@ in
         "--log-level info"
         "--no-progress-bar"
       ];
+      # Only after a clean download; a failure here fails the unit, so the
+      # same OnFailure pop-up fires.
+      ExecStartPost = "${verifyScript}/bin/icloudpd-verify %i";
     };
   };
 
