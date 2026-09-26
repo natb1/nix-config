@@ -170,6 +170,9 @@ class Layout(unittest.TestCase):
         "movies/Heat (1995)/Heat (1995).en.srt",
         "movies/Heat (1995)/Heat (1995).en.forced.srt",
         "movies/Heat (1995)/extras/Making of.mp4",
+        "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv",
+        "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.en.srt",
+        "tv/The Wire (2002) {tmdb-1438}/Season 01/The Wire (2002) - S01E01 - The Target.mkv",
         "tv/The Wire (2002)/Season 01/The Wire (2002) - S01E01 - The Target.mkv",
         "tv/The Wire (2002)/Season 01/The Wire (2002) - S01E01-E02.mkv",
         "tv/The Wire (2002)/Season 00/The Wire (2002) - S00E01.en.srt",
@@ -180,6 +183,9 @@ class Layout(unittest.TestCase):
         ("videos/x.mp4", "top directory"),
         ("movies/Heat/Heat.mkv", "movies/ layout"),
         ("movies/Heat (1995)/Heat.mkv", "movies/ layout"),
+        ("movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "movies/ layout"),  # Infuse reads the file's id
+        ("movies/Heat (1995) {imdb-tt0113277}/Heat (1995) {imdb-tt0113277}.mkv", "movies/ layout"),
+        ("tv/The Wire (2002) {tmdb-1438}/Season 01/The Wire (2002) {tmdb-1438} - S01E01.mkv", "tv/ layout"),
         ("tv/The Wire (2002)/Season 1/The Wire (2002) - S01E01.mkv", "tv/ layout"),
         ("tv/The Wire (2002)/Season 02/The Wire (2002) - S01E01.mkv", "tv/ layout"),
         ("rpg/Game/What?.pdf", "SMB"),
@@ -225,10 +231,18 @@ class Helpers(unittest.TestCase):
     def test_standard(self):
         self.assertEqual(ms.standard("books/Plato/Republic (tr. Reeve).epub"), {"title": "Republic", "author": "Plato"})
         self.assertEqual(ms.standard("movies/Heat (1995)/Heat (1995).mkv"), {"title": "Heat (1995)"})
+        self.assertEqual(ms.standard("movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"), {"title": "Heat (1995)"})
+        self.assertEqual(ms.standard("tv/The Wire (2002) {tmdb-1438}/Season 01/The Wire (2002) - S01E01.mkv"),
+                         {"title": "The Wire - S01E01"})
         self.assertEqual(ms.standard("tv/The Wire (2002)/Season 01/The Wire (2002) - S01E01 - The Target.mkv"),
                          {"title": "The Wire - S01E01 - The Target"})
         self.assertEqual(ms.standard("youtube/Chan/2024-05-01 - Hello [abc123]/".rstrip("/") + ".mp4"),
                          {"title": "Hello", "author": "Chan"})
+
+    def test_title_clean(self):
+        self.assertEqual(ms.title_clean("Alien: Covenant"), "Alien - Covenant")
+        self.assertEqual(ms.norm_title("Aguirre, the Wrath of God"), ms.norm_title("Aguirre The Wrath Of God"))
+        self.assertEqual(ms.norm_title("Big Sick, The"), ms.norm_title("The Big Sick"))
 
     def test_ep_code(self):
         self.assertEqual(ms.ep_code(1, 2), "S01E02")
@@ -380,7 +394,7 @@ class Pipeline(unittest.TestCase):
             self.assertIn("10 files", out)
             self.assertIn("ignored", out)
 
-            code, out = run_cli("draft", str(st))
+            code, out = run_cli("draft", str(st), "--library", str(lib))
             self.assertEqual(code, 0, out)
             table = Path(str(st) + ".tsv")
             rows = {l.split("\t")[0]: l.rstrip("\n").split("\t") for l in table.read_text().splitlines()[1:]}
@@ -551,6 +565,150 @@ class Concurrency(unittest.TestCase):
             text = table.read_text()
             self.assertIn("Heat (1995) - Reviewed.mkv", text)
             self.assertIn("movies/Alien (1979)/Alien (1979).mkv", text)
+
+
+def fake_wikidata(entities):
+    """A Wikidata API stand-in: `entities` is {qid: (label, prop, tmdb, year, lang_qid)}."""
+    def claim(v):
+        return {"mainsnak": {"datavalue": {"value": v}}}
+
+    def fetch(params):
+        if params["action"] == "query":
+            prop = params["srsearch"].rsplit("haswbstatement:", 1)[1]
+            return {"query": {"search": [{"title": q} for q, e in entities.items() if e[1] == prop]}}
+        out = {}
+        for q in params["ids"].split("|"):
+            if q.startswith("L"):  # a language item: L1 German, L2 English
+                de = q == "L1"
+                out[q] = {"claims": {"P218": [claim("de" if de else "en")], "P219": [claim("ger" if de else "eng")]}}
+                continue
+            label, prop, tmdb, year, lang = entities[q]
+            date = "P577" if prop == "P4947" else "P580"
+            claims = {prop: [claim(tmdb)], date: [claim({"time": f"+{year}-01-01T00:00:00Z"})]}
+            if lang:  # the original is preferred over the languages it was released in
+                claims["P364"] = [claim({"id": "L2"}), {**claim({"id": lang}), "rank": "preferred"}]
+            out[q] = {"labels": {"en": {"value": label}}, "claims": claims}
+        return {"entities": out}
+    return fetch
+
+
+class Copies(unittest.TestCase):
+    """Duplicates: content already filed, and several copies of one film."""
+
+    def test_filed_pdf_is_recognised_after_its_metadata_was_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "one"
+            st.mkdir(parents=True)
+            make_pdf(st / "Game_Rules_OEF2025.pdf", title="x")
+            original = (st / "Game_Rules_OEF2025.pdf").read_bytes()
+            run_cli("scan", str(st), "--hash", "--library", str(lib))
+            run_cli("draft", str(st), "--library", str(lib))
+            table = Path(str(st) + ".tsv")
+            table.write_text(table.read_text().replace("\t\t\tclassify", "\trpg/Game/Rules.pdf\thigh\tclassify"))
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            filed = lib / "rpg/Game/Rules.pdf"
+            self.assertNotEqual(filed.read_bytes(), original)  # exiftool appended an update
+            self.assertTrue(filed.read_bytes().startswith(original))
+            log = Path(str(st) + ".applied.jsonl").read_text()
+            import hashlib
+            self.assertEqual(json.loads(log)["sha256"], hashlib.sha256(original).hexdigest())
+
+            for with_log in (True, False):
+                if not with_log:  # a batch filed before apply logged hashes
+                    Path(str(st) + ".applied.jsonl").unlink()
+                again = lib / "staging" / f"two{with_log}"
+                again.mkdir()
+                (again / "rules.pdf").write_bytes(original)
+                run_cli("scan", str(again), "--hash", "--library", str(lib))
+                code, out = run_cli("draft", str(again), "--library", str(lib))
+                self.assertIn("1 copies set aside", out)
+                row = Path(str(again) + ".tsv").read_text().splitlines()[1].split("\t")
+                self.assertEqual(row[1:3], ["discard", "high"])
+                self.assertIn("already filed as rpg/Game/Rules.pdf", row[3])
+                # check refuses to file it again under another name.
+                t = Path(str(again) + ".tsv")
+                t.write_text(t.read_text().replace("\tdiscard\t", "\trpg/Game/Rules again.pdf\t"))
+                code, out = run_cli("check", str(again), "--library", str(lib))
+                self.assertEqual(code, 1)
+                self.assertIn("already filed as rpg/Game/Rules.pdf", out)
+
+    def test_best_copy_is_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "b"
+            for sub in ("a", "b", "c"):
+                (st / sub).mkdir(parents=True)
+            small = ["-f", "lavfi", "-i", "testsrc=size=64x48:rate=5", "-f", "lavfi", "-i", "sine=f=440", "-t", "1",
+                     "-c:v", "mpeg4", "-c:a", "aac", "-shortest"]
+            big = [x.replace("64x48", "1280x720") for x in small]  # 480 vs 720: classes, not pixels
+            ffmpeg(*small, "-metadata:s:a:0", "language=ger", str(st / "a" / "Heat.1995.BluRay.mkv"))
+            ffmpeg(*big, "-metadata:s:a:0", "language=ger", str(st / "b" / "Heat.1995.WEB.mkv"))
+            ffmpeg(*[x.replace("f=440", "f=660") for x in big], "-metadata:s:a:0", "language=ger",
+                   str(st / "c" / "Heat.1995.HDTV.mkv"))
+            (st / "c" / "Heat.1995.WEB.copy.mkv").write_bytes((st / "b" / "Heat.1995.WEB.mkv").read_bytes())
+            (st / "a" / "Heat.1995.BluRay.en.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+            ffmpeg(*big, "-metadata:s:a:0", "language=eng", str(st / "c" / "Aguirre.The.Wrath.of.God.1972.BluRay.mkv"))
+            ffmpeg(*small, "-metadata:s:a:0", "language=ger", str(st / "a" / "Aguirre.The.Wrath.of.God.1972.WEB.mkv"))
+            run_cli("scan", str(st), "--hash", "--library", str(lib))
+            wd = fake_wikidata({"Q1": ("Heat", "P4947", "949", 1995, None),
+                                "Q2": ("Aguirre, the Wrath of God", "P4947", "14281", 1972, "L1")})
+            ns = type("A", (), {"staging": str(st), "library": str(lib), "force": False, "lookup": False})
+            with redirect_stdout(io.StringIO()):
+                ms.draft(ns, lookup=ms.Wikidata(wd))
+            rows = {l.split("\t")[0]: l.split("\t")[1:] for l in Path(str(st) + ".tsv").read_text().splitlines()[1:]}
+            # Same resolution, another source: a matter of taste -> trash. Lower resolution -> discard.
+            self.assertEqual(rows["b/Heat.1995.WEB.mkv"][0], "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv")
+            self.assertEqual(rows["c/Heat.1995.HDTV.mkv"][0], "trash")
+            self.assertEqual(rows["c/Heat.1995.WEB.copy.mkv"][:3:2], ["discard", "identical to b/Heat.1995.WEB.mkv"])
+            self.assertEqual(rows["a/Heat.1995.BluRay.mkv"][0], "discard")
+            # The dropped copy's subtitle runs as long as the kept copy: it goes with it.
+            self.assertEqual(rows["a/Heat.1995.BluRay.en.srt"][0], "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.en.srt")
+            # Original-language audio beats resolution; the title is Wikidata's.
+            self.assertEqual(rows["a/Aguirre.The.Wrath.of.God.1972.WEB.mkv"][0],
+                             "movies/Aguirre, the Wrath of God (1972) {tmdb-14281}/Aguirre, the Wrath of God (1972) {tmdb-14281}.mkv")
+            self.assertEqual(rows["c/Aguirre.The.Wrath.of.God.1972.BluRay.mkv"][0], "discard")
+
+            # apply: one filed, the trash moved aside, the discards deleted and logged.
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            self.assertTrue((lib / "staging/trash/b/c/Heat.1995.HDTV.mkv").exists())
+            self.assertFalse((st / "a" / "Heat.1995.BluRay.mkv").exists())
+            log = [json.loads(l) for l in Path(str(st) + ".applied.jsonl").read_text().splitlines()]
+            self.assertEqual({e["new"] for e in log if e["old"] == "a/Heat.1995.BluRay.mkv"}, {"discard"})
+            self.assertTrue(all(len(e["sha256"]) == 64 for e in log))
+            self.assertEqual(ms.current_meta(lib / "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv")["title"],
+                             "Heat (1995)")
+            code, out = run_cli("lint", "--library", str(lib))
+            self.assertEqual(code, 0, out)
+
+            # A later batch with another copy of a filed film: set aside, not filed twice.
+            st2 = lib / "staging" / "c"
+            st2.mkdir()
+            ffmpeg(*big, str(st2 / "Heat (1995) 2160p.mkv"))
+            run_cli("scan", str(st2), "--hash", "--library", str(lib))
+            ns.staging = str(st2)
+            with redirect_stdout(io.StringIO()):
+                ms.draft(ns, lookup=ms.Wikidata(wd))
+            row = Path(str(st2) + ".tsv").read_text().splitlines()[1].split("\t")
+            self.assertEqual(row[1], "trash")
+            self.assertIn("the library already has this", row[3])
+
+    def test_review_offers_delete_or_trash(self):
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "b"
+            st.mkdir()
+            (Path(d) / "b.tsv").write_text("old\tnew\tconfidence\tnote\nx.mkv\ttrash\tmedium\tother copy of y.mkv\n"
+                                           "z.pdf\tdiscard\thigh\talready filed as rpg/G/Z.pdf\n")
+            code, out = run_cli("review", "export", str(st))
+            items = json.loads((Path(d) / "b.review.json").read_text())["items"]
+            self.assertEqual([i["key"] for i in items], ["x.mkv"])  # identical content needs no one
+            self.assertEqual([o["value"] for o in items[0]["options"]], ["trash", "discard"])
+            (Path(d) / "a.json").write_text(json.dumps({"batch": "b", "item": items[0]["id"], "choice": "option",
+                                                        "value": "discard"}))
+            run_cli("review", "import", str(st), "--answers", str(Path(d) / "a.json"))
+            self.assertIn("x.mkv\tdiscard\treviewed", (Path(d) / "b.tsv").read_text())
 
 
 if __name__ == "__main__":

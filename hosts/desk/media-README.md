@@ -13,8 +13,8 @@ overwritten on every switch. Edit it there.
 ## Layout
 
 ```
-movies/<Title> (<Year>)/<Title> (<Year>)[ - <edition>].<ext>
-tv/<Show> (<Year>)/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>
+movies/<Title> (<Year>) {tmdb-<id>}/<Title> (<Year>) {tmdb-<id>}[ - <edition>].<ext>
+tv/<Show> (<Year>) {tmdb-<id>}/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>
 youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
 books/<author>/<title>.<ext>
 rpg/<game>/<title>[ (<variant>)].<ext>
@@ -29,13 +29,16 @@ metadata. Music is imported by `beet` instead.
 
 1. Copy the files as they are into `media-staging/<batch>/`.
 2. `ssh desk media-stage scan --hash /srv/media/staging/<batch>`
-3. `ssh desk media-stage draft /srv/media/staging/<batch>`
+3. `ssh desk media-stage draft --lookup /srv/media/staging/<batch>`. It
+   names films and shows from Wikidata, with their TMDB id, keeps the best
+   copy of each and sets aside the rest, and anything already filed.
    Music instead: `media-stage group`, then `beet stage-review`, which files
    every album MusicBrainz is sure of and that isn't already in the library,
    and afterwards `beet stage-audit`, which checks each filed track against
    the original file.
 4. Fill in and correct `media-staging/<batch>.tsv`. Its `new` column is the
-   path in the library; use `skip` to leave a file in staging.
+   path in the library; `skip` leaves a file in staging, `discard` deletes
+   it, `trash` moves it to `media-staging/trash/<batch>/`.
 5. `ssh desk media-stage check /srv/media/staging/<batch>`
 6. What isn't certain goes to the Media Filing Review page (Claude publishes
    it), and waits there for a person to decide.

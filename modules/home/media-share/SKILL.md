@@ -26,8 +26,8 @@ procedure. Do not look for a way around it.
 ## Layout (enforced by `check`)
 
 ```
-movies/<Title> (<Year>)/<Title> (<Year>)[ - <edition>].<ext>
-tv/<Show> (<Year>)/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>
+movies/<Title> (<Year>) {tmdb-<id>}/<Title> (<Year>) {tmdb-<id>}[ - <edition>].<ext>
+tv/<Show> (<Year>) {tmdb-<id>}/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>
 youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
 books/<author>/<title>.<ext>                   epub pdf mobi azw3 cbz cbr djvu
 rpg/<game>/<title>[ (<variant>)].<ext>
@@ -35,7 +35,10 @@ music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.<ext>   beets onl
 ```
 
 Subtitles (`.en.srt`), `.info.json` and thumbnails sit beside their video with
-the same stem; movie extras go in `movies/<Title> (<Year>)/extras/`. No
+the same stem; movie extras go in `movies/<Title> (<Year>)/extras/`. The
+`{tmdb-<id>}` is optional but wanted: Plex and Jellyfin read it from the
+folder, Infuse from the file name, so a movie's file repeats it; episodes
+don't. A `:` in a title becomes ` - ` (`Alien - Covenant (2017)`). No
 `: * ? " < > | \` in any name. There are no other top-level folders. Anything
 that fits none of these is `skip`: ask the user where it belongs, and do not
 invent a folder.
@@ -51,9 +54,22 @@ agent or person per batch.
    Copy, don't move: the source stays until the user deletes it.
 2. **Scan**: `media-stage scan --hash <staging>/<batch>`. From the Mac, run it
    on desk: `ssh desk media-stage scan --hash /srv/media/staging/<batch>`.
-   Hashing over SMB would read every byte across the network.
-3. **Draft**: `media-stage draft <staging>/<batch>` writes
+   Hashing over SMB would read every byte across the network. Over a slow
+   link (both hosts on Wi-Fi: ~5 MB/s), scan and draft a hard-linked copy on
+   the Mac first, and send only what the draft keeps.
+3. **Draft**: `media-stage draft --lookup <staging>/<batch>` writes
    `<staging>/<batch>.tsv` (columns `old`, `new`, `confidence`, `note`).
+   `--lookup` takes each film's and show's title, year, TMDB id and original
+   language from Wikidata. Draft also sets aside duplicates on its own:
+   - content already in the library, even after `apply` rewrote its
+     metadata (logged hashes, or a PDF that begins with the staged bytes):
+     `discard`, `high`;
+   - several copies of one film or episode: the best is kept
+     (original-language audio, then not a cam, resolution class, subtitles,
+     source, bit rate). The rest are `discard` when plainly worse, `trash`
+     when it's a matter of taste. A dropped copy's subtitles go with the kept
+     one when the two run the same length;
+   - a copy of something already filed: `trash`, flagged.
 4. **Classify**: edit the table, from the Mac through
    `/Volumes/media-staging/<batch>.tsv`. Fill every blank `new` and check every
    row that isn't `high`. The evidence is in the note and in
@@ -65,7 +81,11 @@ agent or person per batch.
    - Home videos, screen recordings, phone clips, installers, archives,
      anything unidentified: `skip`, and list them for the user.
    - Audio rows say `beets`; see below. Duplicates that `check` reports as
-     byte-identical: `skip`.
+     byte-identical or already filed: `discard`.
+   - `discard` deletes the staged copy at `apply`; `trash` moves it to
+     `staging/trash/<batch>/` for the user to look through. Keep one copy and
+     one edition of each film or episode. When it isn't plain which copy is
+     better, `trash` the others rather than `discard`.
    - Do not rely on a file's old folder or name when its contents say
      otherwise.
    Music is not classified by hand. On desk:
@@ -120,15 +140,19 @@ agent or person per batch.
    no music.
 9. **Apply**, on desk: `media-stage apply /srv/media/staging/<batch>`
    (from the Mac: `ssh desk media-stage apply /srv/media/staging/<batch>`).
-   It re-checks, moves, writes standard metadata and logs to
-   `<batch>.applied.jsonl`. It can be rerun.
+   It re-checks, moves, writes standard metadata, deletes `discard` rows,
+   moves `trash` rows to `staging/trash/<batch>/`, and logs each file with its
+   original sha256 to `<batch>.applied.jsonl` (kept after `close`: it is how
+   a later batch knows the content is filed). It can be rerun.
 10. **Lint and close**: `media-stage lint`. Mark the review filed with
    `ArtifactData` `update` on `reviews/<batch>` (and `<batch>-audit`):
    `{"closed": "<date>"}`. Report what is filed, what is left in staging and
    why, and ask what to do with the leftovers and with the source. When the
    user has settled the leftovers: `media-stage close
    /srv/media/staging/<batch>`, which removes the batch's records. It refuses
-   while files remain or before a music batch's audit has passed. Never
+   while files remain or before a music batch's audit has passed.
+   `staging/trash/<batch>/` is not the batch's: it stays until the user
+   empties it. Never
    delete `<batch>.manifest.jsonl` or the review files by hand: the manifest
    is the only record of what each file was before beets renamed it.
 

@@ -3455,15 +3455,25 @@ each file's own metadata instead.
   music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.mp3   # disc only if multi-disc
   books/<author>/<title>.<ext>
   rpg/<game or line>/<title> (<variant>).<ext>
-  movies/<title> (<year>)/<title> (<year>).<ext>
-  tv/<show> (<year>)/Season <NN>/<show> (<year>) - S<NN>E<NN> - <episode>.<ext>
+  movies/<title> (<year>) {tmdb-<id>}/<title> (<year>) {tmdb-<id>}.<ext>
+  tv/<show> (<year>) {tmdb-<id>}/Season <NN>/<show> (<year>) - S<NN>E<NN> - <episode>.<ext>
   youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
 ```
 
 The video half is the naming Jellyfin, Plex, Kodi and Infuse all parse without
 per-file hints, which keeps the choice of player open — Infuse on the iPhone
 reads the SMB share as it stands. Names stay SMB-safe for the Windows clients:
-none of `: * ? " < > |`.
+none of `: * ? " < > |`; a title's `:` becomes ` - ` (`Alien - Covenant (2017)`).
+
+*Added 2026-09-25:* the **TMDB id** in braces, so a player never has to guess
+between remakes and namesakes (Thirst 2009, Macbeth 1971). `{tmdb-<id>}` is
+the one spelling all three read: Plex uses it, Jellyfin accepts it beside its
+own `[tmdbid-<id>]`, and Infuse reads it from the **file** name only, never a
+folder, so a movie's file repeats its folder's name, id included (Jellyfin
+also wants a movie file to start with its folder name). A show carries its id
+on its folder alone: an id in an episode's name would be the show's, and
+Infuse matches episodes by name. The id is optional in the layout, so a film
+Wikidata doesn't know still files. `draft --lookup` finds it.
 
 **Music** — by tag, never by file name. The `audio` drive's names are
 unreliable: `…Shoemaker's Wife.mp3` and `…Shoemaker's Wife_1.mp3` are two
@@ -3500,8 +3510,10 @@ Calibre or Kavita can adopt if the shelf grows.
 
 - **Movies**: one folder per film, year always included (it is how every
   scraper tells remakes apart). Extras go under `extras/` in that folder,
-  subtitles beside the film as `<title> (<year>).en.srt`, an alternate cut as
-  `<title> (<year>) - <edition>.<ext>`.
+  subtitles beside the film as `<title> (<year>) {tmdb-<id>}.en.srt`, an alternate cut as
+  `<title> (<year>) {tmdb-<id>} - <edition>.<ext>`. **One copy, one edition**
+  per film or episode (decided 2026-09-25): the original-language audio
+  first, then the best picture.
 - **TV**: specials are `Season 00`. A multi-episode file is `S01E01-E02`.
 - **YouTube** (and any other `yt-dlp` site): grouped by channel, dated by
   upload, the video id kept so a re-download dedupes against it. One
@@ -3540,15 +3552,25 @@ Music is the exception at step 4: beets files it.
 | --- | --- | --- |
 | 1. Stage | `rclone copy …` / `rsync -a …` into `staging/<batch>/` | The files exactly as they came. For a source with hashes, `rclone check --one-way` against it now, while the names still match |
 | 2. Scan | `media-stage scan staging/<batch> [--hash]` | Reads each file's **own** metadata into `staging/<batch>.manifest.jsonl`. PDF: `pdfinfo` fields (title, author, creator app, pages, page size) and the first three pages' text. EPUB: the OPF's title, creators, identifiers (ISBN), language, publisher. CBZ: image count, `ComicInfo.xml`. Audio: `ffprobe` duration, bitrate and tags, and a tag-coverage summary. Video: codec and resolution, audio and subtitle languages, the container's title tag, [`guessit`](https://github.com/guessit-io/guessit)'s parse of the file name (title, year, season, episode, edition), and yt-dlp's `.info.json` if one sits beside it. `--hash` adds SHA-256 and lists identical files |
-| 3. Draft | `media-stage draft staging/<batch>` | Proposes `new` for what a rule can decide, with a confidence: YouTube from `.info.json` (**high**); movies and episodes from the file name (**medium**, and only with a year — no year, no guess); EPUBs from their metadata (**medium**); subtitles, `.info.json` and thumbnails follow their video; audio → `beets`. Everything else — every PDF, anything unrecognised — is left **blank**, with the evidence in the note. Writes `staging/<batch>.tsv` |
+| 3. Draft | `media-stage draft [--lookup] staging/<batch>` | Proposes `new` for what a rule can decide, with a confidence: YouTube from `.info.json` (**high**); movies and episodes from the file name (**medium**, and only with a year — no year, no guess; a show's year may come from its other episodes in the batch); with `--lookup`, title, year, TMDB id and original language from **Wikidata** (**high** on one exact match of name and year; no API key); EPUBs from their metadata (**medium**); subtitles, `.info.json` and thumbnails follow their video; audio → `beets`. Everything else — every PDF, anything unrecognised — is left **blank**, with the evidence in the note. Then the **duplicates**: anything already filed → `discard` (below); several copies of one film or episode → the best is kept, ranked by original-language audio, not a cam, resolution class (by width too: 1920×800 is 1080p), subtitles, source, bit rate; the rest → `discard` when plainly worse (a cam, a lower class, the wrong language) or identical, `trash` when it is taste; a dropped copy's subtitle goes with the kept copy if the two run the same length; a copy of a film or episode already in the library → `trash`, flagged. Writes `staging/<batch>.tsv` |
 | 4. Classify | edit `staging/<batch>.tsv` | Claude fills every blank `new` it can and corrects the rest, from the manifest and the note (the manifest's text and metadata are what identified Stonetop's `Arcana.pdf`). What it is not sure of stays flagged — `check`/`guess`/`likely` in the note, or below `high` — for step 5′. `skip` leaves a file in staging on purpose |
 | 4′. Music | `media-stage group staging/<batch>`, then `beet stage-review staging/<batch>` | `group` gives each album its own folder, **by the files' own album and disc tags** wherever they sit (the `audio` drive was one flat folder of 800 tracks), and logs every album it made from more than one folder to `staging/<batch>.group.json`. `stage-review` ([`beetsplug/stagereview.py`](../pkgs/media-stage/beetsplug/stagereview.py)) is beets with no prompts, one folder at a time, so beets never joins "… CD1"/"… CD2" folders by name on its own. An album is imported only when its MusicBrainz match is strong **and** none of these hold: its files are the same recordings as tracks already filed (Chromaprint fingerprints, ≥ 80% — copies score 94–100%, other recordings of the same piece ≤ 60%), it has the name of an album already filed, `group` merged it, or a file's name disagrees with its own tags (another track, another "No."). The rest are written with their evidence and top five candidates to `staging/<batch>.review.json` and stay in staging. Each filed track keeps its staged path in the beets field `stage_source` |
 | 5′. Review | `media-stage review export staging/<batch>`, then the review page | The rows a person must decide go to `staging/<batch>.review.json` (music's is already there). Claude loads it into the **Media Filing Review** page (source [`review.html`](../pkgs/media-stage/review.html), one Claude artifact for every batch, audio and video included): each item shows its evidence and the suggestions, and the user picks one, types a path or tags, or leaves it in staging. Answers are saved as they are made. When the user says the batch is reviewed, Claude exports the answers to `staging/<batch>.answers/` and applies them: `media-stage review import … --answers …` into the table, or `beet stage-review --answers …` for music |
-| 5. Check | `media-stage check staging/<batch>` | Refuses the batch on: a blank row; a staged file missing from the table, or a row whose file is gone; a path that is not the layout (`LAYOUT` in the script is the layout above, as regexes); a character SMB cannot carry; a changed extension; two rows with one target; a target that already exists (and says so if it is byte-identical — a duplicate to `skip`) |
-| 6. Apply | `media-stage apply staging/<batch>` | Checks again, moves each file, **writes its standard metadata**, logs to `staging/<batch>.applied.jsonl`, removes emptied folders. Rerunnable: moved rows count as done |
+| 5. Check | `media-stage check staging/<batch>` | Refuses the batch on: a blank row; a staged file missing from the table, or a row whose file is gone; a path that is not the layout (`LAYOUT` in the script is the layout above, as regexes); a character SMB cannot carry; a changed extension; two rows with one target; a target that already exists (and says so if it is byte-identical — a duplicate to `discard`); content that is **already filed under another name** (below) |
+| 6. Apply | `media-stage apply staging/<batch>` | Checks again, moves each file, **writes its standard metadata**, deletes `discard` rows, moves `trash` rows to `staging/trash/<batch>/` (writable from the Mac, for the user to look through and empty), logs every row with the **source's sha256** to `staging/<batch>.applied.jsonl`, removes emptied folders. Rerunnable: moved rows count as done |
 | 6′. Audit music | `beet stage-audit staging/<batch>` | Every track filed from the batch against its original's record in the manifest: a **real length** that doesn't fit the release slot it was given (more than 7 s, or 4% of long tracks), or a **new title naming another number** than the original's (`Prelude No. 3` filed as `No. 5`, `BWV 999` as `998`, movement `II.` as `III.`). beets assigns files to slots mostly by title and then stores the *release's* length, so neither shows up afterwards without the original. Flags go to the review page as batch `<batch>-audit`, with the release's slots and the one that fits suggested; `beet stage-audit --answers …` re-slots, retitles or accepts, and audits again. Writes `staging/<batch>.audit.json` |
 | 7. Lint | `media-stage lint [--fix]` | Audits the whole library: every file against the layout, and its metadata against the standard below. `--fix` rewrites what differs (not music). Then Claude marks the batch filed on the review page |
 | 8. Close | `media-stage close staging/<batch>` | Removes the batch's records (manifest, table, review and audit files, answers) and its emptied folder; keeps `<batch>.applied.jsonl`. Refuses while files are still in staging, and for a music batch until `stage-audit` has passed: the manifest is the only record of what each file said it was |
+
+**Already filed, under any name.** *Added 2026-09-25*, after the MacBook's
+Soulseek downloads turned out to hold 44 PDFs the `print` drive had already
+filed, none of which hashed like its filed copy: `apply` writes a PDF's title
+as an incremental update, appended to the file, and retitles a video in
+place or by remux. So `draft` and `check` look for staged content two ways:
+the sha256 every `apply` now logs of the source (all `staging/*.applied.jsonl`,
+which `close` keeps), and, for a PDF, a library file that *begins* with the
+staged file's exact bytes (at most 256 KiB longer). The second covers batches
+filed before hashes were logged.
 
 Steps 1–5 and 6–8 are Claude's to run. Step 5′ is the one place the procedure waits for a person, and nothing in the batch is applied before it. beets 2.x needs `musicbrainz` in its plugin list to match anything at all ([`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)).
 
