@@ -3,13 +3,15 @@
 # Claude account, in their own repo at ~/work.
 #
 # Deliberately not given n8's home config (modules/home): that carries n8's git
-# identity and n8's SSH authorized_keys. Not in wheel, no password: nobody logs
-# in as drlindsey directly. n8 reaches the account with
+# identity and n8's SSH authorized_keys. Of it they get only what is generic —
+# claude-code and gh. Not in wheel, no password: nobody logs in as drlindsey
+# directly. n8 reaches the account with
 #
 #   sudo machinectl shell drlindsey@
 #
-# and the one-time setup there is `cd ~/work && claude` — sign in with /login
-# and accept the workspace trust dialog. Until then the rc service exits with an
+# and the one-time setup there is `gh auth login` for their GitHub account, then
+# `cd ~/work && claude` — sign in with /login and accept the workspace trust
+# dialog. Until then the rc service exits with an
 # error and retries every 10 s.
 #
 # linger: the rc service is a systemd user unit, and without linger drlindsey's
@@ -33,11 +35,14 @@ in
       imports = [
         ../../modules/home/claude-code.nix
         ../../modules/home/claude-remote-control.nix
+        ../../modules/home/gh.nix
       ];
 
       services.claudeRemoteControl.directory = "${config.home.homeDirectory}/work";
 
-      home.packages = [ pkgs.git ];
+      # A managed git config, with no identity: gh.nix's credential helper is
+      # written into it, so `gh auth login` also covers git over https.
+      programs.git.enable = true;
 
       # The system default shell is zsh; without a managed .zshrc the first
       # shell stops at zsh-newuser-install.
