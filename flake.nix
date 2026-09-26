@@ -143,7 +143,10 @@
           (home {
             hostPlatform = "x86_64-linux";
             homeDirectory = "/home/n8";
-            extraModules = [ ./hosts/desk/home ];
+            extraModules = [
+              ./hosts/desk/home
+              ./modules/home/claude-remote-control.nix
+            ];
           })
         ];
       };
@@ -156,6 +159,7 @@
           (home {
             hostPlatform = "aarch64-darwin";
             homeDirectory = "/Users/n8";
+            extraModules = [ ./modules/home/claude-remote-control.nix ];
           })
           # macOS uses modules/home/wezterm.nix as-is: it installs the pinned
           # nightly (modules/home/wezterm-package.nix) as a real WezTerm.app and
