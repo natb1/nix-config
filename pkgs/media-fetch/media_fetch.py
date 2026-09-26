@@ -80,7 +80,8 @@ class Backend:
         raise NotImplementedError
 
     def progress(self, job):
-        """{file name: {"state": one of STATES, "bytes": transferred}}."""
+        """{file name: {"state": one of STATES, "bytes": transferred}}, plus
+        "reason" (why, in a few words) on a failed file."""
         raise NotImplementedError
 
     def locate(self, job, file):
@@ -223,19 +224,30 @@ class Slskd(Backend):
         for f in job["files"]:
             t = ts.get(f["name"])
             if t is None:
-                out[f["name"]] = {"state": "failed", "bytes": 0}
+                out[f["name"]] = {"state": "failed", "bytes": 0,
+                                  "reason": "never started: the source has no record of it"}
                 continue
             st = t.get("state", "")
+            p = {"bytes": t.get("bytesTransferred") or 0}
             if st == "Completed, Succeeded":
-                state = "done"
+                p["state"] = "done"
             elif st.startswith("Completed"):
-                state = "failed"
+                p["state"] = "failed"
+                p["reason"] = self._reason(st, t.get("exception"))
             elif st == "InProgress":
-                state = "downloading"
+                p["state"] = "downloading"
             else:
-                state = "queued"
-            out[f["name"]] = {"state": state, "bytes": t.get("bytesTransferred") or 0}
+                p["state"] = "queued"
+            out[f["name"]] = p
         return out
+
+    @staticmethod
+    def _reason(state, exception):
+        # slskd's message ("Transfer rejected: ..."), else the state:
+        # "Completed, TimedOut" -> "timed out".
+        if exception:
+            return exception
+        return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", state.partition(", ")[2]).lower() or state
 
     def locate(self, job, file):
         base = file["name"]
@@ -400,7 +412,8 @@ def job_summary(job, prog):
     return {"id": job["id"], "batch": job["batch"], "title": job["title"], "state": state,
             "files": n, **{k: v for k, v in counts.items() if v}, "bytes": got, "size": total,
             **({"delivered": job["delivered"]} if job.get("delivered") else {}),
-            "failed_files": [k for k, p in prog.items() if p["state"] == "failed"]}
+            "failed_files": [k for k, p in prog.items() if p["state"] == "failed"],
+            "failures": {k: p.get("reason", "") for k, p in prog.items() if p["state"] == "failed"}}
 
 
 def print_job(s):
@@ -408,8 +421,8 @@ def print_job(s):
     line = f"{s['id']:<10} {s['state']:<11} {pct:>4}  {s['batch']}/{s['title']}"
     print(line)
     if s["state"] == "failed":
-        for name in s["failed_files"]:
-            print(f"{'':12}failed: {name}")
+        for name, why in s["failures"].items():
+            print(f"{'':12}failed: {name}" + (f" ({why})" if why else ""))
     if s.get("delivered"):
         print(f"{'':12}in {s['delivered']}")
 

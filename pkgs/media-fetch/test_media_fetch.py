@@ -114,7 +114,7 @@ class FakeSlskd:
                 continue
             if t["filename"] in self.fail:
                 self.fail.discard(t["filename"])  # a retry succeeds
-                t["state"] = "Completed, Errored"
+                t["state"] = "Completed, TimedOut"
                 continue
             p = self.downloads / t["_dest"] / t["filename"].rpartition("\\")[2]
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -227,13 +227,32 @@ class MediaFetchTest(unittest.TestCase):
         self.cli("get", cid, "--batch", "b")
         code, out = self.cli("wait", cid, "--timeout", "0")
         self.assertEqual(code, 1)
-        self.assertIn("failed: 02.flac", out)
+        self.assertIn("failed: 02.flac (timed out)", out)
+        code, out = self.cli("status", cid, "--json")
+        self.assertEqual(json.loads(out)[0]["failures"], {"02.flac": "timed out"})
         self.assertFalse((self.staging / "b").exists())
         code, out = self.cli("get", cid)
         self.assertIn("retrying 1", out)
         code, out = self.cli("wait", cid, "--timeout", "0")
         self.assertEqual(code, 0, out)
         self.assertTrue((self.staging / "b" / "Album" / "02.flac").is_file())
+
+    def test_file_the_source_never_queued_says_so(self):
+        self.fake.responses = [response("peer", "M\\Album", ["01"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.cli("get", cid, "--batch", "b")
+        self.fake.transfers["peer"] = []
+        code, out = self.cli("status", cid)
+        self.assertIn("failed: 01.flac (never started: the source has no record of it)", out)
+
+    def test_failure_shows_the_sources_message(self):
+        self.fake.responses = [response("peer", "M\\Album", ["01"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.cli("get", cid, "--batch", "b")
+        [t] = self.fake.transfers["peer"]
+        t["state"], t["exception"] = "Completed, Rejected", "Transfer rejected: Overwhelmed with requests"
+        code, out = self.cli("status", cid)
+        self.assertIn("failed: 01.flac (Transfer rejected: Overwhelmed with requests)", out)
 
     def test_status_and_cancel(self):
         self.fake.responses = [response("peer", "M\\Album", ["01"])]
