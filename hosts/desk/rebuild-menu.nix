@@ -5,7 +5,9 @@
 #
 # git lists the main checkout first, so it is the entry already selected: Enter
 # alone rebuilds main, as the binding did before there was a menu. Worktrees
-# whose directory is gone (prunable) are left out.
+# whose directory is gone (prunable) are left out. A worktree whose branch has
+# an open pull request shows its number and title (gh, which is already
+# logged in); offline, it falls back to the branch name.
 #
 # Opening the menu first tidies up, so the list is only what is still live.
 # After a fetch, a worktree is removed, with its branch, when its HEAD is in
@@ -28,6 +30,7 @@ let
       pkgs.coreutils
       pkgs.gnused
       pkgs.gnugrep
+      pkgs.gh
       pkgs.xdg-terminal-exec
     ];
     text = ''
@@ -37,6 +40,13 @@ let
       # Offline or slow, the tidy-up runs against the origin/main last fetched:
       # anything in that is merged all the same.
       timeout 15 git -C "$repo" fetch -q origin main || true
+
+      # Open PRs as "branch<TAB>number<TAB>title", fetched while the tidy-up runs.
+      prs_file=$(mktemp)
+      trap 'rm -f "$prs_file"' EXIT
+      (cd "$repo" && timeout 15 gh pr list --state open --limit 100 \
+        --json number,title,headRefName \
+        --jq '.[] | "\(.headRefName)\t\(.number)\t\(.title)"' >"$prs_file" 2>/dev/null) &
 
       merged() { g merge-base --is-ancestor "$1" origin/main 2>/dev/null; }
       tidied=0
@@ -86,12 +96,28 @@ let
       mesg=()
       [ "$tidied" = 0 ] || mesg=(--mesg "Removed $tidied merged worktree(s)/branch(es)")
 
-      # Shown as "branch  ·  last commit's subject": the Claude worktrees'
-      # branch names alone don't say what is in them.
+      wait
+      declare -A pr_number=() pr_title=()
+      while IFS=$'\t' read -r branch number title; do
+        pr_number[$branch]=$number
+        pr_title[$branch]=$title
+      done <"$prs_file"
+
+      # Shown as "#N PR title  ·  last commit's subject", or the branch in
+      # place of the PR when there is none: the Claude worktrees' branch names
+      # alone don't say what is in them. The subject is left off when it only
+      # repeats the PR title, as it does for a one-commit PR.
       choice=$(while IFS=$'\t' read -r path ref; do
-          printf '%s  ·  %s\n' "$ref" "$(git -C "$path" log -1 --format=%s)"
+          subject=$(git -C "$path" log -1 --format=%s)
+          if [ -z "''${pr_number[$ref]:-}" ]; then
+            printf '%s  ·  %s\n' "$ref" "$subject"
+          elif [ "''${pr_title[$ref]}" = "$subject" ]; then
+            printf '#%s %s\n' "''${pr_number[$ref]}" "$subject"
+          else
+            printf '#%s %s  ·  %s\n' "''${pr_number[$ref]}" "''${pr_title[$ref]}" "$subject"
+          fi
         done <<<"$worktrees" |
-        fuzzel --dmenu --index --prompt "rebuild › " --lines 15 --width 100 "''${mesg[@]}") || exit 0
+        fuzzel --dmenu --index --prompt "rebuild › " --lines 15 --width 120 "''${mesg[@]}") || exit 0
 
       dir=$(printf '%s\n' "$worktrees" | awk -F '\t' -v n="$choice" 'NR == n + 1 { print $1 }')
       [ -n "$dir" ] || exit 0
