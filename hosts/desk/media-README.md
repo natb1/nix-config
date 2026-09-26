@@ -16,10 +16,15 @@ overwritten on every switch. Edit it there.
 movies/<Title> (<Year>) {tmdb-<id>}/<Title> (<Year>) {tmdb-<id>}[ - <edition>].<ext>
 tv/<Show> (<Year>) {tmdb-<id>}/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>
 youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
-books/<author>/<title>.<ext>
+books/<author>/<series or title>/<title>[ (<variant>)].<ext>
+books/<author>/<series>/<series> Vol. <N>[ - <title>].<ext>
 rpg/<game>/<title>[ (<variant>)].<ext>
 music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.<ext>
 ```
+
+In `books/` and `rpg/` each folder is one series in Kavita. A book on its own
+is in a folder of its title. A version is written `version 1.1`, not `v1.1`,
+which Kavita would read as volume 1.1.
 
 ## Adding files
 

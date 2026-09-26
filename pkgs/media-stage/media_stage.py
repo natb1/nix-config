@@ -12,6 +12,9 @@ share, a GCS listing, a Mac's Downloads folder):
   lint   [DIR...]  audit the library: layout and metadata
   close  STAGING   remove the batch's records once it is filed (and audited)
 
+  restage STAGING PATH...   move library files back into a new batch, to be
+                            filed again under other names (a layout change)
+
 STAGING is a batch directory: /srv/media/staging/<batch> on desk, which the
 Mac sees as /Volumes/media-staging/<batch>. Its sidecars sit next to it:
 staging/print/ has staging/print.manifest.jsonl and staging/print.tsv. The
@@ -75,9 +78,12 @@ _SIDE = rf"(\.[A-Za-z]{{2,3}}(-[A-Za-z]{{2}})?)?(\.(forced|sdh|cc|default))?\.({
 # folder id: it is the show's, not the episode's.
 _ID = r"( \{tmdb-\d+\})?"
 
+# Books and RPGs are read in Kavita, which groups files into series: one
+# folder is one series (books/<author>/<series>/, rpg/<game>/). See "Books and
+# RPGs: what Kavita reads" below for the rest of what its layout needs.
 LAYOUT = {
     "music": re.compile(r"^music/[^/]+/[^/]+/[^/]+\.[A-Za-z0-9]+$"),
-    "books": re.compile(r"^books/[^/]+/[^/]+\.(epub|pdf|mobi|azw3|cbz|cbr|djvu)$"),
+    "books": re.compile(r"^books/[^/]+/[^/]+/[^/]+\.(epub|pdf|mobi|azw3|cbz|cbr|djvu)$"),
     "rpg": re.compile(r"^rpg/[^/]+/[^/]+\.[A-Za-z0-9]+$"),
     "movies": re.compile(
         rf"^movies/(?P<m>[^/]+ \(\d{{4}}\){_ID})/"
@@ -132,6 +138,101 @@ def layout_error(rel):
         return f"top directory must be one of {', '.join(LIBRARY_DIRS)}"
     if not LAYOUT[top].match(rel):
         return f"does not fit the {top}/ layout"
+    if top in ("books", "rpg"):
+        return shelf_error(rel)
+    return None
+
+
+# --------------------------------------------------------------------------
+# Books and RPGs: what Kavita reads
+#
+# Kavita (the reading server for books/ and rpg/, both "Book" libraries)
+# groups files into series, with volumes and loose "specials". It takes the
+# series and title from each file's own metadata, not from its path:
+#   EPUB  calibre:series + calibre:series_index (only the two together; else
+#         the series is dc:title) and dc:title
+#   PDF   XMP calibre:series, calibreSI:series_index and dc:title, in every
+#         revision of the file: an older one it cannot parse (an incremental
+#         update, a /Length by reference) loses all of it, and so does a
+#         catalog kept in a compressed object stream, which it cannot reach
+#   CBZ   ComicInfo.xml's Series, Volume and Title
+# From the name it takes only a volume number, and it finds one in any "v2",
+# "vol 2", "volume 2", "tome 2", "t12 " or "S01" (KAVITA_VOLUME).
+#
+# So the folder is the series: apply writes it, with the volume and title
+# the name gives, into each file (shelf_meta), and a PDF is written out as
+# one plain revision (pdf_plain). A name gives a volume only as "<series> Vol. <N>",
+# and a version is "version 1.1", never "v1.1". An EPUB with no volume
+# number is a series of its own, named by its title: its folder is its title.
+
+# Kavita's Latin-script volume patterns (Kavita.Services/Scanner/Parser.cs,
+# MangaVolumeRegex, which Book libraries use), in its order.
+_KV_NUM = r"\d+(\.\d)?"
+KAVITA_VOLUME = [re.compile(p, re.I) for p in (
+    r"(\b|_)(v|tome(\s|_)?|t)(?P<v>\d+-?\d+)(\s|_)",
+    r"^.+?(\s*Chapter\s*\d+)?(\s|_|\-\s)+((Vol(ume)?|tome)\.?(\s|_)?)(?P<v>\d+(\.\d+)?(\-\d+(\.\d+)?)?)(.+?|$)",
+    rf"(\b|_)(?!\[)v(?P<v>{_KV_NUM}(-{_KV_NUM})?)(?!\])(\b|_)",
+    r"(\b|_)(vol\.? ?)(?P<v>\d+(\.\d)?(-\d+)?(\.\d)?)",
+    r"(vol\.? ?)(?P<v>\d+(\.\d)?)",
+    r"((volume|tome)\s)(?P<v>\d+(\.\d)?)",
+    r"(\b|_)((S|T)(?P<v>\d+)(\b|_))",
+    r"(vol_)(?P<v>\d+(\.\d)?)",
+)]
+
+# "Discworld Vol. 3 - Equal Rites (tr. X)", "Test Game Vol. 2"
+VOL_NAME = re.compile(r"^(?P<series>.+?) Vol\. (?P<n>\d+(?:\.\d+)?)(?: - (?P<title>.+))?$")
+
+
+def kavita_volume(stem):
+    """The volume number Kavita reads from a file name, or None."""
+    for rx in KAVITA_VOLUME:
+        m = rx.search(stem)
+        if m and m.group("v"):
+            return m.group("v")
+    return None
+
+
+def split_variant(stem):
+    """'Foo (pages, v1.3)' -> ('Foo', ' (pages, v1.3)'); a year '(1999)' stays."""
+    base = strip_variants(stem)
+    return base, stem[len(base):]
+
+
+def volume_clashes(rels):
+    """Books/RPG paths that number the same volume of one series: Kavita
+    makes them one volume of both files' pages. One message per clash."""
+    seen, out = {}, []
+    for rel in rels:
+        p = Path(rel)
+        if p.parts[0] not in ("books", "rpg") or len(p.parts) < 3:
+            continue
+        m = VOL_NAME.match(split_variant(p.stem)[0])
+        if m:
+            key = (str(p.parent), num(m["n"]))
+            if key in seen:
+                out.append(f"{rel}: the same volume as {seen[key]} (Kavita merges them; keep one)")
+            seen.setdefault(key, rel)
+    return out
+
+
+def shelf_error(rel):
+    """Why a books/ or rpg/ path would come out wrong in Kavita, or None."""
+    p = Path(rel)
+    stem, series = p.stem, p.parts[-2]
+    base, _ = split_variant(stem)
+    m = VOL_NAME.match(base)
+    said = kavita_volume(stem)
+    if m:
+        if m["series"] != series:
+            return f"a volume is named for its folder: {series} Vol. {m['n']}"
+        if said != m["n"]:
+            return f"Kavita reads volume {said} from {stem!r}, not {m['n']}"
+    elif said:
+        return (f"Kavita reads {stem!r} as volume {said}: write a version as 'version 1.1', "
+                f"and a volume as '{series} Vol. <N>'")
+    if p.parts[0] == "books" and ext_of(rel) == "epub" and not m and base != series:
+        return (f"an EPUB with no volume number is a series of its own in Kavita: "
+                f"name its folder for it ({p.parts[1]}/{base}/), or number it ({series} Vol. <N>)")
     return None
 
 
@@ -204,6 +305,7 @@ def epub_meta(path):
         return {"error": "no <metadata> in OPF"}
     def all_(tag):
         return [(e.text or "").strip() for e in md.findall(f"dc:{tag}", NS) if (e.text or "").strip()]
+    series, volume = _epub_series(md)
     return {
         "title": (all_("title") or [""])[0],
         "creators": all_("creator"),
@@ -211,35 +313,296 @@ def epub_meta(path):
         "language": (all_("language") or [""])[0],
         "date": (all_("date") or [""])[0],
         "publisher": (all_("publisher") or [""])[0],
+        "series": series,
+        "volume": volume,
+        "source": next((s[len(SOURCE):] for s in all_("source") if s.startswith(SOURCE)), ""),
     }
 
 
-def epub_fill(path, title, creator, dry_run=False):
-    """Add dc:title / dc:creator where the book has none. Never overwrites:
-    a publisher's own title is better than one derived from a file name."""
+# The original file's sha256, kept in the metadata of a book or RPG file that
+# apply rewrote: how a later batch recognises the same download as filed.
+SOURCE = "sha256:"
+
+
+def _epub_series(md):
+    """(series, volume) as Kavita reads them: the last of each wins."""
+    series = volume = ""
+    for e in md.findall("opf:meta", NS):
+        name, prop = e.get("name"), e.get("property")
+        if name == "calibre:series":
+            series = e.get("content", "")
+        elif name == "calibre:series_index":
+            volume = e.get("content", "")
+        elif prop == "belongs-to-collection":
+            series = (e.text or "").strip()
+        elif prop == "group-position":
+            volume = (e.text or "").strip()
+    return series, volume
+
+
+def num(v):
+    """'2.00' and '2' are one volume number."""
+    try:
+        return f"{float(v):g}" if v not in (None, "") else ""
+    except ValueError:
+        return v
+
+
+def rewrite_zip(path, replace, comment=None):
+    """Rewrite a zip with members replaced ({name: bytes}); new names are
+    appended. Entry order, and each entry's compression, are kept: an EPUB's
+    mimetype stays first and stored, as the spec requires."""
+    fd, tmp = tempfile.mkstemp(dir=Path(path).parent, prefix=".tagging.", suffix=Path(path).suffix)
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
+            for item in src.infolist():
+                dst.writestr(item, replace.pop(item.filename) if item.filename in replace else src.read(item.filename))
+            for name, data in replace.items():
+                dst.writestr(name, data)
+            dst.comment = src.comment if comment is None else comment
+        shutil.copymode(path, tmp)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def epub_write(path, want, source=None):
+    """Make the EPUB say what Kavita should read: dc:title first, the series
+    and volume (or none, so its title is its series), dc:creator where the
+    book has none, and the original's sha256 as a dc:source. A publisher's
+    own titles stay, after ours."""
     with zipfile.ZipFile(path) as z:
         opf_name = _opf_path(z)
         raw = z.read(opf_name)
     ET.register_namespace("", NS["opf"])
     ET.register_namespace("dc", NS["dc"])
     root = ET.fromstring(raw)
+    before = ET.tostring(root)
     md = root.find("opf:metadata", NS)
-    changed = []
-    for tag, value in (("title", title), ("creator", creator)):
-        if value and not any((e.text or "").strip() for e in md.findall(f"dc:{tag}", NS)):
-            ET.SubElement(md, f"{{{NS['dc']}}}{tag}").text = value
-            changed.append(f"dc:{tag}={value}")
-    if not changed or dry_run:
-        return changed
-    new_opf = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-    fd, tmp = tempfile.mkstemp(dir=Path(path).parent, suffix=".epub")
+    dc = lambda t: f"{{{NS['dc']}}}{t}"
+    meta = f"{{{NS['opf']}}}meta"
+    for t in md.findall("dc:title", NS):
+        if (t.text or "").strip() == want["title"]:
+            md.remove(t)
+    first = next((i for i, e in enumerate(list(md)) if e.tag == dc("title")), len(list(md)))
+    new = ET.Element(dc("title"))
+    new.text = want["title"]
+    md.insert(first, new)
+    # Series and volume: ours only. A publisher's collection would name
+    # another series than the folder's.
+    ids = {f"#{e.get('id')}" for e in md.findall("opf:meta", NS)
+           if e.get("property") == "belongs-to-collection" and e.get("id")}
+    for e in md.findall("opf:meta", NS):
+        if (e.get("name") in ("calibre:series", "calibre:series_index")
+                or e.get("property") == "belongs-to-collection" or e.get("refines") in ids):
+            md.remove(e)
+    if want.get("volume"):
+        ET.SubElement(md, meta, {"name": "calibre:series", "content": want["series"]})
+        ET.SubElement(md, meta, {"name": "calibre:series_index", "content": want["volume"]})
+    if want.get("author") and not any((e.text or "").strip() for e in md.findall("dc:creator", NS)):
+        ET.SubElement(md, dc("creator")).text = want["author"]
+    if source and not any((e.text or "").startswith(SOURCE) for e in md.findall("dc:source", NS)):
+        ET.SubElement(md, dc("source")).text = SOURCE + source
+    if ET.tostring(root) == before:
+        return
+    rewrite_zip(path, {opf_name: ET.tostring(root, encoding="utf-8", xml_declaration=True)})
+
+
+# --------------------------------------------------------------------------
+# PDF metadata, as Kavita reads it: XMP first, the Info dictionary under it
+
+RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+XMP_NS = {"x": "adobe:ns:meta/", "rdf": RDF, "dc": NS["dc"],
+          "calibre": "http://calibre-ebook.com/xmp-namespace",
+          "calibreSI": "http://calibre-ebook.com/xmp-namespace-series-index"}
+
+
+def _q(prefix, tag):
+    return f"{{{XMP_NS[prefix]}}}{tag}"
+
+
+def xmp_read(raw):
+    """{title, author, series, volume, source} from an XMP packet."""
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return {}
+    def first(path):
+        e = root.find(f".//{path}//rdf:li", XMP_NS)
+        e = e if e is not None else root.find(f".//{path}", XMP_NS)
+        return (e.text or "").strip() if e is not None else ""
+    return {"title": first("dc:title"),
+            "author": ", ".join((e.text or "").strip() for e in root.findall(".//dc:creator//rdf:li", XMP_NS)),
+            "series": first("calibre:series/rdf:value"),
+            "volume": first("calibre:series//calibreSI:series_index"),
+            "source": next((s[len(SOURCE):] for s in ((e.text or "").strip() for e in
+                            root.findall(".//dc:source", XMP_NS)) if s.startswith(SOURCE)), "")}
+
+
+def xmp_with(raw, want, source):
+    """The XMP packet `raw` (or a new one) with our title, author, series,
+    volume and source in place of any it had."""
+    for p, u in XMP_NS.items():
+        ET.register_namespace(p, u)
+    try:
+        root = ET.fromstring(raw) if raw else None
+    except ET.ParseError:
+        root = None
+    rdf = root.find(".//rdf:RDF", XMP_NS) if root is not None else None
+    if rdf is None:
+        root = ET.Element(_q("x", "xmpmeta"))
+        rdf = ET.SubElement(root, _q("rdf", "RDF"))
+    theirs = [e.text for d in rdf for e in d.findall("dc:source", XMP_NS)]
+    for d in rdf.findall("rdf:Description", XMP_NS):
+        for tag in ("dc:title", "dc:creator", "dc:source", "calibre:series"):
+            for e in d.findall(tag, XMP_NS):
+                d.remove(e)
+    d = ET.SubElement(rdf, _q("rdf", "Description"), {_q("rdf", "about"): ""})
+    def seq(tag, kind, value, **attrs):
+        c = ET.SubElement(ET.SubElement(d, _q("dc", tag)), _q("rdf", kind))
+        ET.SubElement(c, _q("rdf", "li"), attrs).text = value
+    seq("title", "Alt", want["title"], **{"{http://www.w3.org/XML/1998/namespace}lang": "x-default"})
+    if want.get("author"):
+        seq("creator", "Seq", want["author"])
+    s = ET.SubElement(d, _q("calibre", "series"), {_q("rdf", "parseType"): "Resource"})
+    ET.SubElement(s, _q("rdf", "value")).text = want["series"]
+    if want.get("volume"):
+        ET.SubElement(s, _q("calibreSI", "series_index")).text = want["volume"]
+    old = next((t for t in theirs if t and t.startswith(SOURCE)), None)
+    if old or source:
+        ET.SubElement(d, _q("dc", "source")).text = old or SOURCE + source
+    body = ET.tostring(root, encoding="unicode")
+    return f'<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n{body}\n<?xpacket end="w"?>'.encode()
+
+
+def pdf_plain(path):
+    """True if the PDF is one revision with a plain xref table, which is all
+    Kavita's PDF reader follows reliably: it reads every earlier revision too
+    (an incremental update's /Prev), and cannot reach an object kept in a
+    compressed object stream (an xref stream's), such as the catalog that
+    holds the XMP, nor, from the end of a linearized file, the first page's
+    objects."""
+    with open(path, "rb") as f:
+        if b"/Linearized" in f.read(1024):
+            return False
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - 2048))
+        tail = f.read()
+    m = re.search(rb"startxref\s+(\d+)\s+%%EOF\s*$", tail)
+    i = tail.rfind(b"trailer")
+    if not m or i == -1 or i > m.start():
+        return False  # an xref stream, or nothing a strict reader can follow
+    return b"/Prev" not in tail[i:m.start()]
+
+
+def pdf_meta(path):
+    """{title, author, series, volume, source, plain, encrypted} as Kavita
+    would read them, or {'error': …}."""
+    import pikepdf
+    try:
+        with pikepdf.open(path) as pdf:
+            info = pdf.docinfo
+            got = {"title": str(info.get("/Title", "")).strip(), "author": str(info.get("/Author", "")).strip(),
+                   "series": "", "volume": "", "source": ""}
+            md = pdf.Root.get("/Metadata")
+            if md is not None:
+                got.update({k: v for k, v in xmp_read(md.read_bytes()).items() if v})
+            got["encrypted"] = pdf.is_encrypted
+    except Exception as e:
+        return {"error": str(e)[:300]}
+    got["plain"] = pdf_plain(path)
+    return got
+
+
+def pdf_write(path, want, source=None):
+    """Write our metadata into the PDF as one plain revision (see pdf_plain;
+    every stream copied as it is): Info Title/Author, and XMP with the
+    series. Returns an error string, or None."""
+    import pikepdf
+    tmp = Path(path).with_name(f".tagging.{socket.gethostname()}.{os.getpid()}.{Path(path).name}")
+    try:
+        with pikepdf.open(path) as pdf:
+            if pdf.is_encrypted:
+                return "encrypted: left as it is (Kavita cannot read an encrypted PDF's metadata)"
+            pdf.docinfo["/Title"] = want["title"]
+            if want.get("author"):
+                pdf.docinfo["/Author"] = want["author"]
+            old = pdf.Root.get("/Metadata")
+            raw = old.read_bytes() if old is not None else b""
+            pdf.Root.Metadata = pdf.make_stream(xmp_with(raw, want, source),
+                                                Type=pikepdf.Name.Metadata, Subtype=pikepdf.Name.XML)
+            pdf.save(tmp, stream_decode_level=pikepdf.StreamDecodeLevel.none, fix_metadata_version=False,
+                     object_stream_mode=pikepdf.ObjectStreamMode.disable)
+        shutil.copymode(path, tmp)
+        os.replace(tmp, path)
+    except Exception as e:
+        return f"not written: {str(e)[:200]}"
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return None
+
+
+def pdf_original_sha256(path):
+    """The sha256 a PDF had before exiftool's incremental updates (how apply
+    wrote PDF titles until it wrote clean files): exiftool keeps what it
+    replaced and can take its updates back off. The file's own hash if it has
+    none."""
+    fd, tmp = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
-    with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp, "w") as dst:
-        for item in src.infolist():  # mimetype stays first and stored, as the spec requires
-            data = new_opf if item.filename == opf_name else src.read(item.filename)
-            dst.writestr(item, data)
-    os.replace(tmp, path)
-    return changed
+    os.unlink(tmp)
+    try:
+        r = run(["exiftool", "-q", "-q", "-m", "-PDF-update:all=", "-o", tmp, str(path)])
+        return sha256(tmp) if r.returncode == 0 and os.path.exists(tmp) else sha256(path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+# --------------------------------------------------------------------------
+# CBZ: ComicInfo.xml; the original's sha256 goes in the zip's comment
+
+def _comicinfo_name(z):
+    return next((n for n in z.namelist() if n.lower() == "comicinfo.xml"), None)
+
+
+def cbz_meta(path):
+    try:
+        with zipfile.ZipFile(path) as z:
+            name = _comicinfo_name(z)
+            root = ET.fromstring(z.read(name)) if name else None
+            comment = z.comment.decode(errors="replace")
+    except Exception as e:
+        return {"error": str(e)[:300]}
+    get = lambda t: ((root.findtext(t) or "").strip() if root is not None else "")
+    m = re.search(r"\bsha256:([0-9a-f]{64})\b", comment)
+    return {"title": get("Title"), "author": get("Writer"), "series": get("Series"),
+            "volume": get("Volume"), "source": m.group(1) if m else ""}
+
+
+def cbz_write(path, want, source=None):
+    with zipfile.ZipFile(path) as z:
+        name = _comicinfo_name(z) or "ComicInfo.xml"
+        try:
+            root = ET.fromstring(z.read(name))
+        except (KeyError, ET.ParseError):
+            root = ET.Element("ComicInfo")
+        comment = z.comment
+    for tag, value in (("Series", want["series"]), ("Title", want["title"]),
+                       ("Volume", want.get("volume")), ("Writer", want.get("author"))):
+        e = root.find(tag)
+        if not value:
+            if e is not None and tag == "Volume":
+                root.remove(e)
+            continue
+        if e is None:
+            e = ET.SubElement(root, tag)
+        e.text = value
+    if source and b"sha256:" not in comment:
+        comment = (comment + b"\n" if comment else b"") + f"media-stage source {SOURCE}{source}".encode()
+    rewrite_zip(path, {name: ET.tostring(root, encoding="utf-8", xml_declaration=True)}, comment)
 
 
 # --------------------------------------------------------------------------
@@ -683,11 +1046,13 @@ def rank_copies(groups, recs, rows, stems, has_subs):
 
 # --------------------------------------------------------------------------
 # Filed copies: a staged file whose content is already in the library. apply
-# rewrites what it files (a PDF's title is an incremental update appended to
-# the file; a video's title is set in place or by a remux), so a filed file
-# rarely hashes like its source. Two ways to still recognise it:
+# rewrites what it files (a book's or RPG's metadata, rewritten whole; a
+# video's title, set in place or by a remux), so a filed file rarely hashes
+# like its source. Three ways to still recognise it:
 #   - the sha256 apply logged of the source, in any batch's applied.jsonl;
-#   - for a PDF, the library file begins with the source's exact bytes.
+#   - a book or RPG file's own record of it (SOURCE, in its metadata);
+#   - for a PDF titled before apply wrote clean files, the library file
+#     begins with the source's exact bytes (exiftool appended an update).
 
 PREFIX_SLACK = 256 * 1024  # what an incremental PDF update may append
 
@@ -695,7 +1060,7 @@ PREFIX_SLACK = 256 * 1024  # what an incremental PDF update may append
 class FiledIndex:
     def __init__(self, library, staging_root=None):
         self.library = Path(library)
-        self.logged, self.by_ext = {}, None
+        self.logged, self.by_ext, self.sources = {}, None, None
         for log in sorted(Path(staging_root or self.library / "staging").glob("*.applied.jsonl")):
             for line in log.read_text().splitlines():
                 try:
@@ -717,11 +1082,27 @@ class FiledIndex:
                             self.by_ext.setdefault(ext_of(f), []).append((p.stat().st_size, p))
         return self.by_ext
 
+    def _sources(self):
+        """sha256 of the original -> library path, from what books and RPG
+        files record of themselves (apply rewrites them)."""
+        if self.sources is None:
+            self.sources = {}
+            for ext in SHELF_KINDS:
+                for _, p in self._files().get(ext, []):
+                    rel = str(p.relative_to(self.library))
+                    if rel.split("/")[0] in ("books", "rpg"):
+                        src = current_meta(p).get("source")
+                        if src:
+                            self.sources[src] = rel
+        return self.sources
+
     def find(self, rel_ext, size, digest):
         """The library path holding this content, or None."""
         hit = self.logged.get(digest)
         if hit and (self.library / hit).exists():
             return hit
+        if rel_ext in SHELF_KINDS and digest in self._sources():
+            return self._sources()[digest]
         for fsize, p in self._files().get(rel_ext, []):
             same = fsize == size
             prefix = rel_ext == "pdf" and size < fsize <= size + PREFIX_SLACK
@@ -819,7 +1200,13 @@ def draft(a, lookup=None):
             m = r.get("meta", {})
             if m.get("title") and m.get("creators"):
                 title = clean(re.split(r"[:;]", m["title"])[0])
-                new, conf, note = f"books/{clean(person(m['creators'][0]))}/{title}.epub", "medium", "from EPUB metadata"
+                author = clean(person(m["creators"][0]))
+                if m.get("series") and m.get("volume"):
+                    series = clean(m["series"])
+                    new = f"books/{author}/{series}/{series} Vol. {num(m['volume'])} - {title}.epub"
+                else:
+                    new = f"books/{author}/{title}/{title}.epub"
+                conf, note = "medium", "from EPUB metadata"
             else:
                 note = "EPUB has no title/creator: " + json.dumps(m, ensure_ascii=False)[:200]
         elif k in ("pdf", "cbz", "document"):
@@ -1125,8 +1512,9 @@ LAYOUT_HELP = [
     "movies/<Title> (<Year>) {tmdb-<id>}/<Title> (<Year>) {tmdb-<id>}[ - <edition>].<ext>",
     "tv/<Show> (<Year>) {tmdb-<id>}/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>",
     "youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>",
-    "books/<author>/<title>.<ext>",
-    "rpg/<game>/<title>[ (<variant>)].<ext>",
+    "books/<author>/<series or title>/<title>[ (<variant>)].<ext>",
+    "books/<author>/<series>/<series> Vol. <N>[ - <title>].<ext>",
+    "rpg/<game>/<title>[ (<variant>)].<ext>  (a version is 'version 1.1', never 'v1.1')",
 ]
 
 
@@ -1418,6 +1806,14 @@ def validate(staging, library):
         counts["move"] += 1
     for f in sorted(present - listed):
         errors.append(f"not in the table: {f}")
+    # Two files numbering one volume of a series, in the batch or with one
+    # already filed.
+    targets = [new for _, new in moves if new not in ("discard", "trash")]
+    beside = [str(f.relative_to(library)) for d in sorted({(library / t).parent for t in targets})
+              if d.is_dir() for f in sorted(d.iterdir()) if f.is_file()]
+    for clash in volume_clashes(beside + targets):
+        if clash.split(": ", 1)[0] in targets:
+            errors.append(clash)
     return errors, moves, counts
 
 
@@ -1450,6 +1846,7 @@ def apply_locked(a, staging, library):
         sys.exit(f"{len(errors)} errors; nothing moved")
     _, _, log = sidecar_paths(staging)
     manifest = load_manifest(staging) or {}
+    originals = restaged_sources(staging)
     for old, new in moves:
         src = staging / old
         dst = trash_dir(staging) / old if new == "trash" else None if new == "discard" else library / new
@@ -1470,7 +1867,7 @@ def apply_locked(a, staging, library):
                 move_noclobber(src, dst)
             except FileExistsError:
                 sys.exit(f"appeared since check, not replaced: {dst}\n  (earlier rows are moved; rerun apply after resolving it)")
-            changes = [] if a.no_tag or new == "trash" else tag_file(library, new)
+            changes = [] if a.no_tag or new == "trash" else tag_file(library, new, source=originals.get(old, digest))
         with open(log, "a") as f:
             f.write(json.dumps({"old": old, "new": new, "sha256": digest, "size": rec.get("size"),
                                 "metadata": changes,
@@ -1501,14 +1898,34 @@ def strip_variants(stem):
         stem = m.group(1)
 
 
+def shelf_meta(rel):
+    """What Kavita should read from a books/ or rpg/ file: its folder is the
+    series; "<series> Vol. <N>[ - <title>]" names a volume. A volume's title
+    is the name's; anything else is titled by its whole name, variant and
+    all, so that pages and spreads tell apart; an unnumbered EPUB by its
+    series, which Kavita takes from its title."""
+    p = Path(rel)
+    stem, series = p.stem, p.parts[-2]
+    base, variant = split_variant(stem)
+    m = VOL_NAME.match(base)
+    want = {"series": series, "volume": num(m["n"]) if m else "",
+            "title": (m["title"] or stem) + variant if m else stem}
+    if not m and ext_of(rel) == "epub":
+        want["title"] = series
+    if p.parts[0] == "books":
+        want["author"] = p.parts[1]
+    return want
+
+
+SHELF_KINDS = ("pdf", "epub", "cbz")
+
+
 def standard(rel):
     """The metadata a library path implies: {'title':..., 'author':...}. Empty if none."""
     p = Path(rel)
     top, stem = p.parts[0], p.name[: -len(p.suffix)] if p.suffix else p.name
-    if top == "books":
-        return {"title": strip_variants(stem), "author": p.parts[1]}
-    if top == "rpg":
-        return {"title": strip_variants(stem)}
+    if top in ("books", "rpg") and len(p.parts) > 2:
+        return shelf_meta(rel)
     if top == "movies":
         stem = re.sub(r" \{tmdb-\d+\}", "", stem)
         return {"title": stem if "extras" not in p.parts else strip_variants(stem)}
@@ -1527,11 +1944,16 @@ def standard(rel):
 def current_meta(path):
     k = kind_of(path)
     if k == "pdf":
-        i = pdfinfo(path)
-        return {"title": i.get("Title", ""), "author": i.get("Author", "")}
+        return pdf_meta(path)
     if k == "epub":
         m = epub_meta(path)
-        return {"title": m.get("title", ""), "author": (m.get("creators") or [""])[0]}
+        # Kavita takes a series only with its volume number; else the title.
+        series, volume = (m.get("series"), m.get("volume")) if m.get("series") and m.get("volume") else ("", "")
+        return {"title": m.get("title", ""), "author": (m.get("creators") or [""])[0],
+                "series": series or m.get("title", ""), "volume": volume, "source": m.get("source", ""),
+                **({"error": m["error"]} if "error" in m else {})}
+    if k == "cbz":
+        return cbz_meta(path)
     if k == "video":
         t = lower_tags(ffprobe(path).get("format", {}).get("tags"))
         return {"title": t.get("title", ""), "author": t.get("artist", "")}
@@ -1540,25 +1962,47 @@ def current_meta(path):
     return {}
 
 
-def tag_file(library, rel, dry_run=False):
-    """Write the standard metadata for one library file. Returns what changed."""
+def shelf_todo(rel, have):
+    """What a books/ or rpg/ file's metadata lacks for Kavita: {field: value}.
+    An EPUB's author is the publisher's when it has one."""
+    want, k = shelf_meta(rel), kind_of(rel)
+    todo = {x: v for x, v in want.items()
+            if (num(have.get(x)) if x == "volume" else have.get(x) or "") != v
+            and not (x == "author" and k == "epub" and have.get("author"))}
+    if k == "pdf" and not have.get("plain", True) and not have.get("encrypted"):
+        todo["structure"] = "plain"  # see pdf_plain
+    return todo
+
+
+def tag_file(library, rel, dry_run=False, source=None):
+    """Write the standard metadata for one library file. Returns what changed.
+    `source`: the sha256 of the file as it came, kept in a book's or RPG's
+    metadata (only the first time: it is the original's)."""
     path = library / rel
     want, k = standard(rel), kind_of(rel)
-    if not want or k not in ("pdf", "epub", "video"):
+    shelf = rel.split("/")[0] in ("books", "rpg")
+    if not want or k not in (("pdf", "epub", "cbz") if shelf else ("video",)):
         return []
     have = current_meta(path)
-    if k == "epub":
-        # Publisher metadata wins; only fill what is missing.
-        return epub_fill(path, want.get("title"), want.get("author"), dry_run)
-    todo = {x: v for x, v in want.items() if v and have.get(x) != v and not (x == "author" and k == "video")}
+    if "error" in have:
+        return [f"unreadable: {have['error']}"]
+    if shelf:
+        todo = shelf_todo(rel, have)
+        if not have.get("source"):
+            todo["source"] = source or "(original's sha256)"
+        if not todo or dry_run:
+            return [f"{x}={v}" for x, v in todo.items()] if dry_run else []
+        if not have.get("source") and not source:
+            source = pdf_original_sha256(path) if k == "pdf" else sha256(path)
+        err = {"pdf": pdf_write, "epub": epub_write, "cbz": cbz_write}[k](path, want, source)
+        if err:
+            return [err]
+        todo["source"] = source[:12] + "…" if "source" in todo else None
+        return [f"{x}={v}" for x, v in todo.items() if v]
+    todo = {x: v for x, v in want.items() if v and have.get(x) != v and x != "author"}
     if not todo or dry_run:
         return [f"{x}={v}" for x, v in todo.items()] if dry_run else []
-    if k == "pdf":
-        args = [f"-{x.capitalize()}={v}" for x, v in todo.items()]
-        r = run(["exiftool", "-q", "-m", "-overwrite_original", *args, str(path)])
-        if r.returncode:
-            return [f"exiftool failed: {r.stderr.strip()[:200]}"]
-    elif k == "video" and "title" in todo:
+    if k == "video" and "title" in todo:
         e = ext_of(rel)
         if e in ("mkv", "webm"):
             r = run(["mkvpropedit", "-q", str(path), "--edit", "info", "--set", f"title={todo['title']}"])
@@ -1634,6 +2078,69 @@ def close(a):
           + (f"; kept {applied.name}, the record of what was filed" if applied.exists() else ""))
 
 
+# --------------------------------------------------------------------------
+# restage: library files back into a batch, to be filed again under other
+# names (a layout change). They keep their library paths inside the batch, so
+# its table reads old name -> new name; then scan, draft, check and apply as
+# for any batch.
+
+def cmd_restage(a):
+    staging, library = Path(a.staging), Path(a.library) if a.library else default_library()
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    with batch_lock(staging, f"restage {staging.name}"), library_lock(library, f"restage {staging.name}"):
+        restage(a, staging, library)
+
+
+def restage(a, staging, library):
+    files = []
+    for arg in a.paths:
+        p = Path(arg) if Path(arg).is_absolute() else library / arg
+        rel = os.path.relpath(p, library)
+        top = rel.split("/")[0]
+        if top not in LIBRARY_DIRS or rel.startswith(".."):
+            sys.exit(f"not in the library: {arg}")
+        if top == "music":
+            sys.exit(f"{arg}: music is beets' to move")
+        if p.is_dir():
+            files += sorted(f for f in p.rglob("*") if f.is_file() and not f.name.startswith("."))
+        elif p.is_file():
+            files.append(p)
+        else:
+            sys.exit(f"no such file: {arg}")
+    moved = 0
+    log = restaged_path(staging)
+    for f in files:
+        rel = str(f.relative_to(library))
+        # The original's hash goes with the file (apply sees only this copy),
+        # for a book or RPG file that has no record of it yet.
+        if rel.split("/")[0] in ("books", "rpg") and kind_of(rel) in SHELF_KINDS \
+                and not current_meta(f).get("source"):
+            src = pdf_original_sha256(f) if kind_of(rel) == "pdf" else sha256(f)
+            with open(log, "a") as out:
+                out.write(json.dumps({"path": rel, "source": src}, ensure_ascii=False) + "\n")
+        dst = staging / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        move_noclobber(f, dst)
+        moved += 1
+        d = f.parent
+        while d != library and d.parent != library and not any(d.iterdir()):
+            d.rmdir()
+            d = d.parent
+    print(f"restaged {moved} files -> {staging}\n"
+          f"next: scan --hash, draft, fill the table's `new` column, check, apply")
+
+
+def restaged_path(staging):
+    return Path(str(staging).rstrip("/") + ".restaged.jsonl")
+
+
+def restaged_sources(staging):
+    log = restaged_path(staging)
+    if not log.exists():
+        return {}
+    return {e["path"]: e["source"] for e in map(json.loads, log.read_text().splitlines()) if e.get("source")}
+
+
 def glob_escape(s):
     return re.sub(r"([*?\[])", r"[\1]", s)
 
@@ -1669,17 +2176,37 @@ def lint(a, library):
                     problems += 1
                     print(f"CASE   {os.path.relpath(dirpath, library)}: {' / '.join(group)} "
                           "(one entry on the Mac, several on desk)")
-            for f in sorted(filenames):
-                if f in IGNORED_NAMES or f.startswith("."):
-                    continue
-                path = Path(dirpath) / f
-                rel = os.path.relpath(path, library)
+            rels = [os.path.relpath(Path(dirpath) / f, library) for f in sorted(filenames)
+                    if f not in IGNORED_NAMES and not f.startswith(".")]
+            for clash in volume_clashes(rels):
+                problems += 1
+                print(f"LAYOUT {clash}")
+            for rel in rels:
+                path = library / rel
                 why = layout_error(rel)
                 if why:
                     problems += 1
                     print(f"LAYOUT {rel}: {why}")
                     continue
                 k = kind_of(rel)
+                if rel.split("/")[0] in ("books", "rpg") and k in SHELF_KINDS:
+                    have = current_meta(path)
+                    if have.get("encrypted"):
+                        print(f"NOTE   {rel}: encrypted; Kavita reads only its name")
+                        continue
+                    todo = {"unreadable": have["error"]} if "error" in have else shelf_todo(rel, have)
+                    if not have.get("source") and "error" not in have:
+                        todo["source"] = "none"
+                    if todo and a.fix and "error" not in have:
+                        print(f"FIXED  {rel}: {'; '.join(tag_file(library, rel))}")
+                    elif todo:
+                        problems += 1
+                        print(f"META   {rel}: " + ", ".join(
+                            f"{x} is {have.get(x)!r}, not {v!r}" if x in ("title", "series", "volume", "author")
+                            else "earlier revisions or object streams (Kavita cannot follow them)" if x == "structure"
+                            else "no record of the original's sha256" if x == "source"
+                            else f"{x}: {v}" for x, v in todo.items()))
+                    continue
                 if k == "audio":
                     tags = current_meta(path)
                     missing = [t for t in AUDIO_REQUIRED if not tags.get(t)]
@@ -1688,12 +2215,9 @@ def lint(a, library):
                     if missing:
                         problems += 1
                         print(f"META   {rel}: missing {', '.join(missing)}")
-                elif k in ("pdf", "epub", "video"):
+                elif k == "video":
                     want, have = standard(rel), current_meta(path)
-                    if k == "epub":
-                        bad = [x for x in ("title", "author") if not have.get(x)]
-                    else:
-                        bad = [x for x, v in want.items() if v and have.get(x) != v and not (x == "author" and k == "video")]
+                    bad = [x for x, v in want.items() if v and have.get(x) != v and x != "author"]
                     if bad:
                         if a.fix:
                             changes = tag_file(library, rel)
@@ -1749,6 +2273,10 @@ def main(argv=None):
     s = sub.add_parser("close", help="remove a filed batch's records (audio: once `beet stage-audit` passes)")
     s.add_argument("staging")
     s.set_defaults(fn=cmd_close)
+    s = sub.add_parser("restage", help="move library files back into a new batch, to file them again")
+    s.add_argument("staging")
+    s.add_argument("paths", nargs="+", help="library files or folders (relative to the library, or absolute)")
+    s.set_defaults(fn=cmd_restage)
     s = sub.add_parser("lint", help="audit layout and metadata of the library")
     s.add_argument("dirs", nargs="*", help="limit to these directories")
     s.add_argument("--fix", action="store_true", help="write standard metadata where it differs (not audio)")

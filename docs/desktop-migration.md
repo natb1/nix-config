@@ -3453,7 +3453,7 @@ each file's own metadata instead.
 ```
 /srv/media/
   music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.mp3   # disc only if multi-disc
-  books/<author>/<title>.<ext>
+  books/<author>/<series or title>/<title> (<variant>).<ext>      # <series> Vol. <N> - <title> in a series
   rpg/<game or line>/<title> (<variant>).<ext>
   movies/<title> (<year>) {tmdb-<id>}/<title> (<year>) {tmdb-<id>}.<ext>
   tv/<show> (<year>) {tmdb-<id>}/Season <NN>/<show> (<year>) - S<NN>E<NN> - <episode>.<ext>
@@ -3494,17 +3494,64 @@ suffixes (33 of them Liszt) are flattened disc collisions, not duplicates.
 **RPG** — one folder per game or product line, **not** per rules system: a
 multi-system adventure (Witches of Frostwyck: Cairn, 5e, OSR) keeps its
 versions together. A third-party adventure for one game sits in that game's
-folder (The Drops of St Jerome under `Cairn/`). System-neutral aids go in
-`GM Tools/`. Variants go in the parentheses — system, layout (pages, spreads,
-booklet), paper size (A4, letter, 11x14), version where it matters — and are
-**not duplicates**: pages are for screens, spreads for print. Storefront noise
+folder (The Drops of St Jerome under `Cairn/`). A system-neutral aid gets a
+folder of its own (`Hexcrawl Toolbox/`), not a shared `GM Tools/`: the folder
+is a series in Kavita (below). Variants go in the parentheses — system, layout
+(pages, spreads, booklet), paper size (A4, letter, 11x14), version where it
+matters, written `version 1.1` — and are **not duplicates**: pages are for
+screens, spreads for print. Storefront noise
 is dropped (`(1)`, `OEF2025_11_12`, `_DTHKOw`, `pdfcoffee.com_`). A later
 re-download from a storefront arrives under the publisher's name and is renamed
 by hand to match.
 
-**Books** — `books/<author>/<title>.<ext>`, translator in the parentheses where
-there is a choice of translation. Ten books need no Calibre; the layout is one
-Calibre or Kavita can adopt if the shelf grows.
+**Books** — `books/<author>/<series>/<title>.<ext>`: a book in a series is
+`<series> Vol. <N> - <title>`; a book on its own is its own series, in a
+folder of its title (`books/Albert Camus/The Stranger/The Stranger.epub`).
+The translator goes in the parentheses where there is a choice of translation.
+
+**Books and RPGs in Kavita** (*revised 2026-09-26*, when
+[Kavita](../hosts/desk/kavita.nix) became their reader). Kavita's
+[file guide](https://wiki.kavitareader.com/guides/scanner/managefiles/) asks for
+one folder per series and no files at a library's root; it groups files into
+series, volumes and loose "specials". What it actually reads, from its source
+(0.9.1) and a scan of a copy of the library in a throwaway instance:
+
+- **The series and title come from the file's own metadata, not its path**,
+  in a Book library. EPUB: `calibre:series` with `calibre:series_index` — only
+  the two together, otherwise the series *is* `dc:title`. PDF: XMP
+  `calibre:series`, `calibreSI:series_index`, `dc:title`, falling back to the
+  Info title. CBZ: `ComicInfo.xml`. A PDF with no readable metadata falls back
+  to the **top** folder's name — its author, under the old
+  `books/<author>/<title>` layout, so every loose PDF of an author became one
+  series named for them.
+- **Its PDF reader follows every revision** of a file, and cannot reach an
+  object kept in a compressed object stream. The incremental updates `apply`
+  used to append with `exiftool` left the publisher's older metadata in
+  place: 24 of the 171 PDFs threw on it (a `/Length` by reference, a bad hex
+  string) and lost their metadata, and others were titled by an older
+  revision (`document`, `Adobe Photoshop PDF`). A PDF whose catalog sits in
+  an object stream (Monster Manual) loses its metadata too.
+- **From the name it takes a volume number**, and finds one in any `v2`,
+  `vol 2`, `volume 2`, `tome 2` or `S01` — the old `(v8.2)`, `(5e, v2)`,
+  `(v1)` made `Brindlewood Bay (`, `Tomb of the Blood Baron (` and
+  `Imperial Vault 19 (5e` series. Two files with the same volume number in one
+  series become one volume of both files' pages.
+
+So **the folder is the series, and `apply` writes it into each file**: the
+series, the volume a name gives as `<series> Vol. <N>`, and the title, into
+the EPUB's OPF, the PDF's XMP and Info (the whole file written out once, as
+one revision with a plain xref table and no object streams, with
+[pikepdf](https://pikepdf.readthedocs.io)), the
+CBZ's `ComicInfo.xml`. An RPG folder is a game or product line, so Kavita
+shows `Cairn` as one series of its books and sheets — which is the guide's
+one folder, one series, with the finer grouping a game line already has. A
+version is written `version 1.1`, never `v1.1`; parentheses stay for variants,
+which is what they mean to Kavita too: text left out of the series name. An
+unnumbered EPUB is named by its `dc:title`, so its folder is its title and
+that title goes first in its OPF (the publisher's is kept after it).
+`check` and `lint` refuse a name Kavita would misread and two files numbering
+one volume; `lint` reports a file whose metadata Kavita would read otherwise,
+and `lint --fix` rewrites it.
 
 **Video** — files named after the title, not after the source:
 
@@ -3564,13 +3611,21 @@ Music is the exception at step 4: beets files it.
 
 **Already filed, under any name.** *Added 2026-09-25*, after the MacBook's
 Soulseek downloads turned out to hold 44 PDFs the `print` drive had already
-filed, none of which hashed like its filed copy: `apply` writes a PDF's title
+filed, none of which hashed like its filed copy: `apply` wrote a PDF's title
 as an incremental update, appended to the file, and retitles a video in
-place or by remux. So `draft` and `check` look for staged content two ways:
+place or by remux. So `draft` and `check` look for staged content three ways:
 the sha256 every `apply` now logs of the source (all `staging/*.applied.jsonl`,
-which `close` keeps), and, for a PDF, a library file that *begins* with the
-staged file's exact bytes (at most 256 KiB longer). The second covers batches
-filed before hashes were logged.
+which `close` keeps); the original's sha256 that a book or RPG file carries in
+its own metadata (`dc:source`, since `apply` rewrites them whole — see
+Kavita above); and, for a PDF titled the old way, a library file that
+*begins* with the staged file's exact bytes (at most 256 KiB longer).
+`lint --fix` recovers the original's hash from such a PDF by taking
+exiftool's updates back off.
+
+**Changing a filed name.** `media-stage restage staging/<batch> <library
+paths…>` moves filed files back into a batch, under their library paths, and
+records each book's or RPG's original sha256 for `apply`; the batch is then
+filed like any other, its table reading old name → new name.
 
 Steps 1–5 and 6–8 are Claude's to run. Step 5′ is the one place the procedure waits for a person, and nothing in the batch is applied before it. beets 2.x needs `musicbrainz` in its plugin list to match anything at all ([`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)).
 
@@ -3579,8 +3634,9 @@ the library path so the two cannot drift apart:
 
 | Kind | Written | By |
 | --- | --- | --- |
-| PDF | Title (variants dropped: `Saving Saxham (Cairn, v1)` → `Saving Saxham`); Author for `books/` | `exiftool`, an incremental update — the original is still inside the file |
-| EPUB | `dc:title`, `dc:creator` **only where missing** — a publisher's own title beats one derived from a file name | the OPF, rewritten in place |
+| PDF | Info Title and Author; XMP `dc:title` (the whole name, variant and all: `Saving Saxham (Cairn, version 1)`), `dc:creator` for `books/`, `calibre:series` (the folder) and `calibreSI:series_index` (a `Vol. <N>`), `dc:source` = the original's sha256 | pikepdf: the file written out as **one revision**, plain xref table, no object streams, every stream copied as it is; an encrypted PDF is left alone |
+| EPUB | `dc:title` first (the series folder, or a volume's title; the publisher's titles kept after it), `calibre:series` and `calibre:series_index` for a volume and no other series or collection, `dc:creator` only where missing, `dc:source` = the original's sha256 | the OPF, rewritten in place |
+| CBZ | `ComicInfo.xml`: Series, Title, Volume, Writer; the original's sha256 in the zip comment | the zip, rewritten |
 | Video | the container's title: `Heat (1995)`, `The Wire - S01E01 - The Target`, the YouTube title | `mkvpropedit` in place for MKV/WebM; a stream-copy remux for MP4/MOV |
 | Music | album artist, artist, album, title, track (disc, year where known) | beets, from MusicBrainz or by hand |
 

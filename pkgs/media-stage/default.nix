@@ -18,7 +18,9 @@ python3Packages.buildPythonApplication {
   pyproject = false;
   src = ./.;
 
-  dependencies = [ python3Packages.guessit ];
+  # pikepdf writes a book's or RPG's metadata into the PDF as one clean
+  # revision, which Kavita's PDF reader can follow.
+  dependencies = [ python3Packages.guessit python3Packages.pikepdf ];
 
   installPhase = ''
     runHook preInstall

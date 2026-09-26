@@ -29,7 +29,8 @@ procedure. Do not look for a way around it.
 movies/<Title> (<Year>) {tmdb-<id>}/<Title> (<Year>) {tmdb-<id>}[ - <edition>].<ext>
 tv/<Show> (<Year>) {tmdb-<id>}/Season NN/<Show> (<Year>) - SxxEyy[ - <episode title>].<ext>
 youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
-books/<author>/<title>.<ext>                   epub pdf mobi azw3 cbz cbr djvu
+books/<author>/<series or title>/<title>[ (<variant>)].<ext>   epub pdf mobi azw3 cbz cbr djvu
+books/<author>/<series>/<series> Vol. <N>[ - <title>].<ext>
 rpg/<game>/<title>[ (<variant>)].<ext>
 music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.<ext>   beets only
 ```
@@ -42,6 +43,16 @@ don't. A `:` in a title becomes ` - ` (`Alien - Covenant (2017)`). No
 `: * ? " < > | \` in any name. There are no other top-level folders. Anything
 that fits none of these is `skip`: ask the user where it belongs, and do not
 invent a folder.
+
+Books and RPGs are read in Kavita, where **a folder is a series**: an RPG
+folder is one game or product line (not a grab-bag like "GM Tools"); a book
+on its own is a series of its own, in a folder of its title
+(`books/Albert Camus/The Stranger/The Stranger.epub`); a book in a series is
+`<series> Vol. <N> - <title>`, one file per volume number. Kavita reads a
+volume from any `v2`, `vol 2`, `volume 2`, `tome 2` or `S01` in a name, so a
+version is written `version 1.1`, never `v1.1`. Parentheses are for variants
+(pages, spreads, A4, a system, a translator). `check` refuses what Kavita
+would misread; `apply` writes the series, volume and title into each file.
 
 ## Procedure
 
@@ -163,6 +174,10 @@ agent or person per batch.
   are writable, but these rules still apply.
 - Fix metadata of files already filed with `media-stage tag <path>` or
   `media-stage lint --fix`, on desk.
+- Rename or move something already filed: `media-stage restage
+  /srv/media/staging/<batch> <library paths…>` takes it back into a new
+  batch, which is then filed like any other (scan, draft, table, check,
+  apply).
 - `locked: … held by: <host> <pid> …` means another host or session is working
   on that batch or the library. Wait and retry. Delete the lock only if the
   user confirms that process is gone.
