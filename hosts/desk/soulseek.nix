@@ -1,0 +1,103 @@
+# slskd: a Soulseek client for finding music (and books) to file.
+#
+# Headless, with a web UI at http://desk:5030 for searching and picking by
+# hand, and an HTTP API (same port, /api/v0, X-API-Key header) for an agent
+# to do the same: the media-share skill has the calls. One client, one
+# login: Soulseek disconnects the older session when an account logs in
+# twice, so a second client (Nicotine+, sldl) on the same account would
+# fight this one. Use the API instead.
+#
+# Downloads land in /srv/media/staging/soulseek, not the library. They are
+# filed like any other batch (media-share skill, "Soulseek"): moved into a
+# new staging/<batch>, then media-stage / beet stage-review. slskd runs as
+# n8, like the Samba shares' `force user`, so media-stage can move what it
+# downloaded; the module's sandbox still limits it to its state, the two
+# directories below (read-write) and the share (read-only).
+#
+# Shares music/, read-only. Soulseek expects a share back, and many peers
+# refuse users who share nothing. music/ is beets-tagged and nothing in it is
+# private. Uploads are capped so a busy peer cannot saturate the Wi-Fi.
+#
+# The web UI and API are tailnet-only, like the other servers: the firewall
+# opens nothing for 5030, and tailscale0 is trusted
+# (modules/nixos/tailscale.nix). The Soulseek listen port is different: peers
+# connect to it from the internet, and a client nobody can reach only
+# downloads from peers who can be reached. It is opened on Wi-Fi alone, and
+# only matters once the router forwards TCP 50300 to desk. Without the
+# forward everything still works, with fewer sources.
+#
+# Not managed by this repo: /etc/slskd/credentials (root, 0600), the
+# Soulseek account and the web UI's login:
+#   SLSKD_SLSK_USERNAME=…   SLSKD_SLSK_PASSWORD=…
+#   SLSKD_USERNAME=…        SLSKD_PASSWORD=…
+# The API key, /etc/slskd/api.env, is generated on first start, like
+# Kavita's token key; deleting it and restarting slskd makes a new one.
+# State is in /var/lib/slskd (search and transfer history, disposable).
+
+{ lib, pkgs, ... }:
+
+let
+  credentials = "/etc/slskd/credentials";
+  apiEnv = "/etc/slskd/api.env";
+  downloads = "/srv/media/staging/soulseek";
+in
+{
+  services.slskd = {
+    enable = true;
+    user = "n8";
+    group = "users";
+    environmentFile = credentials;
+    settings = {
+      directories = {
+        inherit downloads;
+        # On the bulk SSD beside the downloads, so finishing a file is a
+        # rename, and a stalled album cannot fill the root disk.
+        incomplete = "/srv/media/staging/.soulseek-incomplete";
+      };
+      shares = {
+        directories = [ "/srv/media/music" ];
+        filters = [ "\\.DS_Store$" "/\\._" "\\.ini$" "Thumbs\\.db$" ];
+      };
+      soulseek.description = "desk";
+      transfers.upload = {
+        slots = 3;
+        speed_limit = 2048; # KiB/s
+      };
+    };
+  };
+
+  # Two environment files: the hand-provisioned login and the generated API
+  # key. The module takes one; systemd takes a list.
+  systemd.services.slskd = {
+    after = [ "srv-media.mount" ];
+    # Without the bulk SSD, slskd would download onto the root filesystem
+    # and share an empty music/.
+    requires = [ "srv-media.mount" ];
+    serviceConfig.EnvironmentFile = lib.mkForce [ credentials apiEnv ];
+  };
+
+  # Readable by n8 so an agent on desk (or over ssh desk) can call the API.
+  # Root writes it; slskd reads it through systemd, not itself.
+  systemd.services.slskd-api-key = {
+    description = "Generate slskd's API key";
+    before = [ "slskd.service" ];
+    requiredBy = [ "slskd.service" ];
+    unitConfig.ConditionPathExists = "!${apiEnv}";
+    serviceConfig.Type = "oneshot";
+    script = ''
+      umask 077
+      mkdir -p "$(dirname ${apiEnv})"
+      key=$(${pkgs.coreutils}/bin/head -c 32 /dev/urandom | ${pkgs.coreutils}/bin/base64 --wrap=0 | ${pkgs.coreutils}/bin/tr '+/' '-_' | ${pkgs.coreutils}/bin/tr -d =)
+      echo "SLSKD_API_KEY=$key" > ${apiEnv}
+      chown n8:users ${apiEnv}
+      chmod 0400 ${apiEnv}
+    '';
+  };
+
+  systemd.tmpfiles.rules = [
+    "d ${downloads} 0755 n8 users -"
+    "d /srv/media/staging/.soulseek-incomplete 0755 n8 users -"
+  ];
+
+  networking.firewall.interfaces.wlp14s0.allowedTCPPorts = [ 50300 ];
+}

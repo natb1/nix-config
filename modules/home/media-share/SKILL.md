@@ -132,6 +132,35 @@ agent or person per batch.
    delete `<batch>.manifest.jsonl` or the review files by hand: the manifest
    is the only record of what each file was before beets renamed it.
 
+## Soulseek
+
+slskd on desk (`hosts/desk/soulseek.nix`) searches and downloads; its web
+UI is `http://desk:5030`. From an agent, use its API on desk (from the Mac,
+wrap each call in `ssh desk '…'`). Don't install another Soulseek client: a
+second login on the account disconnects slskd.
+
+```sh
+. /etc/slskd/api.env; api=http://localhost:5030/api/v0; h="X-API-Key: $SLSKD_API_KEY"
+id=$(uuidgen)
+curl -sH "$h" -H 'Content-Type: application/json' -d "{\"id\":\"$id\",\"searchText\":\"<artist> <album>\"}" $api/searches
+curl -sH "$h" $api/searches/$id                 # wait until isComplete
+curl -sH "$h" $api/searches/$id/responses       # [{username, hasFreeUploadSlot, queueLength, uploadSpeed, files:[{filename, size, bitRate, length}]}]
+curl -sH "$h" -H 'Content-Type: application/json' -d '[{"filename":"<as listed>","size":<n>}]' $api/transfers/downloads/<username>
+curl -sH "$h" $api/transfers/downloads          # progress; state "Completed, Succeeded"
+```
+
+1. **Choose.** Group each response's files by folder and show the user a
+   short list: a complete album (every track, one folder), lossless over
+   lossy, a free upload slot, a short queue, a fast peer. Download only
+   what the user picked, and only what they are entitled to download.
+2. **Download** the chosen folder's files in one `POST`. They arrive in
+   `/srv/media/staging/soulseek/<folder>/`.
+3. **Stage.** When every file is `Succeeded`, move the folder (same disk,
+   instant) into a new batch, then follow the procedure from step 2:
+   `mkdir /srv/media/staging/<batch> && mv /srv/media/staging/soulseek/<folder> /srv/media/staging/<batch>/`.
+   This is the one place a move is right: the download is not the user's
+   original. `soulseek/` itself is never a batch.
+
 ## Rules
 
 - Never cp, mv, rsync or rename into or inside the library (`music/`,
