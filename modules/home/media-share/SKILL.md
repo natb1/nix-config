@@ -85,7 +85,9 @@ agent or person per batch.
    - Tables: `media-stage review export <staging>/<batch>` writes
      `<batch>.review.json` with every row that is blank, `skip`, below `high`,
      or flagged in its note. Audio: `beet stage-review` already wrote it.
-   - Find the page: `Artifact` `list`, title **Media Filing Review**.
+   - Find the page: the link your CLAUDE.md gives, if it gives one (an
+     account that can't see the shared page has its own); otherwise
+     `Artifact` `list`, title **Media Filing Review**.
    - Load the batch: `ArtifactData` `set`, collection `reviews`, doc id
      `<batch>`, `file_path` the review JSON. Replace an older version of the
      same batch; never mix batches in one document.
@@ -93,8 +95,10 @@ agent or person per batch.
      be filed without asking (rows per top-level folder). Stop until they say
      the batch is reviewed. Don't apply anything from the batch before that.
 7. **Read the answers**: `ArtifactData` `query`, collection `answers`, where
-   `batch == <batch>`, `out_dir` `/srv/media/staging/<batch>.answers`. Then on
-   desk:
+   `batch == <batch>`, `out_dir` `/srv/media/staging/<batch>.answers` (or the
+   answers directory your CLAUDE.md names, if staging isn't writable for you:
+   use that path for `<batch>.answers` in every command below, and remove
+   it after `close`). Then on desk:
    - Tables: `media-stage review import /srv/media/staging/<batch> --answers
      /srv/media/staging/<batch>.answers`, then `check` again.
    - Audio: `beet stage-review --answers /srv/media/staging/<batch>.answers

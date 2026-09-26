@@ -27,6 +27,12 @@
 # arguments if that stops being acceptable. Use absolute /srv/media paths:
 # n8 cannot read drlindsey's home, so relative paths from there fail.
 #
+# Two places the media-share skill assumes n8 (their CLAUDE.md lines below
+# override them): the Media Filing Review page is n8's artifact, which
+# drlindsey's Claude account can't list, so they have their own; and
+# /srv/media/staging is n8's and not writable for drlindsey, so the page's
+# answers are saved to answersDir instead — drlindsey's, readable by n8.
+#
 # linger: the rc service is a systemd user unit, and without linger drlindsey's
 # user manager — and so the service — only runs while drlindsey is logged in.
 
@@ -39,6 +45,9 @@ let
   # rebuilds.
   n8Bin = "/etc/profiles/per-user/n8/bin";
   mediaTools = [ "media-fetch" "media-stage" "beet" ];
+
+  answersDir = "/var/lib/media-answers";
+  reviewPage = "https://claude.ai/artifact/D4LiLNMwES1pCW8iHebEqC";
 in
 {
   security.sudo.extraRules = [
@@ -51,6 +60,8 @@ in
       }) mediaTools;
     }
   ];
+
+  systemd.tmpfiles.rules = [ "d ${answersDir} 0755 ${user} users -" ];
 
   users.users.${user} = {
     isNormalUser = true;
@@ -73,6 +84,13 @@ in
           exec /run/wrappers/bin/sudo -u n8 -H ${n8Bin}/${tool} "$@"
         ''
       ) mediaTools;
+
+      home.file.".claude/CLAUDE.md".text = ''
+        - Media Filing Review page (media-share step 6): ${reviewPage}
+          — yours; the shared one isn't visible to this account.
+        - media-share answers (step 7): staging isn't writable for you, so
+          save them to `${answersDir}/<batch>.answers` instead.
+      '';
 
       # A managed git config, with no identity: gh.nix's credential helper is
       # written into it, so `gh auth login` also covers git over https.
