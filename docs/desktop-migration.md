@@ -2062,6 +2062,12 @@ brings it near a formatting tool.
 
 #### Where the Steam library lives
 
+> *Changed 2026-09-26:* the host-side library is Steam's default,
+> `~/.local/share/Steam` on the root. There is room there for now (155 GB
+> free), and `/srv/games` was removed from `disko.nix` before anything was
+> installed in it. Revisit if the root runs short. The reasoning below is
+> kept for that day.
+
 **Decided: on the 2 TB drive, with Windows, where it is today**
 (`C:\Program Files (x86)\Steam`). Windows owns that whole disk and the guest gets
 the whole controller, so the library comes along in both boot modes with no
