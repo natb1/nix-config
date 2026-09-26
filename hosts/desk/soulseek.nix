@@ -44,7 +44,7 @@ let
   credentials = "/etc/slskd/credentials";
   apiEnv = "/etc/slskd/api.env";
   downloads = "/srv/media/staging/soulseek";
-  media-fetch = pkgs.callPackage ../../pkgs/media-fetch { };
+  media-fetch = pkgs.callPackage ../../pkgs/media-fetch { stateDir = "/var/lib/media-fetch"; };
 in
 {
   services.slskd = {
@@ -81,7 +81,8 @@ in
     serviceConfig.EnvironmentFile = lib.mkForce [ credentials apiEnv ];
   };
 
-  # Readable by n8 so an agent on desk (or over ssh desk) can call the API.
+  # Readable by the media group (hosts/desk/media-group.nix) so an agent on
+  # desk (or over ssh desk) can call the API.
   # Root writes it; slskd reads it through systemd, not itself.
   systemd.services.slskd-api-key = {
     description = "Generate slskd's API key";
@@ -94,22 +95,21 @@ in
       umask 077
       key=$(${pkgs.coreutils}/bin/head -c 32 /dev/urandom | ${pkgs.coreutils}/bin/base64 --wrap=0 | ${pkgs.coreutils}/bin/tr '+/' '-_' | ${pkgs.coreutils}/bin/tr -d =)
       echo "SLSKD_API_KEY=$key" > ${apiEnv}
-      chown n8:users ${apiEnv}
-      chmod 0400 ${apiEnv}
+      chown n8:media ${apiEnv}
+      chmod 0440 ${apiEnv}
     '';
   };
 
   # media-fetch's scheduler, so a download moves with no `media-fetch`
-  # command running. As n8, on n8's media-fetch state (the CLI's default,
-  # ~/.local/state/media-fetch): the jobs an agent starts with `get` are the
-  # ones it serves. A loop, not a timer, so the journal gets a line only when
-  # a job is delivered or a round fails.
+  # command running. As n8, on the media group's shared state (the package's
+  # stateDir, /var/lib/media-fetch): the jobs any agent starts with `get` are
+  # the ones it serves. A loop, not a timer, so the journal gets a line only
+  # when a job is delivered or a round fails.
   systemd.services.media-fetch = {
     description = "media-fetch: ask sources for queued files, deliver finished downloads";
     wantedBy = [ "multi-user.target" ];
     requires = [ "slskd.service" ];
     after = [ "slskd.service" ];
-    environment.MEDIA_FETCH_STATE = "/home/n8/.local/state/media-fetch";
     serviceConfig = {
       User = "n8";
       Group = "users";
@@ -123,9 +123,12 @@ in
 
   systemd.tmpfiles.rules = [
     # Traversable, so n8 can reach api.env; credentials stays 0600 root.
-    # `d` also fixes the mode of a directory that already exists.
+    # `d` also fixes the mode of a directory that already exists; 0775 so
+    # it keeps the media group's ACL mask (hosts/desk/media-group.nix).
     "d /etc/slskd 0755 root root -"
-    "d ${downloads} 0755 n8 users -"
-    "d /srv/media/staging/.soulseek-incomplete 0755 n8 users -"
+    "d ${downloads} 0775 n8 users -"
+    "d /srv/media/staging/.soulseek-incomplete 0775 n8 users -"
+    # A key generated before the media group was n8's alone.
+    "z ${apiEnv} 0440 n8 media -"
   ];
 }
