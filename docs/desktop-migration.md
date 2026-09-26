@@ -3518,8 +3518,9 @@ Calibre or Kavita can adopt if the shelf grows.
   videos.
 
 **The `print` rename is a reviewed table**, not a regex: 181 files, drafted
-2026-09-25 and kept as `/srv/media/staging/print.tsv` — on the share and
-**not in this repo**, which is public. Folder and name for the files whose
+2026-09-25 as `/srv/media/staging/print.tsv` — on the share and **not in
+this repo**, which is public — and deleted with the other batch records once
+the batch was filed. Folder and name for the files whose
 names said nothing (Stonetop's `Arcana.pdf`, Frostwyck's `map-area.pdf`, the
 Dungeon Age `Tomb-*`) came from each PDF's own text and metadata. Rows noted
 `check` are guesses — review those first. It is applied like any other batch,
@@ -3753,7 +3754,28 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       *Daisy Crown* were copies of Brandish Gilhelm's recordings filed under
       the game's publisher — *removed 2026-09-25: all 27 tracks matched a
       Brandish track by title and length first; 683 tracks left, lint clean*
-- [ ] Delete the staging leftovers above once checked
+- [x] Staging leftovers — *2026-09-25, by acoustic fingerprint (Chromaprint)
+      against every library track, not by title: a copy scored 0.94–1.00,
+      a different recording at most 0.57. It found round 1's merged
+      *Collection CD 4 + 6* item misfiled: Vol. 6 held four copies of its own
+      and Vol. 4's tracks and Vol. 4's *Heigh Ho Holiday* under Gloriana and
+      Concerto titles, and the real recordings were in staging. Repaired from
+      the manifest's original tags: Vol. 4 complete (21), Vol. 6 complete
+      (29), *Together Again*'s Serenade retitled to what each file is (four
+      files, not the release's three) with its Finale added (20). Then the
+      60 remaining staging files, each a verified copy of a library track,
+      and the batch records were deleted. `staging/` holds only its README;
+      the library lints clean, 694 music + 181 print*
+- [ ] 13 music files have corrupt MP3 frames (players skip them): most in
+      *Nocturnal*, 23 in *Together*'s *Dolly: Berceuse*, 134 in *Julian Bream
+      plays Bach (2000)*'s *Gigue*. They match the Drive originals, so the
+      damage is at the source; replace from a better copy if one exists
+- [ ] Audit round 1's low-confidence matches: 19 pairs of tracks on
+      different albums are the same recording. Most are genuine reissues
+      (*Rêverie* on *Live* and *Together Again*), but some pairs disagree on
+      the title (Villa-Lobos *Prelude no. 5* = *Spanish Guitar Music (2001)*'s
+      *Sonatina: II. Allegro*; *Plays Bach (1985)*'s *Prelude* = *Lute Suites
+      (1966)*'s *Suite No. 2: Gigue*), so one side of each is mislabelled
 - [ ] Library read-only from the Mac: after both switches, `/Volumes/media`
       and `/Volumes/media-staging` mount; `touch /Volumes/media/x` fails;
       `README.md` is on both; a fresh `claude` on the Mac asked to "put this
