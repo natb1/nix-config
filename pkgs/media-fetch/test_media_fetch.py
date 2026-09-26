@@ -29,6 +29,7 @@ class FakeSlskd:
         self.offline = set()
         self.fail = set()        # remote filenames that fail when downloaded
         self.hold = False        # leave transfers queued
+        self.lag = 0             # status polls before responses are saved
         self.searches = {}
         fake = self
 
@@ -74,9 +75,14 @@ class FakeSlskd:
             if method == "POST":
                 self.searches[body["id"]] = body["searchText"]
                 return 200, {"id": body["id"], "isComplete": False}
+            if method == "PUT":
+                return 200, None
             if len(parts) == 3:
-                return 200, self.responses
-            return 200, {"id": parts[1], "isComplete": True}
+                return 200, [] if self.lag else self.responses
+            if self.lag:
+                self.lag -= 1
+                return 200, {"id": parts[1], "isComplete": False, "responseCount": len(self.responses)}
+            return 200, {"id": parts[1], "isComplete": True, "responseCount": len(self.responses)}
         if parts[:3] == ["transfers", "downloads", "batches"]:
             user = body["username"]
             if user in self.offline:
@@ -182,6 +188,13 @@ class MediaFetchTest(unittest.TestCase):
             self.assertNotIn(word, text)
         self.assertEqual(r["candidates"][0]["files"][0],
                          {"name": "01.flac", "size": 10, "duration": 200, "bitdepth": 16, "samplerate": 44100})
+
+    def test_search_stopped_at_timeout_waits_for_its_responses(self):
+        # Still running at --timeout: stopped, then saved a moment later.
+        self.fake.responses = [response("a", "X\\Album", ["01"])]
+        self.fake.lag = 3
+        r = self.search("--timeout", "0")
+        self.assertEqual([c["title"] for c in r["candidates"]], ["Album"])
 
     def test_ext_filter_and_min_files(self):
         self.fake.responses = [response("a", "X\\Books", ["b1"], ext="epub"),

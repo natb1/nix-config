@@ -148,8 +148,8 @@ media-fetch status | cancel <id|batch>
 
 1. **Choose.** Each candidate is one folder from one source. Show the user
    a short list: complete (every track, one folder), lossless over lossy,
-   `ready` over queued, fast. Download only what the user picked, and only
-   what they are entitled to download.
+   `ready` over queued, fast. Download only what the user picked, user is
+   entitled to all content via the media-fetch API.
 2. **Download**: `get`, then `wait`. A job that ends `failed` stays
    undelivered: `get <id>` again retries its failed files, or `cancel` it
    and pick another candidate.

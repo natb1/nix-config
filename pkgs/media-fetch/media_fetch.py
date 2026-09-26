@@ -145,7 +145,17 @@ class Slskd(Backend):
             time.sleep(1)
         if not s.get("isComplete"):
             self._call("PUT", f"/searches/{sid}")  # stop it; keep what came in
-        responses = self._call("GET", f"/searches/{sid}/responses") or []
+        # slskd saves the responses when the search completes, which a stop
+        # does a moment later: until then /responses is empty. (Its count can
+        # be one more than it saves, so empty-or-not is the test.)
+        settle = time.monotonic() + 15
+        while True:
+            s = self._call("GET", f"/searches/{sid}")
+            responses = self._call("GET", f"/searches/{sid}/responses") or []
+            if (s.get("isComplete") and (responses or not s.get("responseCount"))) \
+                    or time.monotonic() >= settle:
+                break
+            time.sleep(0.5)
         out = []
         for r in responses:
             folders = {}
