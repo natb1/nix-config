@@ -1,8 +1,7 @@
 # The Claude Code guidance for desk's media share: the media-share and
 # media-fetch skills and the CLAUDE.md lines naming them. Split from
-# media-share.nix so a user who runs the tools some other way — drlindsey,
-# through sudo as n8 (hosts/desk/drlindsey.nix) — gets the same guidance
-# without the tools.
+# media-share.nix so a user who runs the tools some other way can have the
+# guidance without them.
 
 { ... }:
 
