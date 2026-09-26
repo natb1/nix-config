@@ -4033,7 +4033,7 @@ once, for the one-time copy, and never again.
 | --- | --- | --- |
 | What lands in it | Everything **before** the camera switch, plus, afterwards, screenshots, images saved from Messages/Safari, and photos from other camera apps | Every **Camera app** photo and video from both phones after the switch, taken with the Shared Library button on |
 | Backup | **Once**, per account, right after the switch | **Ongoing**, daily timer, n8's account only |
-| Lands in | `/srv/media/icloud/n8/`, `/srv/media/icloud/<FILL_ME_wife>/` | `/srv/media/icloud/shared/` |
+| Lands in | `/srv/media/icloud/n8/`, `/srv/media/icloud/lindsey/` | `/srv/media/icloud/shared/` |
 | Accepted gap | Screenshots and saved images after the switch are not backed up. The one-time run can be repeated by hand at any time; it skips files it already has | Items someone moves back to their personal library, and any shot taken with the Camera button switched off, drop out of the ongoing backup |
 
 #### Prerequisites, on both Apple IDs
@@ -4088,7 +4088,7 @@ switched off and forgotten: make n8's own personal library ongoing too. The
 same session on n8's account sees both `PrimarySync` and `SharedSync-…`, so
 that costs a second timer instance and no extra 2FA. The wife's personal
 library is the one that cannot be made ongoing without keeping a second
-session alive, so the wife's Camera button is what to check.
+session alive, so Lindsey's Camera button is what to check.
 
 #### The module: `hosts/desk/icloud.nix`
 
@@ -4105,7 +4105,7 @@ LIBRARY=PrimarySync            # or SharedSync-<UUID>, as icloudpd-login prints 
 | --- | --- | --- | --- | --- |
 | `shared` | n8's | `SharedSync-…` | `/srv/media/icloud/shared/` | Daily user timer, `Persistent` (a run missed while suspended happens on wake) |
 | `n8` | n8's | `PrimarySync` | `/srv/media/icloud/n8/` | Once, by hand |
-| `<FILL_ME_wife>` | the wife's | `PrimarySync` | `/srv/media/icloud/<FILL_ME_wife>/` | Once, by hand |
+| `lindsey` | Lindsey's | `PrimarySync` | `/srv/media/icloud/lindsey/` | Once, by hand |
 
 What the module decides, and why:
 
@@ -4119,7 +4119,7 @@ What the module decides, and why:
 - **The session cookies are not encrypted.** pyicloud writes them in the
   clear to `~/.local/state/icloudpd/<apple-id>/`, and they grant access to the
   photos for as long as Apple honours them. That is an accepted exception to
-  the rule for n8's own account. For the wife's account, `icloudpd-forget`
+  the rule for n8's own account. For Lindsey's account, `icloudpd-forget`
   removes both the cookies and the keyring entry once the backfill is
   verified.
 - **Cookies are keyed on the Apple ID, not the instance.** `shared` and `n8`
@@ -4135,6 +4135,11 @@ What the module decides, and why:
   and each Live Photo's video saved next to its still. An edited photo comes
   down as the camera's original, without the edit; add `--size adjusted`
   beside `--size original` if the edits turn out to matter.
+- **Every run verifies itself.** `ExecStartPost=icloudpd-verify %i`
+  ([`icloudpd-verify.py`](../hosts/desk/icloudpd-verify.py)) checks each
+  original and Live Photo video in the library against **Apple's own
+  checksum**, and fails the unit if any file lacks a byte-exact copy on desk.
+  Details [below](#verification-against-apples-checksums).
 - **The alert:** `OnFailure=icloudpd-failed@%i` sends a critical swaync
   pop-up, which stays in swaync's history, until the plan's ntfy
   (`<FILL_ME_notify_unit>`) exists.
@@ -4144,6 +4149,9 @@ Two helper commands ship with it:
 - `icloudpd-login <instance>`: the password (typed once, then saved to the
   keyring) and the 2FA code, then the account's libraries, including the
   `SharedSync-<UUID>` name the `shared` env file needs.
+- `icloudpd-verify <instance>`: the same verification the unit runs, by
+  hand. Exit 0 means everything is verified, 1 that something is missing or
+  corrupt, and 2 that the login needs a 2FA code.
 - `icloudpd-forget <instance>`: deletes that Apple ID's session and keyring
   entry. The env file is left in place.
 
@@ -4151,31 +4159,55 @@ Running as n8, on desk, in the graphical session (the keyring has to be
 unlocked):
 
 ```sh
-# Personal backfills — after the camera switch and BIOS tuning's validation
+# Personal backfills — after the camera switch; each run ends with icloudpd-verify
 icloudpd-login n8
 systemctl --user start --no-block icloudpd@n8
 journalctl --user -fu icloudpd@n8        # hours, for a whole library
-icloudpd-login <FILL_ME_wife>             # with the wife's phone to hand for the 2FA code
-systemctl --user start --no-block icloudpd@<FILL_ME_wife>
+icloudpd-login lindsey                   # with Lindsey's phone to hand for the 2FA code
+systemctl --user start --no-block icloudpd@lindsey
 
 # Ongoing shared library — the timer is already enabled; it waits on the env file
 systemctl --user start icloudpd@shared    # first run by hand, to watch it
 systemctl --user list-timers 'icloudpd@*'
 ```
 
-**Gate for the backfills: [BIOS tuning](#bios-tuning) validated first**, the
-same gate as the Step 3 ingest. icloudpd doesn't check what it downloads
-against Apple's checksums, so a bit flip in the copy would go unnoticed.
-They are not gated on restic: iCloud keeps the originals, the same reasoning
-that let the Takeout download go ahead early. Run them **after** the camera
-switch, so each snapshot is complete up to the date recorded above.
+#### Verification against Apple's checksums
 
-- **Verify by count, as for Takeout.** Photos → Library → *All Photos* shows
-  "N Photos, M Videos" at the bottom on each phone. A Live Photo comes down as
-  a still plus a `.MOV`, so count the stills and videos separately
-  (Takeout trap 2 again). Then **start the same instance again**: its journal
-  must show nothing downloaded.
-- **Then `icloudpd-forget <FILL_ME_wife>`.** Nothing ongoing needs that
+*Added 2026-09-26. It replaces the [BIOS tuning](#bios-tuning) gate these
+downloads used to wait on.* The gate was there because a RAM bit flip can
+corrupt a file before it reaches the disk, and btrfs then checksums the
+corrupted bytes as good. But iCloud gives a reference that desk's RAM never
+touched. Every file version comes with a CloudKit `fileChecksum`, which
+icloudpd fetches and then only uses to name its `.part` file. Its format,
+worked out and confirmed on 2026-09-26 against 18 of 18 real downloads (12
+photos and 6 videos, up to 41 MB):
+
+```
+0x01 || SHA-1("com.apple.XattrObjectSalt\0com.apple.DataObjectSalt\0" || file bytes)
+```
+
+`icloudpd-verify` lists the library's metadata, so nothing is downloaded
+again. It hashes every file under `/srv/media/icloud/<instance>/` and
+requires each original and Live Photo video to have a byte-identical match.
+Matching is by content, not name, so icloudpd's naming rules do not matter,
+and local files that iCloud no longer has are fine. Before hashing, it
+`fsync`s each file and drops its cached pages, so the bytes are read off the
+SSD, not from memory. A flip during the check can only cause a false alarm,
+never a false pass. Hashes are cached by size and mtime, so later runs hash
+only new files. Once verified, a file's safety on disk is btrfs's job
+(checksums plus monthly scrub).
+
+What it does **not** cover: the Step 3 sources (Takeout, Flickr, Drive, GCS),
+which have no such reference. restic's copy is also read through the same
+RAM on its way to Hetzner. Both keep the BIOS tuning gate.
+
+Run the backfills **after** the camera switch, so each snapshot is complete
+up to the date recorded above.
+
+- **Verified means `icloudpd-verify` exits 0.** The unit fails if it does
+  not. Counting by hand against Photos' "N Photos, M Videos" is no longer
+  needed.
+- **Then `icloudpd-forget lindsey`.** Nothing ongoing needs that
   account, and a live session into someone else's iCloud should not stay on a
   machine that no longer needs it.
 - **Overlap with Google Photos is expected.** Phones have historically backed
@@ -4215,7 +4247,7 @@ switch, so each snapshot is complete up to the date recorded above.
       *2026-09-25. The first login hit a missing `~/.local/state/icloudpd`
       (fixed in `icloudpd-login`). Afterwards `--list-libraries` ran with no
       terminal, from the keyring and session alone: `PrimarySync` and one
-      `SharedSync-F99DD9E5-…`. `<FILL_ME_wife>.env` waits for the backfill*
+      `SharedSync-F99DD9E5-…`. `lindsey.env` waits for the backfill*
 - [x] `systemctl --user start icloudpd@shared`, and confirm the test photos
       from both phones landed in `/srv/media/icloud/shared/` — *2026-09-25:
       the first run succeeded and downloaded one Live Photo (`IMG_4482.HEIC`
@@ -4225,8 +4257,8 @@ switch, so each snapshot is complete up to the date recorded above.
       down on the next run. Both cameras reach the backup*
 - [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the pop-up; restore it
 - [ ] [BIOS tuning](#bios-tuning) validated
-- [ ] Backfill `icloudpd@n8`, then `icloudpd@<FILL_ME_wife>`. Counts match;
-      a second start downloads nothing. Then `icloudpd-forget <FILL_ME_wife>`
+- [ ] Backfill `icloudpd@n8`, then `icloudpd@lindsey`. Counts match;
+      a second start downloads nothing. Then `icloudpd-forget lindsey`
 - [ ] Two weeks later: `systemctl --user list-timers 'icloudpd@*'` shows daily
       runs, and new photos from both phones are on the share
 
@@ -4261,11 +4293,11 @@ never the whole mechanism. It runs last, behind three independent checks,
 each of which must pass in the same unit run:
 
 1. **Download pass**: exactly today's unit, unchanged. It must exit 0.
-2. **Everything is on disk.** The same command with `--only-print-filenames`
-   prints what it *would* download, which is anything iCloud has that
-   `/srv/media/icloud/shared` does not. Straight after a download pass it
-   must print **nothing**. Anything it prints is a failed download, and the
-   run stops there and alerts.
+2. **Everything is on disk, byte-exact.** `icloudpd-verify shared` (already
+   the unit's `ExecStartPost=`) must exit 0: every item in iCloud, old ones
+   included, has a copy on desk that matches Apple's own checksum.
+   *Replaced 2026-09-26:* this was an `--only-print-filenames` check, which
+   compared names only and would have passed a corrupt file.
 3. **Everything is offsite.** `restic-backups-media` last succeeded less than
    36 hours ago (`systemctl show -p Result,ExecMainExitTimestamp`). A
    365-day window then means every deleted photo spent roughly a year in
@@ -4303,8 +4335,9 @@ defence is Apple's, not ours. The quota is freed once they leave it.
 - [ ] The [retirement gate](#before-any-original-is-retired) closed: trimming
       iCloud retires originals, so the restic password must already be off
       `desk` and the recovery plan written
-- [ ] [BIOS tuning](#bios-tuning) validated. A bit flip in the downloaded
-      copy becomes permanent the day iCloud's copy goes
+- [ ] [BIOS tuning](#bios-tuning) validated. The downloaded copy is already
+      verified against Apple's checksums, but restic reads it through the same
+      RAM on its way to Hetzner, and nothing checks that copy against Apple's
 - [ ] ntfy (`<FILL_ME_notify_unit>`) reaches a phone. Once deletion is on,
       a silently failing unit is no longer harmless
 - [ ] 30+ days of clean daily `shared` runs, **and** a deliberately broken
