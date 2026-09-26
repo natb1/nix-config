@@ -1,0 +1,639 @@
+#!/usr/bin/env python3
+"""media-fetch: find media on a download network and fetch it into staging.
+
+  search QUERY               list candidates: one folder of files from one source
+  show   ID                  a candidate's files, numbered
+  get    ID --batch BATCH    download a candidate (or --files 1,3-5 of it)
+  status [JOB|BATCH ...]     progress of each download
+  wait   [JOB|BATCH ...]     block until downloads finish; deliver the finished ones
+  cancel JOB|BATCH ...       stop downloads and forget them
+
+A candidate is what a source offers in one folder: an album, a book, a
+season. Its ID (`3fa2c1.4`: search, then rank) names it until the next
+`search` is long forgotten; results are kept in the state directory. `get`
+starts a job with the candidate's ID. `wait` delivers each job whose files
+have all arrived into STAGING/BATCH/<title>/, the same batch directory
+media-stage takes, and then `media-stage scan` (or, for music, `media-stage
+group` and `beet stage-review`) takes over. A job that failed is left
+undelivered; `get` with the same ID again retries the files that failed.
+
+Nothing here names the network behind it. A Backend searches, downloads
+into a directory of its own, reports progress and says where each finished
+file is; the CLI, the IDs, the states (queued, downloading, done, failed)
+and the JSON (--json on every command) are the same whatever it is. The one
+backend today is slskd (Soulseek), chosen by MEDIA_FETCH_BACKEND.
+
+Environment:
+  MEDIA_STAGING        batch directories' parent (default /srv/media/staging)
+  MEDIA_FETCH_STATE    results and jobs (default $XDG_STATE_HOME/media-fetch)
+  MEDIA_FETCH_BACKEND  slskd (default)
+  SLSKD_URL            default http://localhost:5030
+  SLSKD_API_KEY        default: read from /etc/slskd/api.env
+  SLSKD_DOWNLOADS      slskd's download directory (default
+                       /srv/media/staging/soulseek, hosts/desk/soulseek.nix)
+"""
+
+import argparse
+import datetime
+import json
+import os
+import re
+import shutil
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from pathlib import Path
+
+LOSSLESS_EXT = {"flac", "wav", "aif", "aiff", "alac", "ape", "wv"}
+# Disc folders are named for their album, not themselves.
+DISC_DIR = re.compile(r"^(cd|disc|disk)\s*\d+$", re.I)
+STATES = ("queued", "downloading", "done", "failed")
+
+
+class FetchError(Exception):
+    pass
+
+
+# --------------------------------------------------------------------------
+# Backend interface
+#
+# Candidates and jobs are plain dicts, stored as JSON. `source` in each is
+# the backend's own, opaque to everything else: whatever it needs to fetch
+# the files again. A file is {"name", "size", ...optional "duration" (s),
+# "bitrate" (kbps), "bitdepth", "samplerate" (Hz)}.
+
+
+class Backend:
+    # The directory the backend downloads into. Delivery moves out of it.
+    download_root: Path
+
+    def search(self, query, timeout):
+        """Candidates: [{"title", "files", "availability": {"ready",
+        "queue", "speed"}, "source"}]. speed is bytes/s."""
+        raise NotImplementedError
+
+    def download(self, job, files):
+        """Start downloading `files` (a subset of job["files"])."""
+        raise NotImplementedError
+
+    def progress(self, job):
+        """{file name: {"state": one of STATES, "bytes": transferred}}."""
+        raise NotImplementedError
+
+    def locate(self, job, file):
+        """Path of a finished file, or None."""
+        raise NotImplementedError
+
+    def cancel(self, job):
+        raise NotImplementedError
+
+    def forget(self, job):
+        """Drop the backend's records of a delivered job. Best effort."""
+
+
+# --------------------------------------------------------------------------
+# slskd (hosts/desk/soulseek.nix). API: /api/v0, X-API-Key header.
+
+
+class Slskd(Backend):
+    def __init__(self):
+        self.url = os.environ.get("SLSKD_URL", "http://localhost:5030").rstrip("/") + "/api/v0"
+        self.key = os.environ.get("SLSKD_API_KEY") or self._key_from("/etc/slskd/api.env")
+        self.download_root = Path(os.environ.get("SLSKD_DOWNLOADS", "/srv/media/staging/soulseek"))
+
+    @staticmethod
+    def _key_from(path):
+        try:
+            for line in Path(path).read_text().splitlines():
+                k, _, v = line.partition("=")
+                if k.strip() == "SLSKD_API_KEY":
+                    return v.strip()
+        except OSError as e:
+            raise FetchError(f"no API key: SLSKD_API_KEY unset and {path}: {e.strerror}")
+        raise FetchError(f"no SLSKD_API_KEY in {path}")
+
+    def _call(self, method, path, body=None, ok404=False):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(self.url + path, data=data, method=method)
+        req.add_header("X-API-Key", self.key)
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                text = r.read()
+        except urllib.error.HTTPError as e:
+            with e:
+                detail = e.read().decode(errors="replace").strip()[:300]
+            if e.code == 404 and ok404:
+                return None
+            raise FetchError(f"{method} {path}: HTTP {e.code} {detail}")
+        except urllib.error.URLError as e:
+            raise FetchError(f"cannot reach {self.url}: {e.reason}")
+        return json.loads(text) if text.strip() else None
+
+    def search(self, query, timeout):
+        sid = str(uuid.uuid4())
+        self._call("POST", "/searches", {"id": sid, "searchText": query})
+        deadline = time.monotonic() + timeout
+        while True:
+            s = self._call("GET", f"/searches/{sid}")
+            if s.get("isComplete") or time.monotonic() >= deadline:
+                break
+            time.sleep(1)
+        if not s.get("isComplete"):
+            self._call("PUT", f"/searches/{sid}")  # stop it; keep what came in
+        responses = self._call("GET", f"/searches/{sid}/responses") or []
+        out = []
+        for r in responses:
+            folders = {}
+            for f in r.get("files") or []:  # lockedFiles are not offered
+                d, _, _ = f["filename"].rpartition("\\")
+                folders.setdefault(d, []).append(f)
+            for d, fs in folders.items():
+                parts = [p for p in d.split("\\") if p]
+                title = parts[-1] if parts else r["username"]
+                if DISC_DIR.match(title) and len(parts) > 1:
+                    title = f"{parts[-2]} - {title}"
+                fs.sort(key=lambda f: f["filename"])
+                files = [_file(f) for f in fs]
+                out.append({
+                    "title": title,
+                    "files": files,
+                    "availability": {
+                        "ready": bool(r.get("hasFreeUploadSlot")),
+                        "queue": r.get("queueLength") or 0,
+                        "speed": r.get("uploadSpeed") or 0,
+                    },
+                    "source": {
+                        "user": r["username"],
+                        "paths": {x["name"]: f["filename"] for x, f in zip(files, fs)},
+                    },
+                })
+        return out
+
+    def download(self, job, files):
+        src = job["source"]
+        body = {
+            "id": str(uuid.uuid4()),
+            "username": src["user"],
+            "files": [{"filename": src["paths"][f["name"]], "size": f["size"]} for f in files],
+            # One folder per job under the download directory, so two jobs
+            # never share a folder and locate() knows where to look.
+            "options": {"destination": job["id"]},
+        }
+        try:
+            r = self._call("POST", "/transfers/downloads/batches", body)
+        except FetchError as e:
+            if "HTTP 404" in str(e):
+                raise FetchError("the source is offline; try another candidate")
+            raise
+        failures = (r or {}).get("failures") or []
+        if failures and len(failures) == len(files):
+            raise FetchError(f"nothing was queued: {failures}")
+
+    def _transfers(self, job):
+        user = urllib.parse.quote(job["source"]["user"], safe="")
+        r = self._call("GET", f"/transfers/downloads/{user}", ok404=True) or {}
+        by_remote = {}
+        for d in r.get("directories") or []:
+            for t in d.get("files") or []:
+                prev = by_remote.get(t["filename"])
+                # A retried file has an old failed record too; the newest wins.
+                if prev is None or (t.get("requestedAt") or "") >= (prev.get("requestedAt") or ""):
+                    by_remote[t["filename"]] = t
+        names = {v: k for k, v in job["source"]["paths"].items()}
+        return {names[k]: t for k, t in by_remote.items() if k in names}
+
+    def progress(self, job):
+        ts = self._transfers(job)
+        out = {}
+        for f in job["files"]:
+            t = ts.get(f["name"])
+            if t is None:
+                out[f["name"]] = {"state": "failed", "bytes": 0}
+                continue
+            st = t.get("state", "")
+            if st == "Completed, Succeeded":
+                state = "done"
+            elif st.startswith("Completed"):
+                state = "failed"
+            elif st == "InProgress":
+                state = "downloading"
+            else:
+                state = "queued"
+            out[f["name"]] = {"state": state, "bytes": t.get("bytesTransferred") or 0}
+        return out
+
+    def locate(self, job, file):
+        base = file["name"]
+        p = self.download_root / job["id"] / base
+        if p.is_file():
+            return p
+        # Not where the destination option should have put it: an slskd that
+        # ignores it keeps the remote folder's name, and one that finds the
+        # name taken appends a suffix. Same size is the tie-breaker.
+        stem, dot, ext = base.rpartition(".")
+        for q in self.download_root.rglob("*"):
+            if q.is_file() and (q.name == base or (dot and q.name.startswith(stem) and q.name.endswith(dot + ext))) \
+                    and q.stat().st_size == file["size"]:
+                return q
+        return None
+
+    def cancel(self, job):
+        user = urllib.parse.quote(job["source"]["user"], safe="")
+        for t in self._transfers(job).values():
+            self._call("DELETE", f"/transfers/downloads/{user}/{t['id']}?remove=true", ok404=True)
+
+    def forget(self, job):
+        try:
+            self.cancel(job)
+        except FetchError:
+            pass
+
+
+def _file(f):
+    out = {"name": f["filename"].rpartition("\\")[2], "size": f.get("size") or 0}
+    for ours, theirs in (("duration", "length"), ("bitrate", "bitRate"),
+                         ("bitdepth", "bitDepth"), ("samplerate", "sampleRate")):
+        if f.get(theirs):
+            out[ours] = f[theirs]
+    return out
+
+
+BACKENDS = {"slskd": Slskd}
+
+
+def backend():
+    name = os.environ.get("MEDIA_FETCH_BACKEND", "slskd")
+    if name not in BACKENDS:
+        raise FetchError(f"unknown MEDIA_FETCH_BACKEND {name!r}; one of {', '.join(BACKENDS)}")
+    return BACKENDS[name]()
+
+
+# --------------------------------------------------------------------------
+# State: results/<search>.json, jobs/<job>.json
+
+
+def state_dir():
+    d = os.environ.get("MEDIA_FETCH_STATE")
+    if not d:
+        d = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "media-fetch"
+    return Path(d)
+
+
+def staging_dir():
+    return Path(os.environ.get("MEDIA_STAGING", "/srv/media/staging"))
+
+
+def _write(path, obj):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(obj, indent=1) + "\n")
+    tmp.replace(path)
+
+
+def load_candidate(cid):
+    sid, _, n = cid.partition(".")
+    p = state_dir() / "results" / f"{sid}.json"
+    if not n.isdigit() or not p.is_file():
+        raise FetchError(f"no candidate {cid}; run `media-fetch search` first")
+    cands = json.loads(p.read_text())["candidates"]
+    if not 1 <= int(n) <= len(cands):
+        raise FetchError(f"no candidate {cid}: search {sid} has {len(cands)}")
+    return cands[int(n) - 1]
+
+
+def load_jobs(selectors=()):
+    d = state_dir() / "jobs"
+    jobs = [json.loads(p.read_text()) for p in sorted(d.glob("*.json"))] if d.is_dir() else []
+    if selectors:
+        jobs = [j for j in jobs if j["id"] in selectors or j["batch"] in selectors]
+        if not jobs:
+            raise FetchError(f"no job or batch {' '.join(selectors)}")
+    return jobs
+
+
+def save_job(job):
+    _write(state_dir() / "jobs" / f"{job['id']}.json", job)
+
+
+# --------------------------------------------------------------------------
+# Presentation
+
+
+def public(obj):
+    return {k: v for k, v in obj.items() if k != "source"}
+
+
+def _size(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1000 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1000
+
+
+def _dur(s):
+    return f"{int(s) // 60}:{int(s) % 60:02d}"
+
+
+def formats(files):
+    by = {}
+    for f in files:
+        ext = f["name"].rpartition(".")[2].lower() if "." in f["name"] else "?"
+        by.setdefault(ext, []).append(f)
+    out = []
+    for ext, fs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+        q = ""
+        if fs[0].get("bitdepth") and fs[0].get("samplerate"):
+            q = f" {fs[0]['bitdepth']}/{fs[0]['samplerate'] / 1000:g}"
+        elif fs[0].get("bitrate"):
+            q = f" {fs[0]['bitrate']}k"
+        out.append(f"{len(fs)} {ext}{q}")
+    return ", ".join(out)
+
+
+def summarize(c):
+    a = c["availability"]
+    files = c["files"]
+    c["size"] = sum(f["size"] for f in files)
+    c["lossless"] = any(f["name"].rpartition(".")[2].lower() in LOSSLESS_EXT for f in files)
+    c["formats"] = formats(files)
+    c["ready"] = a["ready"]
+    return c
+
+
+def rank(c):
+    a = c["availability"]
+    return (not a["ready"], a["queue"], not c["lossless"], -a["speed"])
+
+
+def job_summary(job, prog):
+    counts = {s: 0 for s in STATES}
+    for p in prog.values():
+        counts[p["state"]] += 1
+    n = len(job["files"])
+    if job.get("delivered"):
+        state = "delivered"
+    elif counts["done"] == n:
+        state = "done"
+    elif counts["failed"] and not counts["queued"] and not counts["downloading"]:
+        state = "failed"
+    elif counts["downloading"] or counts["done"]:
+        state = "downloading"
+    else:
+        state = "queued"
+    total = sum(f["size"] for f in job["files"])
+    got = sum(p["bytes"] for p in prog.values())
+    return {"id": job["id"], "batch": job["batch"], "title": job["title"], "state": state,
+            "files": n, **{k: v for k, v in counts.items() if v}, "bytes": got, "size": total,
+            **({"delivered": job["delivered"]} if job.get("delivered") else {}),
+            "failed_files": [k for k, p in prog.items() if p["state"] == "failed"]}
+
+
+def print_job(s):
+    pct = f"{100 * s['bytes'] / s['size']:.0f}%" if s["size"] else ""
+    line = f"{s['id']:<10} {s['state']:<11} {pct:>4}  {s['batch']}/{s['title']}"
+    print(line)
+    if s["state"] == "failed":
+        for name in s["failed_files"]:
+            print(f"{'':12}failed: {name}")
+    if s.get("delivered"):
+        print(f"{'':12}in {s['delivered']}")
+
+
+# --------------------------------------------------------------------------
+# Commands
+
+
+def cmd_search(a):
+    cands = backend().search(a.query, a.timeout)
+    exts = {e.strip(".").lower() for e in a.ext.split(",")} if a.ext else None
+    kept = []
+    for c in cands:
+        if exts:
+            c["files"] = [f for f in c["files"] if f["name"].rpartition(".")[2].lower() in exts]
+        if len(c["files"]) >= a.min_files:
+            kept.append(summarize(c))
+    kept.sort(key=rank)
+    sid = uuid.uuid4().hex[:6]
+    for i, c in enumerate(kept, 1):
+        c["id"] = f"{sid}.{i}"
+    _write(state_dir() / "results" / f"{sid}.json",
+           {"query": a.query, "at": _now(), "candidates": kept})
+    shown = kept if a.all else kept[:a.limit]
+    if a.json:
+        print(json.dumps({"search": sid, "query": a.query, "total": len(kept),
+                          "candidates": [public(c) for c in shown]}, indent=1))
+        return
+    if not kept:
+        print(f"nothing found for {a.query!r}")
+        return
+    for c in shown:
+        av = c["availability"]
+        avail = "ready" if av["ready"] else f"queue {av['queue']}"
+        print(f"{c['id']:<9} {avail:<9} {av['speed'] / 1e6:5.1f} MB/s  {len(c['files']):>3} files "
+              f"{_size(c['size']):>9}  {c['formats']:<18} {c['title']}")
+    if len(shown) < len(kept):
+        print(f"({len(kept) - len(shown)} more: --all)")
+
+
+def cmd_show(a):
+    c = load_candidate(a.id)
+    if a.json:
+        print(json.dumps(public(c), indent=1))
+        return
+    print(f"{c['id']}  {c['title']}  ({c['formats']}, {_size(c['size'])})")
+    for i, f in enumerate(c["files"], 1):
+        dur = _dur(f["duration"]) if f.get("duration") else ""
+        print(f"{i:>4}  {dur:>6} {_size(f['size']):>9}  {f['name']}")
+
+
+def parse_picks(spec, n):
+    picks = set()
+    for part in spec.split(","):
+        lo, _, hi = part.strip().partition("-")
+        if not lo.isdigit() or (hi and not hi.isdigit()):
+            raise FetchError(f"--files: {part!r} is not N or N-M")
+        lo, hi = int(lo), int(hi or lo)
+        if not 1 <= lo <= hi <= n:
+            raise FetchError(f"--files: {part} is outside 1-{n}")
+        picks.update(range(lo, hi + 1))
+    return sorted(picks)
+
+
+def check_batch(batch, be):
+    if not batch or "/" in batch or batch.startswith(".") or batch != batch.strip():
+        raise FetchError(f"--batch {batch!r}: one plain directory name")
+    dest = (staging_dir() / batch).resolve()
+    root = be.download_root.resolve()
+    if dest == root or root in dest.parents:
+        raise FetchError(f"--batch {batch}: that is the download directory, not a batch")
+    if (staging_dir() / f"{batch}.manifest.jsonl").exists():
+        raise FetchError(f"batch {batch} is already scanned; fetch into a new batch")
+
+
+def cmd_get(a):
+    be = backend()
+    jobs = {j["id"]: j for j in load_jobs()}
+    if a.id in jobs:
+        job = jobs[a.id]
+        if job.get("delivered"):
+            raise FetchError(f"{a.id} is already delivered to {job['delivered']}")
+        prog = be.progress(job)
+        retry = [f for f in job["files"] if prog[f["name"]]["state"] == "failed"]
+        if not retry:
+            print(f"{a.id}: nothing to retry")
+            return
+        be.download(job, retry)
+        print(f"{a.id}: retrying {len(retry)} file(s)")
+        return
+    if not a.batch:
+        raise FetchError("--batch is required for a new download")
+    check_batch(a.batch, be)
+    c = load_candidate(a.id)
+    files = c["files"]
+    if a.files:
+        files = [files[i - 1] for i in parse_picks(a.files, len(files))]
+    job = {"id": c["id"], "batch": a.batch, "title": _safe(c["title"]), "files": files,
+           "source": c["source"], "at": _now()}
+    be.download(job, files)
+    save_job(job)
+    if a.json:
+        print(json.dumps(public(job), indent=1))
+    else:
+        print(f"{job['id']}: {len(files)} file(s), {_size(sum(f['size'] for f in files))}, "
+              f"for {a.batch}/{job['title']}")
+
+
+def cmd_status(a):
+    be = backend()
+    out = [job_summary(j, {} if j.get("delivered") else be.progress(j)) for j in load_jobs(a.jobs)]
+    if a.json:
+        print(json.dumps(out, indent=1))
+        return
+    if not out:
+        print("no downloads")
+    for s in out:
+        print_job(s)
+
+
+def deliver(be, job):
+    dest = staging_dir() / job["batch"] / job["title"]
+    moves = []
+    for f in job["files"]:
+        src = be.locate(job, f)
+        if src is None:
+            raise FetchError(f"{job['id']}: {f['name']} is done but not in {be.download_root}")
+        to = dest / f["name"]
+        if to.exists():
+            raise FetchError(f"{job['id']}: {to} already exists")
+        moves.append((src, to))
+    dest.mkdir(parents=True, exist_ok=True)
+    for src, to in moves:
+        shutil.move(src, to)
+    for src, _ in moves:  # the job's own folder, now empty
+        try:
+            src.parent.rmdir()
+        except OSError:
+            pass
+    job["delivered"] = str(dest)
+    save_job(job)
+    be.forget(job)
+
+
+def cmd_wait(a):
+    be = backend()
+    deadline = time.monotonic() + a.timeout if a.timeout is not None else None
+    while True:
+        jobs = [j for j in load_jobs(a.jobs) if not j.get("delivered")]
+        pending = False
+        for j in jobs:
+            s = job_summary(j, be.progress(j))
+            if s["state"] == "done":
+                deliver(be, j)
+            elif s["state"] != "failed":
+                pending = True
+        if not pending or (deadline is not None and time.monotonic() >= deadline):
+            break
+        time.sleep(a.interval)
+    out = [job_summary(j, {} if j.get("delivered") else be.progress(j)) for j in load_jobs(a.jobs)]
+    if a.json:
+        print(json.dumps(out, indent=1))
+    else:
+        for s in out:
+            print_job(s)
+    if any(s["state"] not in ("delivered",) for s in out):
+        sys.exit(1)
+
+
+def cmd_cancel(a):
+    be = backend()
+    for j in load_jobs(a.jobs):
+        if not j.get("delivered"):
+            be.cancel(j)
+        (state_dir() / "jobs" / f"{j['id']}.json").unlink()
+        print(f"{j['id']}: cancelled" if not j.get("delivered") else f"{j['id']}: forgotten")
+
+
+def _safe(name):
+    name = re.sub(r'[/\\:*?"<>|]', "_", name).strip(" .")
+    return name or "untitled"
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="media-fetch", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("search", help="find candidates")
+    s.add_argument("query")
+    s.add_argument("--ext", help="only these file types, e.g. flac,mp3 or epub,pdf")
+    s.add_argument("--min-files", type=int, default=1, help="drop smaller folders")
+    s.add_argument("--timeout", type=float, default=20, help="seconds to collect results")
+    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--all", action="store_true")
+    s.set_defaults(fn=cmd_search)
+
+    s = sub.add_parser("show", help="a candidate's files")
+    s.add_argument("id")
+    s.set_defaults(fn=cmd_show)
+
+    s = sub.add_parser("get", help="download a candidate, or retry a job's failed files")
+    s.add_argument("id")
+    s.add_argument("--batch", help="STAGING/BATCH receives it")
+    s.add_argument("--files", help="only these, numbered as `show` lists them: 1,3-5")
+    s.set_defaults(fn=cmd_get)
+
+    s = sub.add_parser("status", help="progress")
+    s.add_argument("jobs", nargs="*", metavar="JOB|BATCH")
+    s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("wait", help="wait for downloads, deliver them into their batch")
+    s.add_argument("jobs", nargs="*", metavar="JOB|BATCH")
+    s.add_argument("--timeout", type=float, help="give up after this many seconds (0: check once)")
+    s.add_argument("--interval", type=float, default=5)
+    s.set_defaults(fn=cmd_wait)
+
+    s = sub.add_parser("cancel", help="stop downloads and forget them")
+    s.add_argument("jobs", nargs="+", metavar="JOB|BATCH")
+    s.set_defaults(fn=cmd_cancel)
+
+    for s in sub.choices.values():
+        s.add_argument("--json", action="store_true", help="machine-readable output")
+
+    a = p.parse_args(argv)
+    try:
+        a.fn(a)
+    except FetchError as e:
+        sys.exit(f"media-fetch: {e}")
+
+
+if __name__ == "__main__":
+    main()

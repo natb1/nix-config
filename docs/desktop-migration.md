@@ -3636,11 +3636,13 @@ Added 2026-09-26. [slskd](https://github.com/slskd/slskd), a headless
 Soulseek client, runs on desk
 ([`hosts/desk/soulseek.nix`](../hosts/desk/soulseek.nix)): web UI at
 `http://desk:5030`, tailnet-only like the other servers, and an HTTP API
-that the `media-share` skill drives, so a Claude session can search, show
-the choices and download what the user picks. Downloads land in
-`staging/soulseek/`, never the library. A finished folder is moved into a
-new `staging/<batch>` and filed like any other batch
-([Filing a batch](#filing-a-batch)).
+that `media-fetch` ([`pkgs/media-fetch`](../pkgs/media-fetch)) drives, so a
+Claude session can search, show the choices and download what the user
+picks. media-fetch's commands, IDs and JSON name no network: slskd is its
+one backend, and another could replace it without changing the `media-share`
+skill. Downloads land in `staging/soulseek/`, never the library;
+`media-fetch wait` moves a finished one into its `staging/<batch>`, filed
+like any other batch ([Filing a batch](#filing-a-batch)).
 
 - **One client.** Soulseek disconnects the older session when an account
   logs in twice, so nothing else (Nicotine+ on the Mac, sldl) uses the

@@ -1,17 +1,18 @@
 # slskd: a Soulseek client for finding music (and books) to file.
 #
 # Headless, with a web UI at http://desk:5030 for searching and picking by
-# hand, and an HTTP API (same port, /api/v0, X-API-Key header) for an agent
-# to do the same: the media-share skill has the calls. One client, one
+# hand, and an HTTP API (same port, /api/v0, X-API-Key header) that
+# media-fetch (pkgs/media-fetch) drives: its slskd backend, behind an
+# interface that names no network, is what an agent uses. One client, one
 # login: Soulseek disconnects the older session when an account logs in
 # twice, so a second client (Nicotine+, sldl) on the same account would
-# fight this one. Use the API instead.
+# fight this one. Use media-fetch instead.
 #
-# Downloads land in /srv/media/staging/soulseek, not the library. They are
-# filed like any other batch (media-share skill, "Soulseek"): moved into a
-# new staging/<batch>, then media-stage / beet stage-review. slskd runs as
-# n8, like the Samba shares' `force user`, so media-stage can move what it
-# downloaded; the module's sandbox still limits it to its state, the two
+# Downloads land in /srv/media/staging/soulseek, not the library, one
+# folder per media-fetch job. `media-fetch wait` moves each finished job into
+# its staging/<batch>, which is then filed like any other (media-share skill).
+# slskd runs as n8, like the Samba shares' `force user`, so media-fetch can
+# move what it downloaded; the module's sandbox still limits it to its state, the two
 # directories below (read-write) and the share (read-only).
 #
 # Shares music/, read-only. Soulseek expects a share back, and many peers

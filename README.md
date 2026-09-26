@@ -90,7 +90,8 @@ short name `desk` works everywhere through MagicDNS.
    `SLSKD_SLSK_USERNAME`, `SLSKD_SLSK_PASSWORD`, `SLSKD_USERNAME`,
    `SLSKD_PASSWORD`, one `NAME=value` per line. There is no port to forward:
    T-Mobile Home Internet is behind carrier-grade NAT. Check:
-   `http://desk:5030` shows *Connected*, and Shares lists `music`.
+   `http://desk:5030` shows *Connected*, and Shares lists `music`, and
+   `media-fetch search '<an album>'` lists candidates.
 6. **iPhone over Bluetooth** (notifications and texts,
    [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):
    `tether --bt-status` should report MAP + PBAP + ANCS. Pair from

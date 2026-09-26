@@ -18,7 +18,11 @@
   # The video player: Jellyfin Desktop, a client of desk's own Jellyfin
   # (hosts/desk/jellyfin.nix) that plays through mpv, so files direct-play
   # instead of transcoding. First run: server http://localhost:8096.
-  home.packages = [ pkgs.feishin pkgs.jellyfin-desktop ];
+  home.packages = [ pkgs.feishin pkgs.jellyfin-desktop ]
+    # Searching and downloading, through desk's slskd (hosts/desk/soulseek.nix).
+    # Here, not in media-share.nix: only desk has a backend to call; the Mac
+    # runs it as `ssh desk media-fetch …`.
+    ++ [ (pkgs.callPackage ../../../pkgs/media-fetch { }) ];
 
   programs.beets = {
     enable = true;

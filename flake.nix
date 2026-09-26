@@ -176,6 +176,8 @@
         # Media filing for /srv/media (docs/desktop-migration.md, "Layout on
         # the share"); `nix run .#media-stage -- --help`.
         media-stage = pkgs.callPackage ./pkgs/media-stage { };
+        # Search and download into a staging batch; `nix run .#media-fetch -- --help`.
+        media-fetch = pkgs.callPackage ./pkgs/media-fetch { };
       });
 
       # Module regression tests. `nix flake check` is the gate before a switch.
@@ -189,6 +191,7 @@
           claude-daemon-test-suite = claudeDaemonTests.claude-daemon-test-suite;
           # Its unit and pipeline tests run in the build.
           media-stage = pkgs.callPackage ./pkgs/media-stage { };
+          media-fetch = pkgs.callPackage ./pkgs/media-fetch { };
         }
         // weztermTests.wezterm-tests
         // claudeDaemonTests.claude-daemon-tests

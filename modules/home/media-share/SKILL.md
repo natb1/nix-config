@@ -132,34 +132,34 @@ agent or person per batch.
    delete `<batch>.manifest.jsonl` or the review files by hand: the manifest
    is the only record of what each file was before beets renamed it.
 
-## Soulseek
+## Finding and downloading
 
-slskd on desk (`hosts/desk/soulseek.nix`) searches and downloads; its web
-UI is `http://desk:5030`. From an agent, use its API on desk (from the Mac,
-wrap each call in `ssh desk '…'`). Don't install another Soulseek client: a
-second login on the account disconnects slskd.
+`media-fetch`, on desk (from the Mac, `ssh desk media-fetch …`), searches
+for media the user asks for and downloads what they pick into a staging
+batch. Add `--json` to any command. `media-fetch --help` has the rest.
 
 ```sh
-. /etc/slskd/api.env; api=http://localhost:5030/api/v0; h="X-API-Key: $SLSKD_API_KEY"
-id=$(uuidgen)
-curl -sH "$h" -H 'Content-Type: application/json' -d "{\"id\":\"$id\",\"searchText\":\"<artist> <album>\"}" $api/searches
-curl -sH "$h" $api/searches/$id                 # wait until isComplete
-curl -sH "$h" $api/searches/$id/responses       # [{username, hasFreeUploadSlot, queueLength, uploadSpeed, files:[{filename, size, bitRate, length}]}]
-curl -sH "$h" -H 'Content-Type: application/json' -d '[{"filename":"<as listed>","size":<n>}]' $api/transfers/downloads/<username>
-curl -sH "$h" $api/transfers/downloads          # progress; state "Completed, Succeeded"
+media-fetch search '<artist> <album>' [--ext flac,mp3 | --ext epub,pdf] [--min-files N]
+media-fetch show <id>                            # the candidate's files, numbered
+media-fetch get <id> --batch <batch> [--files 1,3-5]
+media-fetch wait <batch>                         # blocks; delivers into staging/<batch>/<title>/
+media-fetch status | cancel <id|batch>
 ```
 
-1. **Choose.** Group each response's files by folder and show the user a
-   short list: a complete album (every track, one folder), lossless over
-   lossy, a free upload slot, a short queue, a fast peer. Download only
-   what the user picked, and only what they are entitled to download.
-2. **Download** the chosen folder's files in one `POST`. They arrive in
-   `/srv/media/staging/soulseek/<folder>/`.
-3. **Stage.** When every file is `Succeeded`, move the folder (same disk,
-   instant) into a new batch, then follow the procedure from step 2:
-   `mkdir /srv/media/staging/<batch> && mv /srv/media/staging/soulseek/<folder> /srv/media/staging/<batch>/`.
-   This is the one place a move is right: the download is not the user's
-   original. `soulseek/` itself is never a batch.
+1. **Choose.** Each candidate is one folder from one source. Show the user
+   a short list: complete (every track, one folder), lossless over lossy,
+   `ready` over queued, fast. Download only what the user picked, and only
+   what they are entitled to download.
+2. **Download**: `get`, then `wait`. A job that ends `failed` stays
+   undelivered: `get <id>` again retries its failed files, or `cancel` it
+   and pick another candidate.
+3. **File**: once `wait` reports every job `delivered`, follow the procedure
+   from step 2 on `/srv/media/staging/<batch>`. Several candidates can go
+   into one batch; `get` refuses a batch that is already scanned.
+
+Never move files out of the download directory by hand, and don't install
+another client for the network behind it (the backend is slskd,
+`hosts/desk/soulseek.nix`; a second login on its account disconnects it).
 
 ## Rules
 
