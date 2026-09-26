@@ -38,6 +38,7 @@ Singleton {
         next: String.fromCodePoint(0xF04AD),
         prev: String.fromCodePoint(0xF04AE),
         close: String.fromCodePoint(0xF0156),
-        music: String.fromCodePoint(0xF075A)
+        music: String.fromCodePoint(0xF075A),
+        sync: String.fromCodePoint(0xF04E6)
     })
 }

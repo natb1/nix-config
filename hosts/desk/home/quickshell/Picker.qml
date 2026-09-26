@@ -1,68 +1,69 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Io
+import Quickshell.Widgets
 import Quickshell.Wayland
 
-// A dmenu-style list whose rows can be several lines, opened over IPC by a
-// script that waits for the answer (see shell.qml; the rebuild menu,
-// hosts/desk/rebuild-menu.nix, is the one user):
+// The desktop's one list to pick from, dmenu-style: the launcher (Mod+D,
+// Launcher.qml) and, through `pick` (hosts/desk/pick), the rebuild and
+// power menus. A row can be several lines, and have an icon.
 //
-//   rows  a file, one row per line: a key, then the lines to show, all
-//         tab-separated; the first line shown is the bright one
-//   out   a FIFO the script is reading; the chosen row's key is written to
-//         it, or an empty line when cancelled
-//
-// The script can rewrite `rows` while the list is open and call reload(),
-// so a list can open at once and fill in as the script learns more. The
-// selection follows its key across a reload.
+// show(prompt, rows, callback) opens it; rows are { key, lines, icon? }, and
+// callback gets the chosen row's key, or "" when cancelled (including when
+// something else opens the list over it). `rows` and `busy` can change while
+// it is open — a list can open at once and fill in — and the selection
+// follows its key.
 //
 // Typing filters: each space-separated word must appear, letters in order,
-// somewhere in the row. Enter picks, Escape or a click outside cancels.
+// somewhere in the row. The first ten rows are numbered; with nothing typed,
+// or with Alt, a digit picks its row. Enter picks, Escape or a click
+// outside cancels.
 PanelWindow {
     id: picker
 
     property bool open: false
-    property string out: ""
     property string prompt: ""
-    property string mesg: ""
+    property var rows: []
+    // Shown as a spinning icon: the rows are still being worked out.
+    property bool busy: false
+    property var callback: null
+    // Who opened it, for them to recognise their list later; show() clears it.
+    property string owner: ""
     property string query: ""
     property string selectedKey: ""
 
-    readonly property var rows: rowsFile.text().split("\n")
-        .filter(line => line !== "")
-        .map((line, index) => {
-            const fields = line.split("\t");
-            return { index: index, key: fields[0], lines: fields.slice(1) };
-        })
     readonly property var matches: filter(rows, query)
 
-    function show(rowsPath, outPath, promptText) {
-        if (open)
-            answer("");
-        rowsFile.path = rowsPath;
-        rowsFile.reload();
-        out = outPath;
+    function show(promptText, newRows, onPicked) {
+        finish("");
         prompt = promptText;
-        mesg = "";
+        rows = newRows;
+        busy = false;
+        owner = "";
+        callback = onPicked;
         field.text = "";
         selectedKey = rows.length > 0 ? rows[0].key : "";
+        list.currentIndex = 0;
         open = true;
     }
 
-    function reload(mesgText) {
-        if (!open)
-            return;
-        mesg = mesgText;
-        rowsFile.reload();
-    }
-
-    function answer(key) {
+    function finish(key) {
         if (!open)
             return;
         open = false;
-        // The script is blocked reading the FIFO, so this write completes.
-        Quickshell.execDetached(["sh", "-c", 'printf "%s\\n" "$1" >"$2"', "picker", key, out]);
+        busy = false;
+        const cb = callback;
+        callback = null;
+        cb(key);
+    }
+
+    // `pick`'s rows: one per line, a key and then the lines to show, all
+    // tab-separated.
+    function parse(text) {
+        return text.split("\n").filter(line => line !== "").map(line => {
+            const fields = line.split("\t");
+            return { key: fields[0], lines: fields.slice(1) };
+        });
     }
 
     // How far into `text` the letters of `word` are spread (0 when they are
@@ -88,21 +89,18 @@ PanelWindow {
         if (words.length === 0)
             return rows;
         const scored = [];
-        for (const row of rows) {
+        rows.forEach((row, index) => {
             const text = row.lines.join(" ").toLowerCase();
             let score = 0;
             for (const word of words) {
                 const s = spread(text, word);
-                if (s < 0) {
-                    score = -1;
-                    break;
-                }
+                if (s < 0)
+                    return;
                 score += s;
             }
-            if (score >= 0)
-                scored.push({ row: row, score: score });
-        }
-        scored.sort((a, b) => a.score - b.score || a.row.index - b.row.index);
+            scored.push({ row: row, score: score, index: index });
+        });
+        scored.sort((a, b) => a.score - b.score || a.index - b.index);
         return scored.map(s => s.row);
     }
 
@@ -138,14 +136,9 @@ PanelWindow {
     WlrLayershell.namespace: "quickshell-picker"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
-    FileView {
-        id: rowsFile
-        blockLoading: true
-    }
-
     MouseArea {
         anchors.fill: parent
-        onClicked: picker.answer("")
+        onClicked: picker.finish("")
     }
 
     Rectangle {
@@ -201,12 +194,19 @@ PanelWindow {
 
                     Keys.onPressed: event => {
                         const ctrl = event.modifiers & Qt.ControlModifier;
+                        const alt = event.modifiers & Qt.AltModifier;
                         const page = Math.max(1, Math.floor(list.height / 76));
+                        const digit = event.key >= Qt.Key_0 && event.key <= Qt.Key_9;
                         if (event.key === Qt.Key_Escape || (ctrl && event.key === Qt.Key_C))
-                            picker.answer("");
+                            picker.finish("");
                         else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                            picker.answer(list.count > 0 ? picker.selectedKey : "");
-                        else if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab || (ctrl && (event.key === Qt.Key_N || event.key === Qt.Key_J)))
+                            picker.finish(list.count > 0 ? picker.selectedKey : "");
+                        else if (digit && (alt || field.text === "")) {
+                            // 1–9, then 0 for the tenth.
+                            const i = (event.key - Qt.Key_0 + 9) % 10;
+                            if (i < picker.matches.length)
+                                picker.finish(picker.matches[i].key);
+                        } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab || (ctrl && (event.key === Qt.Key_N || event.key === Qt.Key_J)))
                             picker.move(1);
                         else if (event.key === Qt.Key_Up || event.key === Qt.Key_Backtab || (ctrl && (event.key === Qt.Key_P || event.key === Qt.Key_K)))
                             picker.move(-1);
@@ -221,23 +221,28 @@ PanelWindow {
                 }
 
                 Text {
+                    text: Theme.icons.sync
+                    visible: picker.busy
+                    color: Theme.dim
+                    font.family: Theme.iconFont
+                    font.pixelSize: 16
+
+                    RotationAnimation on rotation {
+                        running: picker.busy
+                        from: 0
+                        to: 360
+                        duration: 1000
+                        loops: Animation.Infinite
+                    }
+                }
+
+                Text {
                     text: picker.matches.length + "/" + picker.rows.length
                     color: Theme.dim
                     font.family: Theme.font
                     font.pixelSize: 13
                     font.features: { "tnum": 1 }
                 }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                Layout.leftMargin: 8
-                text: picker.mesg
-                visible: text !== ""
-                color: Theme.dim
-                font.family: Theme.font
-                font.pixelSize: 13
-                elide: Text.ElideRight
             }
 
             Rectangle {
@@ -260,11 +265,12 @@ PanelWindow {
                     id: item
 
                     required property var modelData
+                    required property int index
                     readonly property var row: modelData
                     readonly property bool current: ListView.isCurrentItem
 
                     width: list.width
-                    implicitHeight: lines.implicitHeight + 16
+                    implicitHeight: Math.max(lines.implicitHeight, 32) + 16
                     radius: 10
                     color: current ? Theme.cardHover : (hover.containsMouse ? Theme.card : "transparent")
 
@@ -278,28 +284,51 @@ PanelWindow {
                         color: Theme.accent
                     }
 
-                    ColumnLayout {
-                        id: lines
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: 14
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
                         anchors.rightMargin: 14
-                        spacing: 2
+                        spacing: 12
 
-                        Repeater {
-                            model: item.row.lines
+                        Text {
+                            Layout.preferredWidth: 14
+                            Layout.alignment: Qt.AlignVCenter
+                            horizontalAlignment: Text.AlignHCenter
+                            text: item.index < 10 ? String((item.index + 1) % 10) : ""
+                            color: item.current ? Theme.accent : Theme.dim
+                            font.family: Theme.font
+                            font.pixelSize: 13
+                            font.features: { "tnum": 1 }
+                        }
 
-                            Text {
-                                required property string modelData
-                                required property int index
-                                Layout.fillWidth: true
-                                text: modelData
-                                elide: Text.ElideRight
-                                color: index === 0 ? Theme.fg : Theme.dim
-                                font.family: Theme.font
-                                font.pixelSize: index === 0 ? 15 : 13
-                                font.weight: index === 0 ? Font.Medium : Font.Normal
+                        IconImage {
+                            visible: !!item.row.icon
+                            source: item.row.icon ?? ""
+                            implicitSize: 32
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        ColumnLayout {
+                            id: lines
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: 2
+
+                            Repeater {
+                                model: item.row.lines
+
+                                Text {
+                                    required property string modelData
+                                    required property int index
+                                    Layout.fillWidth: true
+                                    visible: modelData !== ""
+                                    text: modelData
+                                    elide: Text.ElideRight
+                                    color: index === 0 ? Theme.fg : Theme.dim
+                                    font.family: Theme.font
+                                    font.pixelSize: index === 0 ? 15 : 13
+                                    font.weight: index === 0 ? Font.Medium : Font.Normal
+                                }
                             }
                         }
                     }
@@ -308,7 +337,7 @@ PanelWindow {
                         id: hover
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: picker.answer(item.row.key)
+                        onClicked: picker.finish(item.row.key)
                     }
                 }
             }
@@ -316,7 +345,8 @@ PanelWindow {
             Text {
                 Layout.fillWidth: true
                 Layout.leftMargin: 8
-                visible: list.count === 0
+                // Not while `pick`'s rows are still loading.
+                visible: list.count === 0 && picker.rows.length > 0
                 text: "No match"
                 color: Theme.dim
                 font.family: Theme.font
