@@ -60,6 +60,11 @@
       # beets field `stage_fp`.
       plugins = [ "musicbrainz" "chroma" "duplicates" "info" "inline" "stagereview" ];
       pluginpath = [ "${../../../pkgs/media-stage/beetsplug}" ];
+      # beets counts chroma as a second metadata source and so charges every
+      # MusicBrainz match a "data_source" penalty: a perfect match scored 88%,
+      # never "strong", and every album went to the review page. MusicBrainz
+      # is the only source of releases here, so nothing is to be weighed.
+      musicbrainz.data_source_mismatch_penalty = 0.0;
     };
   };
 }

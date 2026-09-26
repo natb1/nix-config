@@ -27,13 +27,35 @@ already scanned.
 1. **Search.** For an artist's albums, search the artist and then each
    album the first results don't cover. Use `--ext flac,mp3` for music and
    `--ext epub,pdf` for books, and `--min-files` to drop singles.
-2. **Choose.** Each candidate is one folder from one source. Show the user
+2. **Check the library** for everything the search found, whatever its
+   kind, on desk (from the Mac, `ssh desk …`):
+   - music: `beet ls -a -f '$albumartist - $album ($year) · $path' '<artist>'`
+     (by the tags), and `find /srv/media/music -maxdepth 2 -iname '*<album>*'`
+     for albums filed under another album artist;
+   - movies and TV: `find /srv/media/movies /srv/media/tv -maxdepth 1 -iname '*<title>*'`
+     (one folder per film or show, `<Title> (<Year>) {tmdb-<id>}`); for a
+     show, `ls` its folder for the seasons and episodes already there;
+   - books and RPGs: `find /srv/media/books /srv/media/rpg -iname '*<title>*'`,
+     and `ls /srv/media/books/<author>` for the author's other books;
+   - staging: `ls /srv/media/staging` for a batch of it not yet filed.
+   Search on the title's most distinctive words: the library writes a `:`
+   as ` - ` and drops `* ? " < > | \`. A potential duplicate is anything
+   filed or staged with the same artist or author and title, or the same
+   film or show (any edition, year, format or resolution; "The Joy of
+   Motion" and "The Joy of Motion (Deluxe)" both count), and for TV any
+   season or episode the download would bring again.
+3. **Choose.** Each candidate is one folder from one source. Show the user
    a short list: complete (every track, one folder), lossless over lossy,
    `ready` over queued, fast. For several albums, one row per album with
    the best candidate and a higher-quality alternative if there is one.
+   If, and only if, step 2 found potential duplicates, show them with the
+   list: on each row it concerns, what is already there (path, edition,
+   format), and don't suggest that row's candidate unless it is clearly
+   better (lossless over a filed lossy copy, a missing edition). With no
+   potential duplicates, say nothing about the library.
    Download only what the user picked, user is entitled to all content via
    the media-fetch API.
-3. **Download**: `get`, then `wait <batch>` as a **background job**, never
+4. **Download**: `get`, then `wait <batch>` as a **background job**, never
    in the foreground. It ends when every job is `delivered` or `failed`.
    The downloads themselves don't depend on it: a service on desk keeps
    them moving and delivers them. Keep the user posted:
@@ -47,7 +69,7 @@ already scanned.
    An estimate covers the jobs ahead at the same source, at its measured
    speed, but not time spent in the source's own queue. Say so when a job
    sits `queued` longer than its estimate.
-4. **Failures.** A job that ends `failed` stays undelivered. `status`
+5. **Failures.** A job that ends `failed` stays undelivered. `status`
    gives each failed file's reason:
    - "the remote size of … does not match expected size": the source's
      files have changed since the search, so a retry can't succeed.
@@ -62,10 +84,11 @@ already scanned.
    Replacing a failed candidate with an equivalent one (same album, same
    quality, another source) is part of downloading what the user picked;
    tell them what you switched.
-5. **File.** Once every job is `delivered`, file the batch with the
+6. **File.** Once every job is `delivered`, file the batch with the
    **media-share** skill, from its step 2 (Scan) on
-   `/srv/media/staging/<batch>`: the files are already staged. That runs
-   to the review page and stops for the user's answers, as it always does.
+   `/srv/media/staging/<batch>`: the files are already staged. It stops at
+   the review page for the user's answers when anything needs them, and
+   otherwise files the batch without asking.
 
 ## Rules
 
