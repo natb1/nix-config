@@ -84,13 +84,21 @@ short name `desk` works everywhere through MagicDNS.
 4. **Book server (Kavita):** open `http://desk:5000`, create the admin, and add
    two libraries of type **Book**: `/srv/media/books` and `/srv/media/rpg`
    ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)).
-5. **iPhone over Bluetooth** (notifications and texts,
+5. **Soulseek (slskd):** write `/etc/slskd/credentials` (root, 0600) with
+   the Soulseek account and a web UI login, then `sudo systemctl restart
+   slskd` ([`hosts/desk/soulseek.nix`](hosts/desk/soulseek.nix)):
+   `SLSKD_SLSK_USERNAME`, `SLSKD_SLSK_PASSWORD`, `SLSKD_USERNAME`,
+   `SLSKD_PASSWORD`, one `NAME=value` per line. There is no port to forward:
+   T-Mobile Home Internet is behind carrier-grade NAT. Check:
+   `http://desk:5030` shows *Connected*, and Shares lists `music`, and
+   `media-fetch search '<an album>'` lists candidates.
+6. **iPhone over Bluetooth** (notifications and texts,
    [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):
    `tether --bt-status` should report MAP + PBAP + ANCS. Pair from
    `tether-gtk` (Devices) or `tether --bt-pair <phone address>`, and on the
    phone allow **Show Notifications** and **Sync Contacts**.
    `tether --bt-setup` names anything missing.
-6. The rest (Google Drive, iCloud Photos, the restic backup) have their own
+7. The rest (Google Drive, iCloud Photos, the restic backup) have their own
    steps in [State this repo does not manage](#state-this-repo-does-not-manage).
 
 The printer needs nothing: the queue is declared
@@ -142,7 +150,7 @@ shows `brother` enabled and default.
    `http://desk:8096`. **Books:** `http://desk:5000` in Safari (Add to Home
    Screen), or an OPDS reader such as Panels or Chunky with the OPDS URL from
    Kavita's user settings.
-5. **Notifications and texts on desk:** pair from desk (desk step 5); allow
+5. **Notifications and texts on desk:** pair from desk (desk step 6); allow
    **Show Notifications** and **Sync Contacts** when the phone asks. If
    notifications stop while texts still arrive, turn Bluetooth off and on
    **on the phone**; desk shows an alert when this happens.
@@ -292,6 +300,10 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   replaced by generating a new one and swapping the line on the box; a lost
   password cannot be replaced. See `docs/desktop-migration.md`, "Before any
   original is retired", for where the off-machine copies go.
+- `desk`'s Soulseek login, `/etc/slskd/credentials` (root, 0600): the
+  Soulseek account and the slskd web UI's login (`hosts/desk/soulseek.nix`).
+  The API key beside it, `/etc/slskd/api.env`, is generated on first start.
+  `/var/lib/slskd` holds search and transfer history, disposable.
 - `desk`'s iCloud Photos backup state, for `hosts/desk/icloud.nix`: one env
   file per instance in `~/.config/icloudpd/` (Apple ID and library name), each
   Apple ID's password in gnome-keyring under `service=pyicloud://icloud-password`,

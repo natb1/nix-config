@@ -23,6 +23,7 @@
     ./music.nix
     ./jellyfin.nix
     ./kavita.nix
+    ./soulseek.nix
     ./icloud.nix
     ./printing.nix
     ./iphone.nix
