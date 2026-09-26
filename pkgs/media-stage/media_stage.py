@@ -10,6 +10,7 @@ share, a GCS listing, a Mac's Downloads folder):
   check  STAGING   validate the table against the files and the layout
   apply  STAGING   move each file into place, then write its standard metadata
   lint   [DIR...]  audit the library: layout and metadata
+  close  STAGING   remove the batch's records once it is filed (and audited)
 
 STAGING is a batch directory: /srv/media/staging/<batch> on desk, which the
 Mac sees as /Volumes/media-staging/<batch>. Its sidecars sit next to it:
@@ -525,6 +526,19 @@ def draft(a):
 
 # "Artist - Album - 04 Title.mp3", "Artist - Album (2000) - 04 - Title.mp3"
 AUDIO_NAME = re.compile(r"^(?P<artist>.+?) - (?P<album>.+) - (?P<track>\d{1,3})(?: - |\.? )(?P<title>.+)\.[^.]+$")
+# "Album CD2", "Album (Disc 2)", "Album [disk 2]", a folder named "CD2"
+DISC_MARKER = re.compile(r"^(?P<base>.*?)[\s_-]*[(\[]?\b(?:cd|disc|disk)[\s_-]*(?P<disc>\d{1,2})[)\]]?\s*$", re.I)
+
+
+def split_disc(name):
+    """("Album", 2) for "Album CD2"; (name, None) without a disc marker."""
+    m = DISC_MARKER.match(name or "")
+    return (m.group("base"), int(m.group("disc"))) if m else (name, None)
+
+
+def _int(v):
+    m = re.match(r"\s*(\d+)", str(v or ""))
+    return int(m.group(1)) if m else None
 
 
 def cmd_group(a):
@@ -533,22 +547,79 @@ def cmd_group(a):
 
 
 def group(a):
+    """One folder per album, decided by the files' own tags, wherever they
+    sit in the batch. beets decides albums by folder, and on its own merges
+    sibling folders named like discs ("… CD1", "… CD2") whatever they hold;
+    `beet stage-review` imports each folder by itself, so this is the only
+    place albums are merged, and each merge is logged to STAGING.group.json
+    for the review page to show."""
     staging = Path(a.staging)
     recs = load_manifest(staging)
     if recs is None:
         sys.exit(f"{staging}: no manifest; run `media-stage scan` first")
-    moved = 0
+    groups = {}  # (album artist, album) -> {"base", "artist", "files": [(rel, disc)]}
     for rel, r in sorted(recs.items()):
-        if r["kind"] != "audio" or "/" in rel:
+        if r["kind"] != "audio":
             continue
         tags = (r.get("meta") or {}).get("tags", {})
-        m = AUDIO_NAME.match(Path(rel).name)
-        album = tags.get("album") or (m and m.group("album")) or "_loose"
-        folder = clean(album) or "_loose"
-        (staging / folder).mkdir(exist_ok=True)
-        move_noclobber(staging / rel, staging / folder / Path(rel).name)
-        moved += 1
-    print(f"grouped {moved} files into album folders")
+        name = AUDIO_NAME.match(Path(rel).name)
+        parent = Path(rel).parent.name if "/" in rel else ""
+        pbase, pdisc = split_disc(parent)
+        album = tags.get("album") or (name and name.group("album")) or pbase or "_loose"
+        base, tdisc = split_disc(album)
+        base = clean(base) or clean(pbase) or "_loose"
+        disc = _int(tags.get("disc")) or tdisc or pdisc or 1
+        artist = tags.get("album_artist") or ""
+        g = groups.setdefault((artist.casefold(), base.casefold()), {"base": base, "artist": artist, "files": []})
+        g["files"].append((rel, disc))
+    taken = {}
+    for key, g in sorted(groups.items()):
+        folder = g["base"]
+        if folder.casefold() in taken:
+            folder = clean(f"{g['base']} ({g['artist'] or 'no album artist'})")
+        taken[folder.casefold()] = key
+        g["folder"] = folder
+
+    log_path = Path(str(staging).rstrip("/") + ".group.json")
+    log = json.loads(log_path.read_text()) if log_path.exists() else {}
+    moved, stuck = 0, []
+    for g in groups.values():
+        discs = sorted({d for _, d in g["files"]})
+        origins = sorted({str(Path(rel).parent) for rel, _ in g["files"]})
+        for rel, disc in g["files"]:
+            fname = Path(rel).name
+            if len(discs) > 1 and not re.match(rf"^0?{disc}-", fname):
+                fname = f"{disc}-{fname}"
+            dst = Path(g["folder"]) / fname
+            if dst.as_posix() == rel:
+                continue
+            (staging / g["folder"]).mkdir(exist_ok=True)
+            try:
+                move_noclobber(staging / rel, staging / dst)
+                moved += 1
+            except FileExistsError:
+                stuck.append(rel)
+        if len(origins) > 1 or len(discs) > 1:
+            prev = log.get(g["folder"], {})
+            log[g["folder"]] = {
+                "from": sorted(set(prev.get("from", [])) | set(origins)),
+                "discs": sorted(set(prev.get("discs", [])) | set(discs)),
+            }
+    # Folders the moves emptied; never the batch itself or a dot-folder.
+    for dirpath, _, _ in os.walk(staging, topdown=False):
+        p = Path(dirpath)
+        if p != staging and not any(x.startswith(".") for x in p.relative_to(staging).parts):
+            if not [f for f in os.listdir(p) if f not in IGNORED_NAMES]:
+                shutil.rmtree(p)
+    if log:
+        log_path.write_text(json.dumps(log, indent=1, ensure_ascii=False))
+    merged = [f for f, v in log.items() if len(v["from"]) > 1]
+    print(f"grouped {moved} files into {len(groups)} album folders; "
+          f"{len(merged)} made from more than one folder (-> {log_path.name})")
+    for f in merged:
+        print(f"  {f}: " + ", ".join(log[f]["from"]))
+    for rel in stuck:
+        print(f"  not moved, a file of that name is already there: {rel}")
     a.hash = False
     scan(a)
 
@@ -1089,6 +1160,52 @@ def tag_paths(a, library):
 
 
 # --------------------------------------------------------------------------
+# close: the batch's records go only once the batch is filed and audited.
+# The manifest is the one record of what each file said it was before beets
+# renamed it: an audio batch keeps it until `beet stage-audit` passes.
+
+def cmd_close(a):
+    with batch_lock(a.staging, "close"):
+        close(a)
+
+
+def close(a):
+    staging = Path(a.staging)
+    manifest, _, applied = sidecar_paths(staging)
+    recs = load_manifest(staging) or {}
+    lock = Path(str(staging).rstrip("/") + ".lock")
+    audit = Path(str(staging).rstrip("/") + ".audit.json")
+    if any(r["kind"] == "audio" for r in recs.values()):
+        state = json.loads(audit.read_text()) if audit.exists() else {}
+        if not state.get("passed"):
+            sys.exit(f"{staging.name}: not audited — run `beet stage-audit {staging}` and settle what it flags; "
+                     f"{manifest.name} is the only record of what each file said it was")
+    left, ignored = walk(staging) if staging.exists() else ([], [])
+    left += [d for d in ignored if d.endswith("/")]  # a dot-folder may hold anything
+    if left:
+        print(f"{staging.name}: {len(left)} files still in staging:")
+        for rel in left[:20]:
+            print(f"  {rel}")
+        sys.exit("file them, delete them, or move them to a new batch; the records stay until then")
+    gone = []
+    for p in sorted(staging.parent.glob(glob_escape(staging.name) + "*")):
+        # <batch>.* only: <batch>-2 may be another batch. The lock is ours.
+        if p in (applied, staging, lock) or not p.name.startswith(staging.name + "."):
+            continue
+        shutil.rmtree(p) if p.is_dir() else p.unlink()
+        gone.append(p.name)
+    if staging.exists():
+        shutil.rmtree(staging)  # only OS junk is left
+        gone.append(staging.name + "/")
+    print(f"closed {staging.name}: removed {', '.join(gone) or 'nothing'}"
+          + (f"; kept {applied.name}, the record of what was filed" if applied.exists() else ""))
+
+
+def glob_escape(s):
+    return re.sub(r"([*?\[])", r"[\1]", s)
+
+
+# --------------------------------------------------------------------------
 # lint
 
 AUDIO_REQUIRED = ("artist", "album", "title", "track")
@@ -1174,7 +1291,7 @@ def main(argv=None):
     s.add_argument("--force", action="store_true",
                    help="rewrite the table from scratch (default: keep its rows, add new files)")
     s.set_defaults(fn=cmd_draft)
-    s = sub.add_parser("group", help="move a flat folder of audio into one folder per album (then rescans)")
+    s = sub.add_parser("group", help="move audio into one folder per album, by its tags (then rescans)")
     s.add_argument("staging")
     s.set_defaults(fn=cmd_group)
     s = sub.add_parser("review", help="export the rows a person must decide; import their answers")
@@ -1194,6 +1311,9 @@ def main(argv=None):
     s.add_argument("paths", nargs="+")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(fn=cmd_tag)
+    s = sub.add_parser("close", help="remove a filed batch's records (audio: once `beet stage-audit` passes)")
+    s.add_argument("staging")
+    s.set_defaults(fn=cmd_close)
     s = sub.add_parser("lint", help="audit layout and metadata of the library")
     s.add_argument("dirs", nargs="*", help="limit to these directories")
     s.add_argument("--fix", action="store_true", help="write standard metadata where it differs (not audio)")

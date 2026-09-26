@@ -69,10 +69,15 @@ agent or person per batch.
    - Do not rely on a file's old folder or name when its contents say
      otherwise.
    Music is not classified by hand. On desk:
-   `media-stage group /srv/media/staging/<batch>` (one folder per album), then
-   `beet stage-review /srv/media/staging/<batch>`. It imports every album with a
-   strong MusicBrainz match, with no prompts, and writes the rest, with their
-   candidates, to `<batch>.review.json`.
+   `media-stage group /srv/media/staging/<batch>` (one folder per album, by
+   the files' own tags), then `beet stage-review /srv/media/staging/<batch>`.
+   It imports an album only when its MusicBrainz match is strong and nothing
+   argues against it: no file is the same recording as a track already filed
+   (fingerprints), no album of that name is filed, `group` didn't merge it,
+   and no file's name disagrees with its tags. The rest go, with their
+   evidence and candidates, to `<batch>.review.json`. Never run `beet import`
+   on a batch yourself: it skips these checks and doesn't record where each
+   file came from.
 5. **Check**: `media-stage check <staging>/<batch>`, and fix the table until it
    reports 0 errors. Rows that are still guesses stay flagged in their note
    (`check`, `guess`, `likely`) or below `high`, so that step 6 asks about them.
@@ -98,17 +103,34 @@ agent or person per batch.
      is. A chosen release takes only the files that match its tracks, and an
      album already filed under the same name is not filed twice. Whatever is
      left (a suite's extra movements, a second copy) goes round again: `beet
-     stage-review --batch <batch>-2 …`, a new tab on the page, where each
+     stage-review --batch <batch>-2 …` (answers to the same `<batch>.answers`
+     folder), a new tab on the page, where each
      leftover offers "add these files to the album already filed", replace
      it, keep both, or leave in staging.
-8. **Apply**, on desk: `media-stage apply /srv/media/staging/<batch>`
+8. **Audit music**, on desk, once nothing more of the batch is to be
+   imported: `beet stage-audit /srv/media/staging/<batch>`. It compares each
+   filed track with its original in the manifest: a length that doesn't fit
+   its slot on the release, or a title that now names another number
+   ("No. 3" filed as "No. 5"). Flags go to `<batch>.audit.review.json`: load
+   it as review doc `<batch>-audit`, and after the user's answers (same
+   `answers` query, `batch == <batch>-audit`, same `out_dir`) run
+   `beet stage-audit --answers /srv/media/staging/<batch>.answers
+   /srv/media/staging/<batch>`, which re-slots or retitles and audits again.
+   Don't fix a flagged track any other way. Skip this step for a batch with
+   no music.
+9. **Apply**, on desk: `media-stage apply /srv/media/staging/<batch>`
    (from the Mac: `ssh desk media-stage apply /srv/media/staging/<batch>`).
    It re-checks, moves, writes standard metadata and logs to
    `<batch>.applied.jsonl`. It can be rerun.
-9. **Lint and close**: `media-stage lint`. Mark the review filed with
-   `ArtifactData` `update` on `reviews/<batch>`: `{"closed": "<date>"}`. Report
-   what is filed, what is left in staging and why, and ask what to do with the
-   leftovers and with the source.
+10. **Lint and close**: `media-stage lint`. Mark the review filed with
+   `ArtifactData` `update` on `reviews/<batch>` (and `<batch>-audit`):
+   `{"closed": "<date>"}`. Report what is filed, what is left in staging and
+   why, and ask what to do with the leftovers and with the source. When the
+   user has settled the leftovers: `media-stage close
+   /srv/media/staging/<batch>`, which removes the batch's records. It refuses
+   while files remain or before a music batch's audit has passed. Never
+   delete `<batch>.manifest.jsonl` or the review files by hand: the manifest
+   is the only record of what each file was before beets renamed it.
 
 ## Rules
 

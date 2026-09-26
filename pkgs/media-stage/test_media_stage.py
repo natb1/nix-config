@@ -9,6 +9,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -16,6 +17,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 import media_stage as ms
+
+sys.path.insert(0, str(Path(__file__).parent / "beetsplug"))
+import stagecheck as sc  # noqa: E402
 
 
 def run_cli(*args):
@@ -224,6 +228,124 @@ class Helpers(unittest.TestCase):
         self.assertEqual(ms.ep_code(1, 2), "S01E02")
         self.assertEqual(ms.ep_code(1, [2, 3]), "S01E02-E03")
 
+
+class Group(unittest.TestCase):
+    """group: albums by the files' own tags, wherever they sit."""
+
+    def test_discs_merged_by_tags_and_logged(self):
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "audio"
+            for sub in ("Ballads CD1", "Ballads CD2", "Other CD1"):
+                (st / sub).mkdir(parents=True)
+            make_mp3(st / "Ballads CD1" / "01 Rain.mp3", album="Ballads (Disc 1)", title="Rain", track="1")
+            make_mp3(st / "Ballads CD2" / "01 Snow.mp3", album="Ballads (Disc 2)", title="Snow", track="1")
+            # Named like the next disc of Ballads, tagged as its own album:
+            # beets would have joined it to Ballads by the folder name.
+            make_mp3(st / "Other CD1" / "01 Wind.mp3", album="Other", title="Wind", track="1")
+            self.assertEqual(run_cli("scan", str(st), "--library", d)[0], 0)
+            code, out = run_cli("group", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(sorted(p.relative_to(st).as_posix() for p in st.rglob("*.mp3")), [
+                "Ballads/1-01 Rain.mp3", "Ballads/2-01 Snow.mp3", "Other/01 Wind.mp3"])
+            self.assertEqual(sorted(p.name for p in st.iterdir()), ["Ballads", "Other"])  # emptied folders gone
+            log = json.loads((Path(d) / "staging" / "audio.group.json").read_text())
+            self.assertEqual(log, {"Ballads": {"from": ["Ballads CD1", "Ballads CD2"], "discs": [1, 2]}})
+            self.assertIn("1 made from more than one folder", out)
+
+    def test_same_album_name_other_artist(self):
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "audio"
+            st.mkdir(parents=True)
+            make_mp3(st / "a.mp3", album="Greatest Hits", album_artist="Queen", title="A", track="1")
+            make_mp3(st / "b.mp3", album="Greatest Hits", album_artist="ABBA", title="B", track="1")
+            run_cli("scan", str(st), "--library", d)
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)
+            self.assertEqual(sorted(p.relative_to(st).as_posix() for p in st.rglob("*.mp3")), [
+                "Greatest Hits (Queen)/a.mp3", "Greatest Hits/b.mp3"])
+
+    def test_split_disc(self):
+        self.assertEqual(ms.split_disc("Ballads CD2"), ("Ballads", 2))
+        self.assertEqual(ms.split_disc("Ballads (Disc 1)"), ("Ballads", 1))
+        self.assertEqual(ms.split_disc("CD2"), ("", 2))
+        self.assertEqual(ms.split_disc("Discovery 2"), ("Discovery 2", None))
+
+
+class Close(unittest.TestCase):
+    def test_audio_batch_waits_for_the_audit(self):
+        with tempfile.TemporaryDirectory() as d:
+            staging = Path(d) / "staging"
+            st = staging / "audio"
+            st.mkdir(parents=True)
+            make_mp3(st / "a.mp3", album="X", title="A", track="1")
+            run_cli("scan", str(st), "--library", d)
+            (staging / "audio.review.json").write_text("{}")
+            (staging / "audio.applied.jsonl").write_text("")
+            (staging / "audio-2.tsv").write_text("another batch\n")
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertNotEqual(code, 0)
+            self.assertIn("not audited", out)
+            (staging / "audio.audit.json").write_text(json.dumps({"passed": "2026-09-25"}))
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertNotEqual(code, 0)
+            self.assertIn("a.mp3", out)  # still in staging
+            (st / "a.mp3").unlink()
+            (st / ".DS_Store").write_text("")
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(sorted(p.name for p in staging.iterdir()), ["audio-2.tsv", "audio.applied.jsonl"])
+
+    def test_hidden_folder_blocks(self):
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "print"
+            (st / ".originals").mkdir(parents=True)
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertNotEqual(code, 0)
+            self.assertIn(".originals/", out)
+
+
+class Checks(unittest.TestCase):
+    """beetsplug/stagecheck.py: the evidence stage-review and stage-audit use."""
+
+    def test_number_clash(self):
+        self.assertEqual(sc.number_clash("Prelude No. 3 in A minor", "Prelude No. 5 in D major"), "No. 3 ≠ No. 5")
+        self.assertTrue(sc.number_clash("Prelude in C minor, BWV 999", "Prelude, BWV 998"))
+        self.assertTrue(sc.number_clash("Sonatina: II. Andante", "Sonatina: III. Allegro"))
+        self.assertEqual(sc.number_clash("Fandanguillo, Op. 36", "Fandanguillo"), "")  # a dropped number
+        self.assertEqual(sc.number_clash("Preludio n.º 1", "Prelude No. 1 in E minor"), "")
+        self.assertTrue(sc.number_clash("Preludio n.º 1", "Prelude No. 2"))
+        self.assertEqual(sc.number_clash("Sonata in C", "Sonata in A"), "")  # keys aren't movements
+
+    def test_name_conflict(self):
+        self.assertEqual(sc.name_conflict("05 Prelude No. 3.mp3", {"track": "5", "title": "Prelude No. 3"}), "")
+        self.assertIn("track 5 in the name, 1 in the tags",
+                      sc.name_conflict("05 Prelude No. 3.mp3", {"track": "1/12", "title": "Prelude No. 3"}))
+        self.assertIn("No. 3 ≠ No. 5", sc.name_conflict("Bream - Villa-Lobos - 05 Prelude No. 3.mp3",
+                                                        {"track": "5", "title": "Prelude No. 5"}))
+        self.assertIn("in the tags", sc.name_conflict("03 Greensleeves.mp3", {"track": "3", "title": "Fantasia"}))
+        self.assertEqual(sc.name_conflict("track.mp3", {"track": "3", "title": "Fantasia"}), "")
+
+    def test_length_off(self):
+        self.assertEqual(sc.length_off(242, 240), 0)
+        self.assertEqual(sc.length_off(256, 140), 116)
+        self.assertEqual(sc.length_off(610, 596), 0)  # within 3% of a long track
+        self.assertEqual(sc.length_off(0, 140), 0)
+
+    def test_pack_round_trip(self):
+        fp = [0, 1, 0xFFFFFFFF, 123456789]
+        self.assertEqual(sc.unpack(sc.pack(fp)), fp)
+
+    def test_same_recording(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            # Two tunes; the first also encoded again, as another rip would be.
+            for n, e in (("a", "sin(2*PI*(220*pow(2,floor(mod(t*3,7))/12))*t)+0.5*sin(2*PI*110*pow(2,floor(mod(t,5))/7)*t)"),
+                         ("b", "sin(2*PI*(330*pow(2,floor(mod(t*2,5))/12))*t)+0.5*sin(2*PI*165*pow(2,floor(mod(t*1.5,3))/5)*t)")):
+                ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{e}':d=20", str(d / f"{n}.flac"))
+            ffmpeg("-i", str(d / "a.flac"), "-b:a", "96k", str(d / "a.mp3"))
+            a, a2, b = (sc.fingerprint(d / n) for n in ("a.flac", "a.mp3", "b.flac"))
+            self.assertIsNotNone(a)
+            self.assertGreaterEqual(sc.similarity(a, a2), sc.SAME_RECORDING)
+            self.assertLess(sc.similarity(a, b), sc.SAME_RECORDING)
 
 class Pipeline(unittest.TestCase):
     def test_batch(self):

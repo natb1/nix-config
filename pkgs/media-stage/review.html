@@ -381,7 +381,7 @@ input.path { font-family: var(--mono); font-size: 13px; }
       var total = r.items.length;
       var done = r.items.filter(function (it) { return decided(r.batch, it.id); }).length;
       var pct = total ? Math.round(100 * done / total) : 100;
-      var kind = r.source === "beets" ? "albums" : "files";
+      var kind = r.source === "beets" ? "albums" : r.source === "beets-audit" ? "tracks" : "files";
       nav.appendChild(el("button", {
         class: "batch-tab", role: "tab", id: "tab-" + r.batch,
         "aria-selected": String(r.batch === (state.current || (state.reviews[0] || {}).batch)),
@@ -401,7 +401,7 @@ input.path { font-family: var(--mono); font-size: 13px; }
     var dis = state.readOnly || !!b.closed;
     var group = "g-" + id.replace(/[^A-Za-z0-9_-]/g, "_");
 
-    var pill = choice === "skip" ? el("span", { class: "pill skip", text: "Stays in staging" })
+    var pill = choice === "skip" ? el("span", { class: "pill skip", text: it.skip_label || "Stays in staging" })
       : choice ? el("span", { class: "pill done", text: "Decided" })
       : el("span", { class: "pill why", text: it.why || "needs a look" });
 
@@ -470,8 +470,8 @@ input.path { font-family: var(--mono); font-size: 13px; }
     fs.appendChild(el("label", { class: "choice" }, [
       el("input", { type: "radio", name: group, id: group + "-skip", checked: choice === "skip", disabled: dis,
         onchange: function () { choose(b, it, "skip"); } }),
-      el("span", null, [el("div", { class: "label", text: "Leave it in staging" }),
-        el("div", { class: "detail", text: "Not filed now. It stays in staging/" + b.batch + " for later." })])
+      el("span", null, [el("div", { class: "label", text: it.skip_label || "Leave it in staging" }),
+        el("div", { class: "detail", text: it.skip_detail || "Not filed now. It stays in staging/" + b.batch + " for later." })])
     ]));
 
     var foot = el("div", { class: "item-foot" }, [

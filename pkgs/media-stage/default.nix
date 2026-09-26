@@ -7,7 +7,7 @@
 # the same on both hosts without anything else installed. The tests run in the
 # build: a broken layout rule fails `nix flake check`, not a batch.
 
-{ lib, python3Packages, ffmpeg-headless, poppler-utils, exiftool, mkvtoolnix-cli }:
+{ lib, python3Packages, ffmpeg-headless, poppler-utils, exiftool, mkvtoolnix-cli, chromaprint }:
 
 let
   tools = [ ffmpeg-headless poppler-utils exiftool mkvtoolnix-cli ];
@@ -29,7 +29,9 @@ python3Packages.buildPythonApplication {
   makeWrapperArgs = [ "--prefix" "PATH" ":" (lib.makeBinPath tools) ];
 
   doCheck = true;
-  nativeCheckInputs = tools;
+  # fpcalc for beetsplug/stagecheck.py, which runs inside beets (whose
+  # chroma plugin brings it); tested here with the rest.
+  nativeCheckInputs = tools ++ [ chromaprint ];
   checkPhase = ''
     runHook preCheck
     python -m unittest -v test_media_stage

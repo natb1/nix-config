@@ -31,14 +31,17 @@ metadata. Music is imported by `beet` instead.
 2. `ssh desk media-stage scan --hash /srv/media/staging/<batch>`
 3. `ssh desk media-stage draft /srv/media/staging/<batch>`
    Music instead: `media-stage group`, then `beet stage-review`, which files
-   every album MusicBrainz is sure of.
+   every album MusicBrainz is sure of and that isn't already in the library,
+   and afterwards `beet stage-audit`, which checks each filed track against
+   the original file.
 4. Fill in and correct `media-staging/<batch>.tsv`. Its `new` column is the
    path in the library; use `skip` to leave a file in staging.
 5. `ssh desk media-stage check /srv/media/staging/<batch>`
 6. What isn't certain goes to the Media Filing Review page (Claude publishes
    it), and waits there for a person to decide.
 7. `ssh desk media-stage apply /srv/media/staging/<batch>`
-8. `media-stage lint`
+8. `media-stage lint`, then `media-stage close /srv/media/staging/<batch>`
+   once nothing is left in staging.
 
 Claude Code on desk and the Mac has this as its `media-share` skill, and runs
 every step except the decisions on the review page.

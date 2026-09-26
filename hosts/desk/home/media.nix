@@ -43,7 +43,10 @@
       # chroma: AcoustID fingerprints, for files with no usable tags.
       # duplicates, info: the checks before and after an import.
       # stagereview: `beet stage-review`, the import without prompts that
-      # media-stage batches use (pkgs/media-stage/beetsplug/stagereview.py).
+      # media-stage batches use, and `beet stage-audit`, its check afterwards
+      # (pkgs/media-stage/beetsplug/stagereview.py). Its duplicate check runs
+      # chroma's fpcalc, and keeps each library track's fingerprint in the
+      # beets field `stage_fp`.
       plugins = [ "musicbrainz" "chroma" "duplicates" "info" "inline" "stagereview" ];
       pluginpath = [ "${../../../pkgs/media-stage/beetsplug}" ];
     };
