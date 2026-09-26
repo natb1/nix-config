@@ -7,6 +7,8 @@
 //   qs -c desk ipc call panel toggle      Mod+Shift+N (niri.kdl)
 //   qs -c desk ipc call notifications dnd
 //   qs -c desk ipc call notifications clear
+//   qs -c desk ipc call picker open ROWS FIFO PROMPT   Picker.qml
+//   qs -c desk ipc call picker reload MESG
 //
 // docs/desktop-migration.md, "The desktop session", is the design.
 
@@ -23,6 +25,10 @@ ShellRoot {
 
     Popups {
         panelOpen: panel.open
+    }
+
+    Picker {
+        id: picker
     }
 
     IpcHandler {
@@ -47,6 +53,17 @@ ShellRoot {
         }
         function clear(): void {
             Notifs.clearAll();
+        }
+    }
+
+    IpcHandler {
+        target: "picker"
+
+        function open(rows: string, out: string, prompt: string): void {
+            picker.show(rows, out, prompt);
+        }
+        function reload(mesg: string): void {
+            picker.reload(mesg);
         }
     }
 }
