@@ -169,6 +169,10 @@ media-fetch status | cancel <id|batch>
    "the remote size of … does not match expected size" means the source's
    files have changed since the search: a retry can't succeed, so `cancel`
    the job and pick another candidate (search again if none is left).
+   "not asked, the source is busy: …" means the source refused one file
+   as busy ("try again later", "overwhelmed", "too many files") and
+   media-fetch asked it for nothing more. Don't retry it: `cancel` the job
+   and pick a candidate from another source.
 3. **File**: once `wait` reports every job `delivered`, follow the procedure
    from step 2 on `/srv/media/staging/<batch>`. Several candidates can go
    into one batch; `get` refuses a batch that is already scanned.

@@ -101,7 +101,9 @@ class Backend:
     def progress(self, job):
         """{file name: {"state": one of STATES, "bytes": transferred}}, plus
         "reason" (why, in a few words) on a failed file and "speed" (bytes/s)
-        on a downloading one."""
+        on a downloading one. "busy": True on a file the source refused
+        because it takes no more requests for now: the job asks it for
+        nothing more."""
         raise NotImplementedError
 
     def locate(self, job, file):
@@ -117,6 +119,11 @@ class Backend:
 
 # --------------------------------------------------------------------------
 # slskd (hosts/desk/soulseek.nix). API: /api/v0, X-API-Key header.
+
+
+# A peer's refusals that mean "not now", not "not this file": its upload
+# queue is full, or its client limits how much one user may queue.
+BUSY = re.compile(r"try again later|overwhelmed|too many (files|megabytes)", re.I)
 
 
 class Slskd(Backend):
@@ -257,6 +264,8 @@ class Slskd(Backend):
             elif st.startswith("Completed"):
                 p["state"] = "failed"
                 p["reason"] = self._reason(st, t.get("exception"))
+                if st == "Completed, Rejected" and BUSY.search(t.get("exception") or ""):
+                    p["busy"] = True
             elif st == "InProgress":
                 p["state"] = "downloading"
                 p["speed"] = t.get("averageSpeed") or 0
@@ -431,6 +440,18 @@ def _submit(be, raise_for):
         held = set(j.get("pending", [])) | set(j.get("refused", {}))
         busy[be.source_key(j)] += sum(p["state"] in ("queued", "downloading")
                                       for n, p in raw[j["id"]].items() if n not in held)
+    # A source that refused as busy is asked for nothing more of that job:
+    # its other files fail unasked, so the job ends and another source can
+    # be picked, instead of each file being refused in turn.
+    for j in jobs:
+        held = set(j.get("pending", [])) | set(j.get("refused", {}))
+        busy_why = next((p["reason"] for n, p in raw[j["id"]].items()
+                         if p.get("busy") and n not in held), None)
+        if busy_why and j.get("pending"):
+            j.setdefault("refused", {}).update(
+                {n: f"not asked, the source is busy: {busy_why}" for n in j["pending"]})
+            j["pending"] = []
+            save_job(j)
     limit = per_source()
     for j in jobs:
         key = be.source_key(j)

@@ -28,6 +28,7 @@ class FakeSlskd:
         self.transfers = {}      # user -> [transfer]
         self.offline = set()
         self.fail = set()        # remote filenames that fail when downloaded
+        self.busy = set()        # remote filenames refused: "try again later"
         self.hold = False        # leave transfers queued
         self.lag = 0             # status polls before responses are saved
         self.searches = {}
@@ -111,6 +112,10 @@ class FakeSlskd:
             return
         for t in ts:
             if t["state"] != "Queued, Remotely":
+                continue
+            if t["filename"] in self.busy:
+                t["state"] = "Completed, Rejected"
+                t["exception"] = "Transfer rejected: Overwhelmed with requests; try again later."
                 continue
             if t["filename"] in self.fail:
                 self.fail.discard(t["filename"])  # a retry succeeds
@@ -318,6 +323,26 @@ class MediaFetchTest(unittest.TestCase):
         self.assertIn("failed: 02.flac (the source is offline", out)
         self.fake.offline.discard("peer")
         self.assertIn("retrying 1", self.cli("get", cid)[1])
+        code, out = self.cli("wait", cid, "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 0, out)
+
+    def test_busy_source_is_asked_for_nothing_more(self):
+        self.fake.responses = [response("peer", "M\\A", ["01", "02", "03"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.fake.busy.add("M\\A\\01.flac")
+        self.cli("get", cid, "--batch", "b")
+        code, out = self.cli("wait", cid, "--timeout", "5", "--interval", "0", "--json")
+        self.assertEqual(code, 1)
+        [s] = json.loads(out)
+        self.assertEqual(s["state"], "failed")
+        busy = "Transfer rejected: Overwhelmed with requests; try again later."
+        self.assertEqual(s["failures"], {"01.flac": busy,
+                                         "02.flac": f"not asked, the source is busy: {busy}",
+                                         "03.flac": f"not asked, the source is busy: {busy}"})
+        self.assertEqual(len(self.fake.transfers["peer"]), 1)  # one request, one refusal
+        # Later, a retry asks again, from the first file.
+        self.fake.busy.clear()
+        self.assertIn("retrying 3", self.cli("get", cid)[1])
         code, out = self.cli("wait", cid, "--timeout", "5", "--interval", "0")
         self.assertEqual(code, 0, out)
 
