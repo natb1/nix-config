@@ -149,7 +149,7 @@ input.path { font-family: var(--mono); font-size: 13px; }
   // Shown until the store answers, and wherever the page runs without it.
   var SAMPLE = [{
     batch: "example", kind: "table", source: "media-stage", created: "",
-    layout: ["rpg/<game>/<title>[ (<variant>)].<ext>", "books/<author>/<title>.<ext>"],
+    layout: ["rpg/<game>/<title>[ (<variant>)].<ext>", "books/<author>/<series or title>/<title>[ (<variant>)].<ext>", "books/<author>/<series>/<series> Vol. <N>[ - <title>].<ext>"],
     items: [{
       id: "sample1", key: "Arcana.pdf", kind: "pdf", title: "Arcana.pdf", subtitle: "pdf",
       why: "flagged in the note", note: "check: named from the first page",
