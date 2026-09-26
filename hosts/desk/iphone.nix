@@ -47,18 +47,32 @@ let
       down=0
       alert=""
       while true; do
-        status=$(timeout 30 tether --bt-connection 2>/dev/null || true)
-        if grep -q '^BR/EDR: *yes' <<<"$status" &&
-          grep -q '^Notifications: *no' <<<"$status"; then
+        # `tether` spawns a tetherd of its own when none is running. Doing that
+        # while tetherd.service restarts (a switch, 2026-09-25) left a stray
+        # daemon holding the lock and the unit dead at its start limit, so ask
+        # only while the unit is up — and count a dead unit as down too.
+        if systemctl --user is-active --quiet tetherd.service; then
+          status=$(timeout 30 tether --bt-connection 2>/dev/null || true)
+          stuck=$(grep -q '^BR/EDR: *yes' <<<"$status" &&
+            grep -q '^Notifications: *no' <<<"$status" && echo yes || true)
+          body="Texts still arrive; other notifications do not. Turn Bluetooth off and on in the iPhone's Settings."
+        else
+          status=""
+          stuck=yes
+          body="tetherd is not running: systemctl --user restart tetherd"
+        fi
+        if [ -n "$stuck" ]; then
           down=$((down + 1))
         else
           down=0
         fi
+        # Critical, so swaync keeps it on screen until dismissed: a normal
+        # pop-up times out, and the 2026-09-25 outage went unseen for 16 h.
         if [ "$down" -ge 5 ] && [ -z "$alert" ]; then
-          alert=$(notify-send -p -a Tether -i phone "iPhone notifications are stuck" \
-            "Texts still arrive; other notifications do not. Turn Bluetooth off and on in the iPhone's Settings.")
+          alert=$(notify-send -p -u critical -a Tether -i phone \
+            "iPhone notifications are stuck" "$body")
         fi
-        if [ -n "$alert" ] && grep -q '^Notifications: *yes' <<<"$status"; then
+        if [ -n "$alert" ] && [ "$down" -eq 0 ]; then
           busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
             org.freedesktop.Notifications CloseNotification u "$alert" || true
           alert=""
@@ -128,7 +142,14 @@ in
     # switch it lost that race by a second (2026-09-24), so wait for the name.
     # After 60 s it starts anyway — without Bluetooth, and it says so in its
     # log — rather than not at all.
+    #
+    # The empty entry drops upstream's `-/usr/bin/pkill -f ^tetherd`, which
+    # is not a path on NixOS, so a client-spawned tetherd was never taken
+    # over and this unit exited "already running" until its start limit
+    # (2026-09-25). The pkill comes after the wait, the last moment before
+    # tetherd starts.
     serviceConfig.ExecStartPre = [
+      ""
       (pkgs.writeShellScript "tetherd-wait-for-bluez" ''
         for _ in $(${pkgs.coreutils}/bin/seq 60); do
           ${pkgs.systemd}/bin/busctl --system status org.bluez >/dev/null 2>&1 && exit 0
@@ -136,6 +157,7 @@ in
         done
         echo "org.bluez is not on the system bus after 60 s; starting without it" >&2
       '')
+      "-${pkgs.procps}/bin/pkill -f ^tetherd"
     ];
   };
 

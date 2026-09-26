@@ -165,6 +165,11 @@
   services.restic.backups.media = {
     initialize = true;
     paths = [ "/srv/media" ];
+    # Staging is a way station: what matters there is filed into the library,
+    # which is backed up. And media-stage moving a file mid-run makes restic
+    # exit 3 (snapshot saved, a file unreadable), a failure to systemd — the
+    # 2026-09-26 false alarm.
+    exclude = [ "/srv/media/staging" ];
     repository = "rclone:";
     passwordFile = "/etc/restic/media.password";
     extraOptions = [
@@ -195,14 +200,21 @@
     unitConfig.OnFailure = "restic-backups-media-failed.service";
   };
 
-  # The alert until the plan's ntfy exists (<FILL_ME_notify_unit>), as in
-  # icloud.nix — but this is a system unit, so it has to reach into n8's
-  # session bus. If nobody is logged in, the alert is lost; that is the gap
-  # the retirement gate's alerting item closes.
+  # The alert: an email with the failed run's log (mail.nix), then a desktop
+  # pop-up. This is a system unit, so the pop-up has to reach into n8's
+  # session bus, and fails if nobody is logged in — hence mail first.
   systemd.services.restic-backups-media-failed = {
     description = "Alert: restic-backups-media failed";
     serviceConfig.Type = "oneshot";
     script = ''
+      {
+        echo 'To: nathan@natb1.com'
+        echo 'Subject: desk: media backup failed'
+        echo
+        # -I: the latest invocation, i.e. the run that failed.
+        ${pkgs.systemd}/bin/journalctl -u restic-backups-media -I -n 100 --no-pager
+      } | ${pkgs.msmtp}/bin/msmtp -t
+
       uid=$(${pkgs.coreutils}/bin/id -u n8)
       ${pkgs.util-linux}/bin/runuser -u n8 -- \
         ${pkgs.coreutils}/bin/env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \

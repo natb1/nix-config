@@ -348,6 +348,11 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   replaced by generating a new one and swapping the line on the box; a lost
   password cannot be replaced. See `docs/desktop-migration.md`, "Before any
   original is retired", for where the off-machine copies go.
+- `desk`'s outgoing mail password, `/etc/msmtp/gmail-app-password` (root,
+  0600), for `hosts/desk/mail.nix`: a Google app password for
+  `nathan@natb1.com` (myaccount.google.com → Security → App passwords), no
+  trailing newline needed. Without it, backup-failure emails are not sent.
+  Check: `printf 'Subject: test\n\nhi\n' | sudo msmtp nathan@natb1.com`.
 - `desk`'s Soulseek login, `/etc/slskd/credentials` (root, 0600): the
   Soulseek account and the slskd web UI's login (`hosts/desk/soulseek.nix`).
   The API key beside it, `/etc/slskd/api.env`, is generated on first start.
