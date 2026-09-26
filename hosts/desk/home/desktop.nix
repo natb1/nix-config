@@ -74,7 +74,7 @@
     # The wallpaper is NixOS's own, cropped to fill the ultrawide.
     Service.Environment = [
       "QS_ICON_THEME=Adwaita"
-      "DESK_WALLPAPER=${pkgs.nixos-artwork.wallpapers.nineish-dark-gray.gnomeFilePath}"
+      "DESK_WALLPAPER=${pkgs.nixos-artwork.wallpapers.waterfall.gnomeFilePath}"
     ];
   };
   home.packages = [ pkgs.adwaita-icon-theme ];
