@@ -35,6 +35,12 @@ def run_cli(*args):
     return code, out.getvalue()
 
 
+def case_sensitive_tmp():
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, "a").touch()
+        return not Path(d, "A").exists()
+
+
 def make_pdf(path, title=None):
     """A one-page PDF with correct xref offsets, so every tool accepts it."""
     info = f"<< /Title ({title}) >>" if title else "<< >>"
@@ -512,6 +518,7 @@ class Concurrency(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("only in case", out)
 
+    @unittest.skipUnless(case_sensitive_tmp(), "case-insensitive filesystem (macOS default)")
     def test_lint_reports_case_siblings(self):
         with tempfile.TemporaryDirectory() as d:
             lib = Path(d)
