@@ -276,6 +276,21 @@ class Helpers(unittest.TestCase):
         self.assertEqual(ms.norm_title("Aguirre, the Wrath of God"), ms.norm_title("Aguirre The Wrath Of God"))
         self.assertEqual(ms.norm_title("Big Sick, The"), ms.norm_title("The Big Sick"))
 
+    def test_year_from_embedded_title_or_folder(self):
+        rec = {"path": "The Dark Crystal (1982)/The Dark Crystal - Bluray-1080p.mkv",
+               "guess": ms.guess("The Dark Crystal - Bluray-1080p.mkv"),
+               "meta": {"tags": {"title": "The Dark Crystal (1982) RM4K"}}}
+        t = ms.video_target(rec)
+        self.assertEqual(t["stem"], "movies/The Dark Crystal (1982)/The Dark Crystal (1982)")
+        self.assertIn("year from embedded title", t["note"])
+        rec["meta"] = {}
+        t = ms.video_target(rec)
+        self.assertEqual(t["stem"], "movies/The Dark Crystal (1982)/The Dark Crystal (1982)")
+        self.assertIn("year from folder", t["note"])
+        # A folder that names another film says nothing about this one.
+        rec["path"] = "Labyrinth (1986)/The Dark Crystal - Bluray-1080p.mkv"
+        self.assertIsNone(ms.video_target(rec)["stem"])
+
     def test_ep_code(self):
         self.assertEqual(ms.ep_code(1, 2), "S01E02")
         self.assertEqual(ms.ep_code(1, [2, 3]), "S01E02-E03")

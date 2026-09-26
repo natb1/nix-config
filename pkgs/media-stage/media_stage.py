@@ -800,6 +800,20 @@ def id_suffix(tmdb):
     return f" {{tmdb-{tmdb}}}" if tmdb else ""
 
 
+def year_elsewhere(rec, title):
+    """(year, note) from the file's embedded title or a folder above it — a
+    download named "Film - Bluray-1080p.mkv" in "Film (1982)/" — when that
+    names the same title; else (None, None). Nearest folder first."""
+    tagged = ((rec.get("meta") or {}).get("tags") or {}).get("title")
+    for src, s in [("embedded title", tagged)] + [("folder", d) for d in reversed(Path(rec["path"]).parent.parts)]:
+        if not s:
+            continue
+        g = guess(s)
+        if g.get("year") and norm_title(g.get("title")) == norm_title(title):
+            return g["year"], f"year from {src} {s!r}"
+    return None, None
+
+
 def video_target(rec, lookup=None):
     """{'stem', 'conf', 'note', 'group', 'orig_lang'} — `stem` is the target
     without extension, relative to the library, or None when no rule decides.
@@ -823,6 +837,10 @@ def video_target(rec, lookup=None):
     if not title or not kind:
         return {"stem": None, "conf": "", "note": "not a recognisable movie/episode name"}
     year, conf, notes = g.get("year"), "medium", ["from file name (guessit)"]
+    if not year:
+        year, why = year_elsewhere(rec, title)
+        if why:
+            notes.append(why)
     m = TMDB_IN_PATH.search(rec["path"])
     tmdb = m.group(1) if m else None
     orig_lang = None
