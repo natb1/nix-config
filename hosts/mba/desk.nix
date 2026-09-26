@@ -42,7 +42,12 @@ in
   # (hosts/desk/music.nix), as on desk, so both share playlists and
   # favourites. Server http://desk:4533 over Tailscale. home-manager links it
   # into ~/Applications/Home Manager Apps.
-  home-manager.users.n8.home.packages = [ pkgs.feishin ];
+  #
+  # Jellyfin Desktop, the video player: a client of desk's Jellyfin
+  # (hosts/desk/jellyfin.nix), server http://desk:8096. It plays through mpv,
+  # so most files direct-play and desk's iGPU only transcodes what mpv cannot
+  # take. Linked beside Feishin.
+  home-manager.users.n8.home.packages = [ pkgs.feishin pkgs.jellyfin-desktop ];
 
   # smb://desk/media (the library, read-only from here) and
   # smb://desk/media-staging (where batches arrive), mounted at login and
