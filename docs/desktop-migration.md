@@ -3770,12 +3770,23 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       *Nocturnal*, 23 in *Together*'s *Dolly: Berceuse*, 134 in *Julian Bream
       plays Bach (2000)*'s *Gigue*. They match the Drive originals, so the
       damage is at the source; replace from a better copy if one exists
-- [ ] Audit round 1's low-confidence matches: 19 pairs of tracks on
-      different albums are the same recording. Most are genuine reissues
-      (*Rêverie* on *Live* and *Together Again*), but some pairs disagree on
-      the title (Villa-Lobos *Prelude no. 5* = *Spanish Guitar Music (2001)*'s
-      *Sonatina: II. Allegro*; *Plays Bach (1985)*'s *Prelude* = *Lute Suites
-      (1966)*'s *Suite No. 2: Gigue*), so one side of each is mislabelled
+- [x] Audit every album — *2026-09-25. Two checks per track: its own
+      duration against the MusicBrainz length of the slot it is filed in
+      (beets' stored `length` is the release's, once a match is applied — it
+      cannot be used), and the title its original carried, found by
+      fingerprint in a re-download of the Drive. Fixed: two albums filed as
+      the wrong release altogether — now *Villa-Lobos / Torroba* (Westminster
+      XWN 18137, 1956; two recordings of Torroba's Sonatina) and *A Bach
+      Recital for the Guitar* (1956), neither on MusicBrainz, titled from the
+      originals; wrong titles in *The Art of Julian Bream*, *Julian Bream
+      plays Villa Lobos (1982)*, *Live* (Fauré's *Dolly* as six movements),
+      *Lute Suites nos. 1 and 2*, *La guitarra romántica*; *Together Again*'s
+      Partita/Pavan/Gigue and two Barrios waltzes re-slotted by length
+      (error 63 s → 2 s); *The Golden Age of English Lute Music (1961)*
+      merged into *Edition Vol. 1*, now its 24 tracks (the originals' file
+      names were wrong on the Drive; their embedded tags were right).
+      Remaining differences are spelling, translation or a split track.
+      Lint clean, 694 tracks*
 - [ ] Library read-only from the Mac: after both switches, `/Volumes/media`
       and `/Volumes/media-staging` mount; `touch /Volumes/media/x` fails;
       `README.md` is on both; a fresh `claude` on the Mac asked to "put this
