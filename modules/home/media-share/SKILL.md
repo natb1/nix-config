@@ -85,6 +85,8 @@ agent or person per batch.
    - Tables: `media-stage review export <staging>/<batch>` writes
      `<batch>.review.json` with every row that is blank, `skip`, below `high`,
      or flagged in its note. Audio: `beet stage-review` already wrote it.
+   - Nothing to review (its `items` is empty): don't load the page. Go
+     straight on to step 8 (music) or step 9, without asking.
    - Find the page: `Artifact` `list`, title **Media Filing Review**.
    - Load the batch: `ArtifactData` `set`, collection `reviews`, doc id
      `<batch>`, `file_path` the review JSON. Replace an older version of the
@@ -118,7 +120,9 @@ agent or person per batch.
    /srv/media/staging/<batch>`, which re-slots or retitles and audits again.
    Don't fix a flagged track any other way. Skip this step for a batch with
    no music.
-9. **Apply**, on desk: `media-stage apply /srv/media/staging/<batch>`
+9. **Apply**, without asking, once nothing is left for the user to review:
+   step 6 found nothing, or their answers are imported and `check` reports
+   0 errors. On desk: `media-stage apply /srv/media/staging/<batch>`
    (from the Mac: `ssh desk media-stage apply /srv/media/staging/<batch>`).
    It re-checks, moves, writes standard metadata and logs to
    `<batch>.applied.jsonl`. It can be rerun.

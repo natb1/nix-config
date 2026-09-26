@@ -64,8 +64,9 @@ already scanned.
    tell them what you switched.
 5. **File.** Once every job is `delivered`, file the batch with the
    **media-share** skill, from its step 2 (Scan) on
-   `/srv/media/staging/<batch>`: the files are already staged. That runs
-   to the review page and stops for the user's answers, as it always does.
+   `/srv/media/staging/<batch>`: the files are already staged. It stops at
+   the review page for the user's answers when anything needs them, and
+   otherwise files the batch without asking.
 
 ## Rules
 
