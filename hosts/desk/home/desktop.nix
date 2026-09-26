@@ -6,6 +6,14 @@
 
 { pkgs, lib, ... }:
 
+let
+  # Built on desk, not in the store (see ./knights-wallpaper.nix). The file
+  # name carries the script's store hash, so a changed recipe builds afresh.
+  knightsWallpaper = pkgs.callPackage ./knights-wallpaper.nix { };
+  wallpaper = "%h/.cache/desk/wallpaper-${
+    builtins.substring 11 8 (builtins.unsafeDiscardStringContext "${knightsWallpaper}")
+  }.png";
+in
 {
   # Start niri from the login shell on tty1 only. SSH logins and tty2 get a
   # plain shell, which is what makes a broken session recoverable: niri
@@ -67,15 +75,13 @@
     # Icons named by notifications and tray items (notify-send -i phone)
     # come from a theme, and desk had only hicolor, so most had no icon.
     #
-    # The wallpaper is Alec Sorensen's observatory dome for Electric
-    # Bastionland, from his Behance project (all rights reserved, personal
-    # use), cropped to fill the ultrawide.
+    # The wallpaper is five Mythic Bastionland knights, built before the
+    # shell starts. `-`: if it cannot be built (the share is missing), the
+    # shell still starts, on a plain background.
+    Service.ExecStartPre = "-${lib.getExe knightsWallpaper} ${wallpaper}";
     Service.Environment = [
       "QS_ICON_THEME=Adwaita"
-      "DESK_WALLPAPER=${pkgs.fetchurl {
-        url = "https://mir-s3-cdn-cf.behance.net/project_modules/source/79981094254161.5e7a404e28363.png";
-        hash = "sha256-nYHb99OY6pO1TA6pgRM5qraIqpxZ/702+RBTXyVY8xY=";
-      }}"
+      "DESK_WALLPAPER=${wallpaper}"
     ];
   };
   home.packages = [ pkgs.adwaita-icon-theme ];
