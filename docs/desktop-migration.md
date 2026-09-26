@@ -756,12 +756,24 @@ two changes later cannot be attributed.
    Down Enable**, *after* the timings are final — with MCR on a marginal tune
    can pass training and fail later, so it must not be on while tuning.
    Re-validate: a tune that is stable with MCR off is not proven with it on.
-5. **CPU: PBO + Curve Optimizer**, or nothing. Negative per-core offsets,
-   modest ones (−10 to −20), validated per-core — an all-core load does not
-   test the light-load boost states where Curve Optimizer instability lives.
-   The payoff on a 7600X is lower temperatures and a little clock; the cost of
-   getting it wrong is a compile that segfaults once a week. If the per-core
-   test is too tedious, skip it: stock is a perfectly good answer here.
+5. **CPU: Curve Optimizer**, the one CPU lever this machine has.
+   *Revised 2026-09-26 from "or nothing":* the 2026-09-25 load test
+   ([Fan control checklist](#fan-control-checklist)) found the CPU
+   **cooling-limited**: stock holds 4991 MHz all-core at 94–96 W and hits the
+   95 °C ceiling long before its 142 W PPT. Reviews on open coolers see
+   ~5.2 GHz at ~110 W, so the gap to "full performance" is ~4 % in all-core
+   loads and nothing in games. Raising PBO power limits buys nothing here;
+   the chip never reaches them. A negative offset lowers the voltage at each
+   frequency, so the same 95 °C carries more clock: typically +100–150 MHz
+   on a 7600X, which closes most of that 4 %. *AMD Overclocking* →
+   *Precision Boost Overdrive* → *Advanced* → *Curve Optimizer* → *Per Core*,
+   **Negative**, start at −15 on every core, then walk each core down in steps of 5
+   (stop at −30) as CoreCycler passes. PBO limits stay at *Motherboard* or
+   *Auto*; no boost override, no scalar. Validated per-core: an all-core load
+   does not test the light-load boost states where Curve Optimizer
+   instability lives, and the cost of getting it wrong is a compile that
+   segfaults once a week. Independent of memory, so it may run before step 3
+   once XMP has passed.
 6. **Fan curves, re-checked** — the tune changes the heat. The curves
    themselves are set earlier, in [Fan control](#fan-control); here they are
    re-checked against the tuned machine's hot run. On mini-ITX the DIMMs sit
@@ -885,8 +897,12 @@ where.
       time is 15–41 s now, mostly training, which MCR removes. If boots turn
       flaky, it is the first thing to turn off. Changing DIMMs or memory
       settings forces a retrain anyway
-- [ ] Curve Optimizer: optional, skipping is fine; would lower temperatures
-      a little
+- [ ] Curve Optimizer (step 5): per-core negative, −15 start, CoreCycler
+      overnight per step. *Upgraded 2026-09-26 from optional: the CPU is
+      cooling-limited, so this is the only way to more all-core clock.* May
+      come before the timings. Measure with the same `stress-ng --cpu 12
+      --cpu-method matrixprod` run as `hosts/desk/bios.md`'s load test:
+      stock was 4991 MHz, 94.4 W, 95.4 °C
 - [ ] Fast Boot last: straight to *Ultra Fast* when the rest is done (decided
       2026-09-25; no *Enabled* trial). Note `systemd-analyze` before and
       after. If it won't boot at all: clear CMOS, reload the USB profile
@@ -943,7 +959,8 @@ BIOS settings are not declarative, so the record is the declaration:
 - [ ] Timings tightened (or explicitly stopped at the rated profile); VSOC ≤ 1.30 V; validated
 - [ ] Memory Context Restore + Power Down Enable on; re-validated; cold boot
       is fast and warm reboots do not retrain
-- [ ] Curve Optimizer validated per-core (or explicitly skipped)
+- [ ] Curve Optimizer validated per-core; all-core clock re-measured
+      against the 4991 MHz stock baseline
 - [ ] Fan curves re-checked; hot run clean, DIMMs under ~55 °C
 - [ ] Fast Boot Ultra Fast; the power menu's reboot targets (setup, Windows,
       MemTest86+, boot menu) still work
@@ -1064,6 +1081,51 @@ louder curve.
 `hosts/desk/bios.md`, plus Smart Fan 6's own *Save Fan Profile* (F3) to USB,
 since the next firmware update resets them too.
 
+#### The cooler — decided 2026-09-26
+
+The case is a Fractal Terra, the cooler a Noctua NH-L12 Ghost S1 (~66 mm, its
+NF-A12x15 is `fan1`, full speed ~1830 RPM), the GPU an ASRock RX 6600 XT
+Challenger D (`RX6600XT CLD 8GO`, ~269 × 132 × 41 mm). The load test showed
+the cooler, not the curves, is the limit. The options, and why:
+
+- **Keep the NH-L12 Ghost S1.** Terra owners report full boost clocks on
+  low-profile air, but on X3D chips (lower power at the same clock) or with
+  tuning. Nobody documents a Terra holding a 7600X at its 142 W on any
+  cooler. The closest match found (PCPartPicker `tHJfrH`, read 2026-09-26)
+  is this board and this cooler with a 7800X3D and an RTX 3080: 65–79 °C in
+  games, but with Curve Optimizer −12 all-core, an 85 W power limit and an
+  85 °C temperature limit. That is the Curve Optimizer route, not more
+  cooler.
+- **Liquid: rejected.** The Terra takes only a 120 mm radiator, in the
+  bottom fan position, which shortens the GPU limit and takes the bottom
+  2.5" mount the media SSD may need. A 120 mm AIO performs about like a good
+  low-profile air cooler. The 240 mm Terra builds found both need something
+  given up: one (PCPartPicker `LsNPxr`, 8700G, Lumen S24) puts the radiator
+  where the GPU goes, so it has no graphics card, tight tubes and a noisy
+  pump; the other (SFF.Network "Actual liquid Terra!") is a custom loop with
+  a 240 mm radiator in a bolt-on bottom extender.
+- **No bottom intake fan.** Testing of sandwich-layout cases like this one
+  (cited in the `tHJfrH` comments) found a bottom *intake* fan does worse
+  than none; if one is ever added, it exhausts. So the empty bottom position
+  costs nothing, and the second 2.5" mount there is free for storage.
+- **Noctua NH-L12Sx77: rejected for now.** Six heatpipes where the NH-L12S family has
+  four, built for the Terra's 77 mm limit. But at 77 mm the spine leaves the
+  GPU 43 mm, ~2 mm more than this card, which would choke its side-panel
+  intake: CPU cooling bought with GPU cooling, and the GPU's exhaust already
+  heats the DIMMs. Reconsider with a thinner GPU.
+- **Do: PTM7950 pad** in place of the paste, at the next time the case is
+  open (the media SSD install). A few degrees under load, which at the 95 °C
+  ceiling is a few more watts of clock, and it does not pump out or dry up.
+  Needs the cooler off; re-run the load test after.
+- **Do: check the spine position.** It should give the CPU cooler as much
+  room as the GPU can spare without its fans closer than ~10 mm to the side
+  panel.
+- **Open: what `fan3` is.** It spins ~3500 RPM at 40 %, ~7400 RPM at 25 %
+  before the curves, and ignores CPU temperature. It is not a bottom case fan
+  (there is none, 2026-09-26) and not the PSU's (SFX units don't use a board
+  header). Smart Fan 6 names its header; trace the cable. A 3-pin fan on a
+  PWM header would explain the RPM (the open mode item below).
+
 #### Fan control checklist
 
 - [x] Loud source identified: which header, or the GPU / PSU — *fan3, the
@@ -1094,7 +1156,9 @@ since the next firmware update resets them too.
       (RAPL 96 W) at Tctl 95.4 °C, 4991 MHz — at stock this CPU hits its
       95 °C ceiling long before 142 W, so it is cooling-limited and Eco Mode
       buys ~6 W and ~5 °C for 0.7 % clock. The cooler and the fan curves are
-      the lever here, not Eco. Also in the power menu (`eco@on`/`eco@off`
+      the lever here, not Eco. *2026-09-26: stock kept (Eco off); the fan
+      curves are done, so the levers left are Curve Optimizer and the
+      cooler's thermal interface ([The cooler](#the-cooler--decided-2026-09-26)).* Also in the power menu (`eco@on`/`eco@off`
       units, polkit). Originally: `eco on`
       makes it 88/75/150, and an all-core build holds package power near 88 W*
 - [x] Recorded in `hosts/desk/bios.md`; fan profile saved to USB — *curves decoded from the saved profile; Temperature Interval, mode and the case fan's input aren't stored in a readable form in it*
