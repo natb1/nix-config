@@ -1091,11 +1091,23 @@ the cooler, not the curves, is the limit. The options, and why:
 - **Keep the NH-L12 Ghost S1.** Terra owners report full boost clocks on
   low-profile air, but on X3D chips (lower power at the same clock) or with
   tuning. Nobody documents a Terra holding a 7600X at its 142 W on any
+  cooler. The closest match found (PCPartPicker `tHJfrH`, read 2026-09-26)
+  is this board and this cooler with a 7800X3D and an RTX 3080: 65–79 °C in
+  games, but with Curve Optimizer −12 all-core, an 85 W power limit and an
+  85 °C temperature limit. That is the Curve Optimizer route, not more
   cooler.
 - **Liquid: rejected.** The Terra takes only a 120 mm radiator, in the
   bottom fan position, which shortens the GPU limit and takes the bottom
   2.5" mount the media SSD may need. A 120 mm AIO performs about like a good
-  low-profile air cooler; 240 mm needs case mods.
+  low-profile air cooler. The 240 mm Terra builds found both need something
+  given up: one (PCPartPicker `LsNPxr`, 8700G, Lumen S24) puts the radiator
+  where the GPU goes, so it has no graphics card, tight tubes and a noisy
+  pump; the other (SFF.Network "Actual liquid Terra!") is a custom loop with
+  a 240 mm radiator in a bolt-on bottom extender.
+- **No bottom intake fan.** Testing of sandwich-layout cases like this one
+  (cited in the `tHJfrH` comments) found a bottom *intake* fan does worse
+  than none; if one is ever added, it exhausts. So the empty bottom position
+  costs nothing, and the second 2.5" mount there is free for storage.
 - **Noctua NH-L12Sx77: rejected for now.** Six heatpipes where the NH-L12S family has
   four, built for the Terra's 77 mm limit. But at 77 mm the spine leaves the
   GPU 43 mm, ~2 mm more than this card, which would choke its side-panel
