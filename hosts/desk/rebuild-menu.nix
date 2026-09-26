@@ -1,13 +1,17 @@
 # The rebuild menu: Mod+Shift+R in niri (hosts/desk/home/niri.kdl) opens
-# `rebuild-menu`, a fuzzel list of every worktree of ~/natb1/nix-config, and
+# `rebuild-menu`, a list of every worktree of ~/natb1/nix-config, and
 # runs `rebuild` (modules/home/rebuild.nix) against the one picked — pull, then
 # switch — in a terminal for the sudo prompt, held open to read the result.
 #
 # git lists the main checkout first, so it is the entry already selected: Enter
 # alone rebuilds main, as the binding did before there was a menu. Worktrees
-# whose directory is gone (prunable) are left out. A worktree whose branch has
-# an open pull request shows its number and title (gh, which is already
-# logged in); offline, it falls back to the branch name.
+# whose directory is gone (prunable) are left out.
+#
+# Each entry is three lines, so the list is `pick` (./pick, drawn by
+# Quickshell) rather than fuzzel, whose entries are one line: the open pull
+# request's number and title (gh, which is already logged in), the last
+# commit's subject, and the worktree's directory name. Without a pull request
+# — main, or offline — the first line is the branch.
 #
 # Opening the menu first tidies up, so the list is only what is still live.
 # After a fetch, a worktree is removed, with its branch, when its HEAD is in
@@ -21,10 +25,12 @@
 { pkgs, ... }:
 
 let
+  pick = pkgs.callPackage ./pick { };
+
   rebuildMenu = pkgs.writeShellApplication {
     name = "rebuild-menu";
     runtimeInputs = [
-      pkgs.fuzzel
+      pick
       pkgs.git
       pkgs.gawk
       pkgs.coreutils
@@ -103,21 +109,18 @@ let
         pr_title[$branch]=$title
       done <"$prs_file"
 
-      # Shown as "#N PR title  ·  last commit's subject", or the branch in
-      # place of the PR when there is none: the Claude worktrees' branch names
-      # alone don't say what is in them. The subject is left off when it only
-      # repeats the PR title, as it does for a one-commit PR.
+      # One tab-separated field per line of the entry: "#N PR title" (or the
+      # branch), the last commit's subject, the worktree's directory. The
+      # Claude worktrees' branch names alone don't say what is in them.
       choice=$(while IFS=$'\t' read -r path ref; do
-          subject=$(git -C "$path" log -1 --format=%s)
-          if [ -z "''${pr_number[$ref]:-}" ]; then
-            printf '%s  ·  %s\n' "$ref" "$subject"
-          elif [ "''${pr_title[$ref]}" = "$subject" ]; then
-            printf '#%s %s\n' "''${pr_number[$ref]}" "$subject"
+          if [ -n "''${pr_number[$ref]:-}" ]; then
+            first="#''${pr_number[$ref]} ''${pr_title[$ref]}"
           else
-            printf '#%s %s  ·  %s\n' "''${pr_number[$ref]}" "''${pr_title[$ref]}" "$subject"
+            first=$ref
           fi
+          printf '%s\t%s\t%s\n' "$first" "$(git -C "$path" log -1 --format=%s)" "''${path##*/}"
         done <<<"$worktrees" |
-        fuzzel --dmenu --index --prompt "rebuild › " --lines 15 --width 120 "''${mesg[@]}") || exit 0
+        pick --prompt "rebuild ›" "''${mesg[@]}") || exit 0
 
       dir=$(printf '%s\n' "$worktrees" | awk -F '\t' -v n="$choice" 'NR == n + 1 { print $1 }')
       [ -n "$dir" ] || exit 0
