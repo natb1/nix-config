@@ -35,7 +35,8 @@ sudo nixos-rebuild switch --flake .#desk
 ```
 
 Or `Mod+Shift+R` in niri: pick a worktree of the repo (`main` is preselected)
-and it runs `rebuild` there in a terminal. `desk` is the
+and it runs `rebuild` there in a terminal. Opening it first removes worktrees and
+branches already merged into `main` that no session is using. `desk` is the
 desktop's Linux when NixOS is booted; `wsl` stays for Linux on bare-metal Windows. See
 [`docs/desktop-migration.md`](docs/desktop-migration.md).
 
