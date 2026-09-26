@@ -71,13 +71,14 @@
     # Icons named by notifications and tray items (notify-send -i phone)
     # come from a theme, and desk had only hicolor, so most had no icon.
     #
-    # The wallpaper is from dharmx/walls (a community collection, pinned to a
-    # commit), cropped to fill the ultrawide.
+    # The wallpaper is Lucie Arnoux's Stonetop etching, from her shop
+    # (luciedraws.com; all rights reserved, personal use), cropped to fill the
+    # ultrawide.
     Service.Environment = [
       "QS_ICON_THEME=Adwaita"
       "DESK_WALLPAPER=${pkgs.fetchurl {
-        url = "https://raw.githubusercontent.com/dharmx/walls/6bf4d733ebf2b484a37c17d742eb47e5139e6a14/nord/a_planet_in_space_with_stars.png";
-        hash = "sha256-K6EXvcqJVGqhnULomvG/LeQHnCyCJU5DgGZTzgJ0Bn8=";
+        url = "https://static.wixstatic.com/media/e4013e_5436f86841ea4e49913010dc43330ef3~mv2.jpg";
+        hash = "sha256-xup7ZkAxwfEvoCa4WEnvWVqkS4FHNf/Ku162AxVN0VM=";
       }}"
     ];
   };
