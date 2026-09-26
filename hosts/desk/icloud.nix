@@ -126,7 +126,8 @@ in
   };
 
   # The alert until the plan's ntfy exists (<FILL_ME_notify_unit>): a
-  # critical pop-up, which swaync keeps in its history if nobody was looking.
+  # critical pop-up, which stays on screen and in the panel's history until
+  # dismissed (home/quickshell/Notifs.qml).
   systemd.user.services."icloudpd-failed@" = {
     description = "Alert: icloudpd@%i failed";
     serviceConfig = {

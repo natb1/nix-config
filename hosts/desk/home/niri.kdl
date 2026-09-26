@@ -84,16 +84,11 @@ layout {
     }
 }
 
-spawn-at-startup "waybar"
-
-// swaync is deliberately NOT spawned here. `services.swaync.enable` in
-// home/desktop.nix already generates a user unit that is WantedBy
-// graphical-session.target, which niri raises — so a spawn-at-startup line
-// makes two launchers race. On 2026-09-24 the spawned copy won and the unit
-// failed five restarts with "An instance of SwayNotificationCenter is already
-// running!", leaving notifications working but swaync.service red. The unit is
-// the better owner: Type=dbus, BusName, and Restart=on-failure. waybar has no
-// such unit (`programs.waybar` without `systemd.enable`), so it stays here.
+// No bar, and no spawn-at-startup for the shell. Quickshell (the panel,
+// notifications and pop-ups — home/quickshell/) is a user unit WantedBy
+// graphical-session.target, which niri raises. A spawn line here as well
+// would make two launchers race for org.freedesktop.Notifications, which is
+// what left swaync.service failed on 2026-09-24.
 
 // niri has no built-in Xwayland; this starts it on demand. Steam needs it.
 spawn-at-startup "xwayland-satellite"
@@ -115,7 +110,7 @@ binds {
 
     Mod+Return hotkey-overlay-title="Terminal" { spawn "xdg-terminal-exec"; }
     Mod+D hotkey-overlay-title="Launcher" { spawn "fuzzel"; }
-    Mod+Shift+N hotkey-overlay-title="Notifications" { spawn "swaync-client" "-t" "-sw"; }
+    Mod+Shift+N hotkey-overlay-title="Notifications and status" { spawn "qs" "-c" "desk" "ipc" "call" "panel" "toggle"; }
     // Pull ~/natb1/nix-config and switch (modules/home/rebuild.nix), in a
     // terminal for the sudo prompt, held open afterwards to read the result.
     Mod+Shift+R hotkey-overlay-title="Rebuild (pull + switch)" { spawn "xdg-terminal-exec" "zsh" "-c" "rebuild; print; read -sk '?Done. Press any key to close.'"; }

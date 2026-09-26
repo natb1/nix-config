@@ -1,6 +1,7 @@
 # The desktop session — user half. The system half is ../desktop.nix.
 #
-# waybar, swaync, fuzzel and swayidle, plus the shell hook that starts niri.
+# The Quickshell panel, fuzzel and swayidle, plus the shell hook that starts
+# niri.
 # docs/desktop-migration.md, "The desktop session", is the design.
 
 { pkgs, lib, ... }:
@@ -44,38 +45,34 @@
     terminal=xdg-terminal-exec
   '';
 
-  programs.waybar = {
+  # The desktop shell, one Quickshell config (./quickshell): notification
+  # pop-ups and history, and a panel on Mod+Shift+N with the clock, status
+  # (Tailscale, Bluetooth, Wi-Fi, CPU/memory), volume, what is playing and any
+  # tray icons. There is no bar. It is also the notification daemon, which
+  # the phone relies on once it forwards everything over ANCS — a stream of
+  # transient pop-ups with no backlog would be useless.
+  #
+  # The unit, not a niri spawn-at-startup line, owns it (see niri.kdl).
+  programs.quickshell = {
     enable = true;
-    settings.mainBar = {
-      layer = "top";
-      position = "top";
-      height = 30;
-      modules-left = [ "niri/workspaces" ];
-      modules-center = [ "clock" ];
-      modules-right = [ "tray" "pulseaudio" "network" "cpu" "memory" ];
-
-      clock.format = "{:%a %d %b  %H:%M}";
-      cpu.format = "cpu {usage}%";
-      memory.format = "mem {percentage}%";
-      # wlp14s0 is the only link — the I225-V port is not cabled. See the
-      # Phase 0 Linux-side table.
-      network = {
-        format-wifi = "{essid} {signalStrength}%";
-        format-disconnected = "offline";
-      };
-      pulseaudio = {
-        format = "vol {volume}%";
-        format-muted = "muted";
-        on-click = "pwvucontrol";
-      };
-      tray.spacing = 8;
-    };
+    configs.desk = ./quickshell;
+    activeConfig = "desk";
+    systemd.enable = true;
   };
-
-  # Notifications, with a history panel and do-not-disturb. The panel is what
-  # matters once the phone starts forwarding everything over ANCS — a stream
-  # of transient pop-ups with no backlog would be useless.
-  services.swaync.enable = true;
+  systemd.user.services.quickshell = {
+    Unit = {
+      PartOf = [ "graphical-session.target" ];
+      ConditionEnvironment = "WAYLAND_DISPLAY";
+      # Restart on a config change. That clears the notification history,
+      # but a hot reload through the store symlink is not something to rely
+      # on.
+      X-Restart-Triggers = [ "${./quickshell}" ];
+    };
+    # Icons named by notifications and tray items (notify-send -i phone)
+    # come from a theme, and desk had only hicolor, so most had no icon.
+    Service.Environment = [ "QS_ICON_THEME=Adwaita" ];
+  };
+  home.packages = [ pkgs.adwaita-icon-theme ];
 
   services.swayidle = {
     enable = true;

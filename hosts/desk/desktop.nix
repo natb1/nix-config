@@ -44,7 +44,7 @@
     pulse.enable = true;
   };
 
-  # Fonts. Without this a fresh install renders boxes in waybar and the
+  # Fonts. Without this a fresh install renders boxes in the panel and the
   # terminal, which reads as a broken session rather than a missing package.
   fonts = {
     enableDefaultPackages = true;
@@ -71,7 +71,7 @@
     wl-clipboard
     pwvucontrol
 
-    # notify-send. swaync is the daemon, but nothing shipped the client, so
+    # notify-send. Quickshell is the daemon, but nothing shipped the client, so
     # the plan's own `notify-send test` was an unrunnable check until
     # 2026-09-24 — and any script wanting to reach the desktop had no way to.
     libnotify
@@ -86,35 +86,11 @@
     })
   ];
 
-  # Tailscale in waybar's tray: its own `tailscale systray` (1.80+), started
-  # with the session. waybar is started by niri, not by a unit this can order
-  # after, and an icon registered before the tray exists is simply lost — so
-  # wait for the StatusNotifierWatcher waybar provides. operator=n8 lets the
-  # tray's own switches (connect, exit node) work without sudo; without it the
-  # tray could only show status. Desk-only: modules/nixos/tailscale.nix is
-  # shared with wsl, which has no tray.
+  # operator=n8 lets the panel's Tailscale tile (home/quickshell/Tailscale.qml)
+  # run `tailscale up`/`down` and set the exit node without sudo; without it
+  # the tile could only show status. Desk-only: modules/nixos/tailscale.nix is
+  # shared with wsl, which has no desktop.
   services.tailscale.extraSetFlags = [ "--operator=n8" ];
-  systemd.user.services.tailscale-systray = {
-    description = "Tailscale tray icon";
-    wantedBy = [ "graphical-session.target" ];
-    after = [ "graphical-session.target" ];
-    partOf = [ "graphical-session.target" ];
-    serviceConfig = {
-      ExecStartPre = [
-        (pkgs.writeShellScript "wait-for-tray" ''
-          for _ in $(${pkgs.coreutils}/bin/seq 60); do
-            ${pkgs.systemd}/bin/busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1 && exit 0
-            ${pkgs.coreutils}/bin/sleep 1
-          done
-          echo "no StatusNotifierWatcher (waybar tray) after 60 s" >&2
-          exit 1
-        '')
-      ];
-      ExecStart = "${pkgs.tailscale}/bin/tailscale systray";
-      Restart = "on-failure";
-      RestartSec = 5;
-    };
-  };
 
   # google-chrome is unfree, and it is allowed by name in flake.nix's
   # unfreePredicate — not here. nixpkgs.config is defined once, by the flake's
