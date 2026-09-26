@@ -4263,8 +4263,14 @@ up to the date recorded above.
       items, 607 files (237 of them Live Photo videos), 2.2 GB, 0 errors.
       `icloudpd-verify n8`: 607 of 607 byte-exact against Apple's checksums,
       exit 0, in 13 s. A second start downloaded nothing*
-- [ ] Backfill `icloudpd@lindsey`, verified (`icloudpd-verify lindsey`
-      exits 0). Then `icloudpd-forget lindsey`
+- [x] Backfill `icloudpd@lindsey`, verified (`icloudpd-verify lindsey`
+      exits 0). Then `icloudpd-forget lindsey` — *2026-09-26, 13:53–13:59:
+      460 items, 791 files, 2.4 GB, 0 errors. The unit's own `ExecStartPost`
+      found 791 of 791 byte-exact against Apple's checksums. A second start
+      downloaded nothing and verified again from the cache. Then
+      `icloudpd-forget lindsey` removed the session directory, and a keyring
+      lookup for the Apple ID came back empty. `lindsey.env` is left in place
+      for a future top-up*
 - [ ] Two weeks later: `systemctl --user list-timers 'icloudpd@*'` shows daily
       runs, and new photos from both phones are on the share
 
