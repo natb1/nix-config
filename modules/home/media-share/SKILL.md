@@ -116,8 +116,25 @@ agent or person per batch.
    - Tables: `media-stage review export <staging>/<batch>` writes
      `<batch>.review.json` with every row that is blank, `skip`, below `high`,
      or flagged in its note. Audio: `beet stage-review` already wrote it.
-   - Nothing to review (its `items` is empty): don't load the page. Go
-     straight on to step 8 (music) or step 9, without asking.
+   - Read every item before loading it, and settle what you can: the
+     page asks only what you can't answer, and suggests what you would.
+     - Where you know the answer (the evidence settles it), answer it
+       yourself: write `<item id>.json` in the answers directory of step
+       7 (`/srv/media/staging/<batch>.answers`, or the one your CLAUDE.md
+       names) as the page would, `{"batch": "<batch>", "item": "<item id>",
+       "choice": "option", "value": "<option value>", "note": "<why>"}`,
+       and take the item out of the review JSON. Tell the user what you
+       decided and why.
+     - Where you'd lean one way but it is the user's call, make that the
+       suggestion: in the review JSON, `recommended: true` on your option
+       and false on the others, and an `evidence` line saying why. Never
+       suggest one option in chat while the page suggests another.
+     - When the tool's own pick was plainly wrong, say so to the user: its
+       evidence or ranking (`beetsplug/stagecheck.py`, `media_stage.py`)
+       should be fixed, so the next batch doesn't ask.
+   - Nothing left to review (its `items` is empty): don't load the page.
+     Go on to step 7 with the answers you wrote, if any, then step 8
+     (music) or step 9, without asking.
    - Find the page: the link your CLAUDE.md gives, if it gives one (an
      account that can't see the shared page has its own); otherwise
      `Artifact` `list`, title **Media Filing Review**.

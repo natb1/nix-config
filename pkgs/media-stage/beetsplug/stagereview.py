@@ -20,6 +20,11 @@ review page instead of the library when:
 - `media-stage group` made it from more than one folder;
 - a file's name disagrees with its own tags (another track, another number).
 
+Names that number each disc from 1 ("[12 Vinyl 02] - 01 Crescent") don't
+disagree with tags numbered across the release, and they say which edition
+the files are: of the releases that match best, the one with those media is
+chosen (and, when the album goes to the page anyway, suggested).
+
 The review page (docs/desktop-migration.md, "Filing a batch") shows each and
 stores the answers; --answers reads them back — exported JSON documents
 anywhere under DIR — and imports each answered album: a chosen release by
@@ -52,8 +57,9 @@ from beets.plugins import BeetsPlugin
 from beets.ui.commands.import_.session import TerminalImportSession
 from beets.util import MoveOperation, displayable_path
 
-from beetsplug.stagecheck import (SAME_RECORDING, fingerprint, from_name, length_off, mmss,
-                                  name_conflict, number_clash, pack, similarity, track_no, unpack)
+from beetsplug.stagecheck import (SAME_RECORDING, describe_layout, fingerprint, from_name, layout_fits,
+                                  length_off, mmss, name_conflict, name_layout, name_offset, number_clash,
+                                  pack, similarity, track_no, unpack)
 
 AUDIO_EXT = (".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".aif", ".aiff", ".wma", ".alac")
 
@@ -258,12 +264,29 @@ class StageSession(TerminalImportSession):
 
     # -- decisions beets would have prompted for
 
+    @staticmethod
+    def edition(task, layout):
+        """The one release, of those beets scores best, whose media the
+        file names lay out; None when names give no layout, or not one fits."""
+        if not layout or not task.candidates:
+            return None
+        best = float(task.candidates[0].distance)
+        fits = [m for m in task.candidates
+                if float(m.distance) - best < 0.01 and not m.extra_items and not m.extra_tracks
+                and layout_fits(layout, m.info.media,
+                                [n for _, n in sorted(Counter(t.medium or 1 for t in m.info.tracks).items())])]
+        return fits[0] if len(fits) == 1 else None
+
     def choose_match(self, task):
         self.stamp(task)
         if self.answers is not None:
             return self.answered(task)
         n = len(task.items)
-        cands = [self.candidate(m, i == 0) for i, m in enumerate(task.candidates[:5])]
+        names = {i.path: os.path.basename(displayable_path(i.path)) for i in task.items}
+        layout = name_layout(names.values())
+        edition = self.edition(task, layout)
+        ranked = ([edition] if edition else []) + [m for m in task.candidates if m is not edition]
+        cands = [self.candidate(m, i == 0) for i, m in enumerate(ranked[:5])]
 
         same = self.fingerprints.same_recordings(task.items)
         if same:
@@ -290,16 +313,20 @@ class StageSession(TerminalImportSession):
         merged = (self.grouped.get(self.key(task)) or {}).get("from") or []
         if len(merged) > 1:
             reasons.append(f"made from {len(merged)} folders")
-        conflicts = [(i, name_conflict(os.path.basename(displayable_path(i.path)),
-                                       {"track": i.track, "title": i.title})) for i in task.items]
+        conflicts = [(i, name_conflict(names[i.path], {"track": i.track, "title": i.title},
+                                       name_offset(names[i.path], layout))) for i in task.items]
         conflicts = [(i, c) for i, c in conflicts if c]
         if conflicts:
             reasons.append(f"{len(conflicts)} file names disagree with their tags")
             evidence.append({"label": "Name vs tags", "value": "\n".join(
-                f"{os.path.basename(displayable_path(i.path))}: {c}" for i, c in conflicts)})
+                f"{names[i.path]}: {c}" for i, c in conflicts)})
+        if layout:
+            evidence.append({"label": "Media in the names", "value": describe_layout(layout) + (
+                f": only {cands[0]['label']} ({edition.info.media}) of the best matches has them"
+                if edition else ": no best match has them")})
 
         if task.rec == Recommendation.strong and task.candidates and not reasons:
-            return task.candidates[0]
+            return ranked[0]
         if task.rec == Recommendation.strong and task.candidates:
             why = f"strong match ({cands[0]['score']}%), but " + "; ".join(reasons)
         else:

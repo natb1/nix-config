@@ -12,6 +12,8 @@ than from what beets or MusicBrainz made of it:
   ("Prelude No. 3" / "Prelude No. 5", "BWV 998" / "BWV 999", "II." / "III.")?
   Translations and spellings differ harmlessly; numbers don't.
 - name_conflict: does a file's name say something else than its own tags?
+- name_layout / layout_fits: which media do the names lay out ("[12 Vinyl 02]
+  - 01 …": two records, numbered per side), and does a release have them?
 - length_off: is a file a different length than the release slot it fills?
 """
 
@@ -29,19 +31,78 @@ SAME_RECORDING = 0.8
 # "Artist - Album - 04 Title.mp3", "Artist - Album (2000) - 04 - Title.mp3"
 NAME = re.compile(r"^(?P<artist>.+?) - (?P<album>.+) - (?P<track>\d{1,3})(?: - |\.? )(?P<title>.+)\.[^.]+$")
 # "04 Title.mp3", "1-04 - Title.mp3", "04. Title.mp3"
-SHORT_NAME = re.compile(r"^(?:\d{1,2}-)?(?P<track>\d{1,3})(?:\s*[-.]\s*|\s+)(?P<title>.+)\.[^.]+$")
+SHORT_NAME = re.compile(r"^(?:(?P<disc>\d{1,2})-)?(?P<track>\d{1,3})(?:\s*[-.]\s*|\s+)(?P<title>.+)\.[^.]+$")
 
 
 def from_name(filename):
     """What a file's name says: track and title, and artist and album when
     the name carries them. {} when it says nothing parseable."""
     m = NAME.match(filename) or SHORT_NAME.match(filename)
-    return {k: v.strip() for k, v in m.groupdict().items()} if m else {}
+    return {k: v.strip() for k, v in m.groupdict().items() if v} if m else {}
 
 
 def track_no(value):
     m = re.match(r"\s*(\d+)", str(value or ""))
     return int(m.group(1)) if m else None
+
+
+# -- media
+
+# A disc in a name's album part: "[12 Vinyl 02]", "(CD 2)", "Disc 1"
+MEDIUM = re.compile(r"\b(CD|Vinyl|LP|Disc|Disk)\s*0*(\d{1,2})\b", re.I)
+FORMATS = {"cd": "CD", "vinyl": "Vinyl", "lp": "Vinyl"}
+
+
+def name_medium(filename):
+    """(format, disc) a file's name gives it: ("Vinyl", 2) for
+    "… - The Joy of Motion [12 Vinyl 02] - 01 Crescent.flac", (None, 1) for
+    "1-04 Title.flac", None when it gives no disc."""
+    name = from_name(filename)
+    m = MEDIUM.search(name.get("album", ""))
+    if m:
+        return FORMATS.get(m.group(1).lower()), int(m.group(2))
+    return (None, int(name["disc"])) if name.get("disc") else None
+
+
+def name_layout(filenames):
+    """The media a folder's names lay out, {"format": "Vinyl", "discs": [6, 6]},
+    when every name gives its disc and each disc's tracks run 1..n; else None."""
+    per, formats = {}, set()
+    for f in filenames:
+        medium, n = name_medium(f), track_no(from_name(f).get("track"))
+        if not medium or not n:
+            return None
+        formats.add(medium[0])
+        per.setdefault(medium[1], []).append(n)
+    discs = sorted(per)
+    if discs != list(range(1, len(discs) + 1)) or \
+            any(sorted(t) != list(range(1, len(t) + 1)) for t in per.values()):
+        return None
+    formats.discard(None)
+    fmt = formats.pop() if len(formats) == 1 else None
+    if len(discs) < 2 and not fmt:
+        return None  # "1-04" on one disc says nothing
+    return {"format": fmt, "discs": [len(per[d]) for d in discs]}
+
+
+def name_offset(filename, layout):
+    """What to add to the track number in a file's name for its number
+    across the release: the tracks on the discs before its own."""
+    medium = layout and name_medium(filename)
+    return sum(layout["discs"][:medium[1] - 1]) if medium else 0
+
+
+def layout_fits(layout, media, medium_tracks):
+    """Whether a release (its media, as "12\" Vinyl", and its tracks per
+    medium, in order) has the layout the names give."""
+    return (bool(layout) and list(medium_tracks) == layout["discs"]
+            and (not layout["format"] or layout["format"].casefold() in (media or "").casefold()))
+
+
+def describe_layout(layout):
+    n = len(layout["discs"])
+    what = layout["format"] or "disc"
+    return (f"{n} × {what}" if n > 1 else what) + ", " + " + ".join(map(str, layout["discs"])) + " tracks"
 
 
 # -- same recording
@@ -137,16 +198,18 @@ def title_similarity(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
-def name_conflict(filename, tags):
+def name_conflict(filename, tags, offset=0):
     """How a file's name disagrees with its own tags ('' when it doesn't):
     another track number, or another title. A file named for one track and
-    tagged as another is wrong in one of the two, and beets believes the tags."""
+    tagged as another is wrong in one of the two, and beets believes the tags.
+    `offset` (name_offset) is the tracks on earlier discs, for names that
+    number each disc from 1 on tags numbered across the release."""
     name = from_name(filename)
     if not name:
         return ""
     bits = []
     nt, tt = track_no(name.get("track")), track_no(tags.get("track"))
-    if nt and tt and nt != tt:
+    if nt and tt and tt not in (nt, nt + offset):
         bits.append(f"track {nt} in the name, {tt} in the tags")
     title = tags.get("title", "")
     clash = number_clash(name.get("title", ""), title)

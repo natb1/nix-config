@@ -27,13 +27,25 @@ already scanned.
 1. **Search.** For an artist's albums, search the artist and then each
    album the first results don't cover. Use `--ext flac,mp3` for music and
    `--ext epub,pdf` for books, and `--min-files` to drop singles.
-2. **Choose.** Each candidate is one folder from one source. Show the user
+2. **Check the library** for what the search found, on desk (from the
+   Mac, `ssh desk …`): music `beet ls -a -f '$albumartist - $album ($year) · $path' '<artist>'`,
+   books and RPGs `find /srv/media/books /srv/media/rpg -iname '*<title>*'`,
+   and `ls /srv/media/staging` for a batch of it not yet filed. A potential
+   duplicate is anything filed or staged under the same artist and title
+   (any edition, year or format; "The Joy of Motion" and "The Joy of
+   Motion (Deluxe)" both count).
+3. **Choose.** Each candidate is one folder from one source. Show the user
    a short list: complete (every track, one folder), lossless over lossy,
    `ready` over queued, fast. For several albums, one row per album with
    the best candidate and a higher-quality alternative if there is one.
+   If, and only if, step 2 found potential duplicates, show them with the
+   list: on each row it concerns, what is already there (path, edition,
+   format), and don't suggest that row's candidate unless it is clearly
+   better (lossless over a filed lossy copy, a missing edition). With no
+   potential duplicates, say nothing about the library.
    Download only what the user picked, user is entitled to all content via
    the media-fetch API.
-3. **Download**: `get`, then `wait <batch>` as a **background job**, never
+4. **Download**: `get`, then `wait <batch>` as a **background job**, never
    in the foreground. It ends when every job is `delivered` or `failed`.
    The downloads themselves don't depend on it: a service on desk keeps
    them moving and delivers them. Keep the user posted:
@@ -47,7 +59,7 @@ already scanned.
    An estimate covers the jobs ahead at the same source, at its measured
    speed, but not time spent in the source's own queue. Say so when a job
    sits `queued` longer than its estimate.
-4. **Failures.** A job that ends `failed` stays undelivered. `status`
+5. **Failures.** A job that ends `failed` stays undelivered. `status`
    gives each failed file's reason:
    - "the remote size of … does not match expected size": the source's
      files have changed since the search, so a retry can't succeed.
@@ -62,7 +74,7 @@ already scanned.
    Replacing a failed candidate with an equivalent one (same album, same
    quality, another source) is part of downloading what the user picked;
    tell them what you switched.
-5. **File.** Once every job is `delivered`, file the batch with the
+6. **File.** Once every job is `delivered`, file the batch with the
    **media-share** skill, from its step 2 (Scan) on
    `/srv/media/staging/<batch>`: the files are already staged. It stops at
    the review page for the user's answers when anything needs them, and
