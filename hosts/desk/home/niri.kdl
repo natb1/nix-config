@@ -67,6 +67,9 @@ input {
 
 layout {
     gaps 8
+    // Workspaces are drawn over the backdrop, where the wallpaper lives (see
+    // the layer-rule below); a transparent workspace lets it show through.
+    background-color "transparent"
     center-focused-column "never"
 
     preset-column-widths {
@@ -99,8 +102,9 @@ environment {
 
 prefer-no-csd
 
-// Quickshell's wallpaper (quickshell/Wallpaper.qml) also shows behind the
-// workspaces in the overview, instead of a plain backdrop.
+// Quickshell's wallpaper (quickshell/Wallpaper.qml) goes in the backdrop, so
+// it also shows behind the workspaces in the overview. The backdrop is only
+// visible on the desktop because layout's background-color is transparent.
 layer-rule {
     match namespace="^quickshell-wallpaper$"
     place-within-backdrop true
