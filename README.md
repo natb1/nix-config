@@ -88,8 +88,8 @@ short name `desk` works everywhere through MagicDNS.
    the Soulseek account and a web UI login, then `sudo systemctl restart
    slskd` ([`hosts/desk/soulseek.nix`](hosts/desk/soulseek.nix)):
    `SLSKD_SLSK_USERNAME`, `SLSKD_SLSK_PASSWORD`, `SLSKD_USERNAME`,
-   `SLSKD_PASSWORD`, one `NAME=value` per line. Optionally forward TCP 50300
-   on the router to desk, so peers behind firewalls can reach it. Check:
+   `SLSKD_PASSWORD`, one `NAME=value` per line. There is no port to forward:
+   T-Mobile Home Internet is behind carrier-grade NAT. Check:
    `http://desk:5030` shows *Connected*, and Shares lists `music`.
 6. **iPhone over Bluetooth** (notifications and texts,
    [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):

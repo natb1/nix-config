@@ -20,11 +20,11 @@
 #
 # The web UI and API are tailnet-only, like the other servers: the firewall
 # opens nothing for 5030, and tailscale0 is trusted
-# (modules/nixos/tailscale.nix). The Soulseek listen port is different: peers
-# connect to it from the internet, and a client nobody can reach only
-# downloads from peers who can be reached. It is opened on Wi-Fi alone, and
-# only matters once the router forwards TCP 50300 to desk. Without the
-# forward everything still works, with fewer sources.
+# (modules/nixos/tailscale.nix). The Soulseek listen port is not opened:
+# desk is on T-Mobile Home Internet, behind carrier-grade NAT, so no router
+# forward can reach it. slskd still works, only with the peers that can be
+# reached. A VPN with a forwarded port fixes that and hides the home IP from
+# peers (docs/desktop-migration.md, "Finding music: Soulseek").
 #
 # Not managed by this repo: /etc/slskd/credentials (root, 0600), the
 # Soulseek account and the web UI's login:
@@ -85,8 +85,8 @@ in
     unitConfig.ConditionPathExists = "!${apiEnv}";
     serviceConfig.Type = "oneshot";
     script = ''
+      ${pkgs.coreutils}/bin/install -d -m 0755 "$(dirname ${apiEnv})"
       umask 077
-      mkdir -p "$(dirname ${apiEnv})"
       key=$(${pkgs.coreutils}/bin/head -c 32 /dev/urandom | ${pkgs.coreutils}/bin/base64 --wrap=0 | ${pkgs.coreutils}/bin/tr '+/' '-_' | ${pkgs.coreutils}/bin/tr -d =)
       echo "SLSKD_API_KEY=$key" > ${apiEnv}
       chown n8:users ${apiEnv}
@@ -95,9 +95,10 @@ in
   };
 
   systemd.tmpfiles.rules = [
+    # Traversable, so n8 can reach api.env; credentials stays 0600 root.
+    # `d` also fixes the mode of a directory that already exists.
+    "d /etc/slskd 0755 root root -"
     "d ${downloads} 0755 n8 users -"
     "d /srv/media/staging/.soulseek-incomplete 0755 n8 users -"
   ];
-
-  networking.firewall.interfaces.wlp14s0.allowedTCPPorts = [ 50300 ];
 }
