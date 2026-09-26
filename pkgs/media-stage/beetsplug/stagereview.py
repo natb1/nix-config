@@ -141,6 +141,25 @@ class Fingerprints:
         return out
 
 
+def forget_unfiled(lib, staging):
+    """Drop library records of files still in staging, leaving the files.
+    beets adds an album to the database before it moves the files, so a
+    move that fails (a folder it may not write) leaves the album recorded
+    at its staged paths; the next run would find those files already filed
+    — as themselves. Returns how many tracks it forgot."""
+    inside = os.fsencode(staging.rstrip("/") + os.sep)
+    items = [i for i in lib.items() if i.path.startswith(inside)]
+    albums = {i.album_id for i in items if i.album_id}
+    with lib.transaction():
+        for i in items:
+            i.remove(delete=False, with_album=False)
+        for aid in albums:
+            a = lib.get_album(aid)
+            if a and not list(a.items()):
+                a.remove(delete=False, with_items=False)
+    return len(items)
+
+
 class StageSession(TerminalImportSession):
     def __init__(self, lib, loghandler, paths, query, staging, answers=None):
         super().__init__(lib, loghandler, paths, query)
@@ -578,8 +597,16 @@ class StageReview(BeetsPlugin):
         config["import"]["timid"] = False
         config["import"]["resume"] = False
         config["import"]["group_albums"] = False
+        stale = forget_unfiled(lib, staging)
+        if stale:
+            ui.print_(f"forgot {stale} tracks an earlier run recorded but never filed")
         session = StageSession(lib, None, [os.fsencode(p) for p in paths], None, staging, answers)
-        session.run()
+        try:
+            session.run()
+        finally:
+            stale = forget_unfiled(lib, staging)
+            if stale:
+                ui.print_(f"forgot {stale} tracks recorded but not filed (the move failed); they stay in staging")
         left = [p for p in paths if any(f.lower().endswith(AUDIO_EXT) for _, _, fs in os.walk(p) for f in fs)]
         if answers is None:
             out = sidecar(staging, ".review.json")

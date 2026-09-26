@@ -148,12 +148,60 @@ shows `brother` enabled and default.
    Navidrome account from desk step 2. Downloads play offline; CarPlay works.
    **Video:** **Jellyfin** from the App Store (free), server
    `http://desk:8096`. **Books:** `http://desk:5000` in Safari (Add to Home
-   Screen), or an OPDS reader such as Panels or Chunky with the OPDS URL from
-   Kavita's user settings.
+   Screen), or **Readest** from the App Store for offline reading (EPUB, PDF,
+   CBZ): add the OPDS URL from Kavita's user settings as an OPDS catalog
+   (`http://desk:5000/api/opds/<key>`), and under KOReader Sync the server
+   `http://desk:5000/api/koreader/<key>`, the Kavita username, any password,
+   checksum **File Content**. Sync carries positions only; books come from the
+   catalog, one download at a time.
 5. **Notifications and texts on desk:** pair from desk (desk step 6); allow
    **Show Notifications** and **Sync Contacts** when the phone asks. If
    notifications stop while texts still arrive, turn Bluetooth off and on
    **on the phone**; desk shows an alert when this happens.
+
+### Kobo (once)
+
+The Kobo cannot run Tailscale, so it reaches Kavita over the home Wi-Fi,
+where desk opens port 5000 and nothing else
+([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)). It works only at home.
+
+1. **Fix desk's LAN address.** The Kobo cannot resolve `desk`, so it needs
+   an address that does not move. If the gateway offers a DHCP reservation,
+   reserve desk's current address (`ip -4 addr show wlp14s0`) for its Wi-Fi
+   MAC `f0:a6:54:14:9b:0d`. T-Mobile's gateways do not, so instead give
+   desk's Wi-Fi profile a second, fixed address beside the DHCP one:
+
+   ```sh
+   con=$(nmcli -g GENERAL.CONNECTION device show wlp14s0)
+   nmcli connection modify "$con" +ipv4.addresses 192.168.12.250/24
+   nmcli connection up "$con"
+   ```
+
+   First check that nothing answers on the address (`ping -c 3
+   192.168.12.250` gets no replies). The profile stays on DHCP
+   (`ipv4.method auto`), so the gateway and DNS still come from the gateway.
+   NetworkManager lists the fixed address first, so desk's own connections
+   to the LAN come from `.250`; nothing depends on which address they use.
+   Pick an address above any the gateway has handed out (its connected
+   devices list shows them). The gateway cannot be told to keep it free, but
+   desk now answers ARP and ping on it, which is what a gateway checks before
+   handing an address out. Like the PSK, this lives in the NetworkManager
+   profile under `/etc/NetworkManager/system-connections/`, not in this repo.
+   Check: `ip -4 addr show wlp14s0` lists both addresses,
+   `sudo iptables -S nixos-fw | grep 5000` shows the `wlp14s0` rule, and a
+   phone on the Wi-Fi with Tailscale off opens `http://192.168.12.250:5000`.
+2. **KOReader** on the Kobo (installed alongside Kobo's own reader). Add an
+   OPDS catalog with the OPDS URL from Kavita's user settings (**3rd Party
+   Clients**), with `desk` swapped for the address above:
+   `http://192.168.12.250:5000/api/opds/<key>`, no username or password.
+   Books downloaded from it read offline.
+3. **Progress sync:** Tools → Progress sync → Custom sync server,
+   `http://192.168.12.250:5000/api/koreader/<key>` (the same key, `koreader`
+   in place of `opds`, no trailing slash). **Login**, not Register, with the
+   Kavita username and any password: the key is the credential. Set the
+   document matching method to **Binary** and turn on auto sync. Only books
+   downloaded from Kavita sync, since Kavita matches a book by a hash of its
+   file. Check: a page turned on the Kobo shows in Kavita's web reader.
 
 ## Updating inputs
 
