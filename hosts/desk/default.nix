@@ -30,6 +30,7 @@
     ./eco.nix
     ./sensors.nix
     ./power-menu.nix
+    ./drlindsey.nix
   ];
 
   # Simultaneously the Tailscale node name, what avahi publishes (desk.local),

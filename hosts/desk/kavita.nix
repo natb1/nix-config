@@ -8,8 +8,11 @@
 #
 # Libraries, as set up from http://desk:5000 after the first login (they are
 # Kavita's database, not this file), both of type "Book":
-#   Books   /srv/media/books   (books/<author>/<title>.<ext>)
+#   Books   /srv/media/books   (books/<author>/<series>/<title>.<ext>)
 #   RPG     /srv/media/rpg     (rpg/<game or line>/<title> (<variant>).<ext>)
+# Each folder above is one Kavita series: media-stage writes the series,
+# volume and title into every file, since Kavita takes them from a file's
+# metadata (docs/desktop-migration.md, "Books and RPGs in Kavita").
 # Kavita reads, never writes: covers and progress stay in /var/lib/kavita.
 #
 # Tailnet-only, like Navidrome and Jellyfin: it listens on every interface,
