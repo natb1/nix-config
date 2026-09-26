@@ -1,6 +1,7 @@
 # Claude Code Remote Control, always on.
 #
-# Runs `claude remote-control --spawn worktree` in ~/natb1/nix-config as a
+# Runs `claude remote-control --spawn worktree` in a git repo — by default
+# ~/natb1/nix-config; see services.claudeRemoteControl.directory — as a
 # per-user service — a systemd user unit on Linux, a launchd agent on macOS — so
 # the machine is always reachable from claude.ai/code and the Claude app, and
 # each session started there gets its own git worktree under .claude/worktrees/.
@@ -9,7 +10,8 @@
 # and retries.
 #
 # Imported per host from flake.nix (desk and mba), not from modules/home: WSL
-# does not get it.
+# does not get it. desk's second user, drlindsey, imports it too — see
+# hosts/desk/drlindsey.nix.
 #
 # --no-create-session-in-dir: by default rc pre-creates a session in the repo on
 # every start. For a service that restarts with the machine, that is an empty
@@ -38,7 +40,7 @@
 }:
 
 let
-  directory = "${config.home.homeDirectory}/natb1/nix-config";
+  inherit (config.services.claudeRemoteControl) directory;
 
   # Stable anchors only — see the header. The per-user profile is where
   # useUserPackages puts claude and the rest of home.packages.
@@ -68,7 +70,13 @@ let
   ];
 in
 {
-  systemd.user.services.claude-remote-control = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
+  options.services.claudeRemoteControl.directory = lib.mkOption {
+    type = lib.types.str;
+    default = "${config.home.homeDirectory}/natb1/nix-config";
+    description = "Git repo the rc server serves; worktree sessions branch from it.";
+  };
+
+  config.systemd.user.services.claude-remote-control = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
     Unit = {
       Description = "Claude Code Remote Control server (worktree spawn mode)";
       After = [ "network-online.target" ];
@@ -86,7 +94,7 @@ in
     Install.WantedBy = [ "default.target" ];
   };
 
-  launchd.agents.claude-remote-control = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
+  config.launchd.agents.claude-remote-control = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
     enable = true;
     config = {
       ProgramArguments = args;
