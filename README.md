@@ -106,7 +106,9 @@ shows `brother` enabled and default.
    do. The Mac's public key is in `services.sshAuthorizedKeys.keys` in
    [`modules/home/default.nix`](modules/home/default.nix), which every host
    accepts. A new device adds its key there. Check: `ssh desk true`.
-4. **Music:** Navidrome's web player at `http://desk:4533`.
+4. **Music:** open **Feishin** (in `~/Applications/Home Manager Apps`), add
+   the server `http://desk:4533`, and log in with the Navidrome account from
+   desk step 2. The web player at `http://desk:4533` works too.
 
 ### iPhone (once)
 

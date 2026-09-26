@@ -6,7 +6,7 @@
 # Not managed here: the Samba password. It lives in the login keychain,
 # saved the first time the share is mounted with "Remember this password".
 
-{ ... }:
+{ pkgs, ... }:
 
 let
   queue = "desk_brother";
@@ -37,6 +37,12 @@ in
   # checked here and applied on desk — docs/desktop-migration.md, "Filing a
   # batch".
   home-manager.users.n8.imports = [ ../../modules/home/media-share.nix ];
+
+  # Feishin, the music player: a client of desk's Navidrome
+  # (hosts/desk/music.nix), as on desk, so both share playlists and
+  # favourites. Server http://desk:4533 over Tailscale. home-manager links it
+  # into ~/Applications/Home Manager Apps.
+  home-manager.users.n8.home.packages = [ pkgs.feishin ];
 
   # smb://desk/media (the library, read-only from here) and
   # smb://desk/media-staging (where batches arrive), mounted at login and

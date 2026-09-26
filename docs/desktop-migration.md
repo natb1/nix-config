@@ -3590,7 +3590,8 @@ read-only to everything but beets.
 | --- | --- | --- |
 | iPhone | **Amperfy** (App Store, free, open source) | Subsonic client with offline caching, CarPlay, gapless; logs in to `http://desk:4533` over Tailscale. play:Sub (paid) is the alternative if Amperfy's UI grates |
 | desk (NixOS) | **Feishin** (`pkgs.feishin`, [`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)) | A full desktop client for Navidrome: album-artist and multi-disc views, lyrics, queue management; the same library and state as the phone |
-| anywhere else | Navidrome's own web player | `http://desk:4533` in a browser on the tailnet, the Mac included |
+| mba | **Feishin** too ([`hosts/mba/desk.nix`](../hosts/mba/desk.nix)) | The same client as desk, pointed at `http://desk:4533` over Tailscale |
+| anywhere else | Navidrome's own web player | `http://desk:4533` in a browser on the tailnet |
 
 Nothing needs a rescan after an import: Navidrome watches the folder, with a
 six-hourly scan as the backstop.
