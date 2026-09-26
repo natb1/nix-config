@@ -3749,10 +3749,10 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       numbers itself `n/23` and `n/29`, and the untagged half fills exactly
       the gaps. Volume I is complete (23); Volume 2 has 28, and track 05 was
       never on the Drive*
-- [ ] Runehammer Games' *Crown and Skull*, *Crown and Skull, Volume 2* and
-      *Daisy Crown* (23 files) are copies of Brandish Gilhelm's recordings —
-      same sizes and durations, some byte-identical — filed under the game's
-      publisher. Remove them once confirmed
+- [x] Runehammer Games' *Crown and Skull*, *Crown and Skull, Volume 2* and
+      *Daisy Crown* were copies of Brandish Gilhelm's recordings filed under
+      the game's publisher — *removed 2026-09-25: all 27 tracks matched a
+      Brandish track by title and length first; 683 tracks left, lint clean*
 - [ ] Delete the staging leftovers above once checked
 - [ ] Library read-only from the Mac: after both switches, `/Volumes/media`
       and `/Volumes/media-staging` mount; `touch /Volumes/media/x` fails;
