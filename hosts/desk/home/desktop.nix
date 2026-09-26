@@ -71,14 +71,14 @@
     # Icons named by notifications and tray items (notify-send -i phone)
     # come from a theme, and desk had only hicolor, so most had no icon.
     #
-    # The wallpaper is Lucie Arnoux's Stonetop etching, from her shop
-    # (luciedraws.com; all rights reserved, personal use), cropped to fill the
-    # ultrawide.
+    # The wallpaper is Alec Sorensen's observatory dome for Electric
+    # Bastionland, from his Behance project (all rights reserved, personal
+    # use), cropped to fill the ultrawide.
     Service.Environment = [
       "QS_ICON_THEME=Adwaita"
       "DESK_WALLPAPER=${pkgs.fetchurl {
-        url = "https://static.wixstatic.com/media/e4013e_5436f86841ea4e49913010dc43330ef3~mv2.jpg";
-        hash = "sha256-xup7ZkAxwfEvoCa4WEnvWVqkS4FHNf/Ku162AxVN0VM=";
+        url = "https://mir-s3-cdn-cf.behance.net/project_modules/source/79981094254161.5e7a404e28363.png";
+        hash = "sha256-nYHb99OY6pO1TA6pgRM5qraIqpxZ/702+RBTXyVY8xY=";
       }}"
     ];
   };
