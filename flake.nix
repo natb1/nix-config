@@ -143,7 +143,10 @@
           (home {
             hostPlatform = "x86_64-linux";
             homeDirectory = "/home/n8";
-            extraModules = [ ./hosts/desk/home ];
+            extraModules = [
+              ./hosts/desk/home
+              ./modules/home/claude-remote-control.nix
+            ];
           })
         ];
       };
@@ -156,6 +159,7 @@
           (home {
             hostPlatform = "aarch64-darwin";
             homeDirectory = "/Users/n8";
+            extraModules = [ ./modules/home/claude-remote-control.nix ];
           })
           # macOS uses modules/home/wezterm.nix as-is: it installs the pinned
           # nightly (modules/home/wezterm-package.nix) as a real WezTerm.app and
@@ -176,6 +180,8 @@
         # Media filing for /srv/media (docs/desktop-migration.md, "Layout on
         # the share"); `nix run .#media-stage -- --help`.
         media-stage = pkgs.callPackage ./pkgs/media-stage { };
+        # Search and download into a staging batch; `nix run .#media-fetch -- --help`.
+        media-fetch = pkgs.callPackage ./pkgs/media-fetch { };
       });
 
       # Module regression tests. `nix flake check` is the gate before a switch.
@@ -189,6 +195,7 @@
           claude-daemon-test-suite = claudeDaemonTests.claude-daemon-test-suite;
           # Its unit and pipeline tests run in the build.
           media-stage = pkgs.callPackage ./pkgs/media-stage { };
+          media-fetch = pkgs.callPackage ./pkgs/media-fetch { };
         }
         // weztermTests.wezterm-tests
         // claudeDaemonTests.claude-daemon-tests

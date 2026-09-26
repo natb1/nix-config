@@ -116,7 +116,9 @@ agent or person per batch.
    - Tables: `media-stage review export <staging>/<batch>` writes
      `<batch>.review.json` with every row that is blank, `skip`, below `high`,
      or flagged in its note. Audio: `beet stage-review` already wrote it.
-   - Find the page: `Artifact` `list`, title **Media Filing Review**.
+   - Find the page: the link your CLAUDE.md gives, if it gives one (an
+     account that can't see the shared page has its own); otherwise
+     `Artifact` `list`, title **Media Filing Review**.
    - Load the batch: `ArtifactData` `set`, collection `reviews`, doc id
      `<batch>`, `file_path` the review JSON. Replace an older version of the
      same batch; never mix batches in one document.
@@ -124,8 +126,10 @@ agent or person per batch.
      be filed without asking (rows per top-level folder). Stop until they say
      the batch is reviewed. Don't apply anything from the batch before that.
 7. **Read the answers**: `ArtifactData` `query`, collection `answers`, where
-   `batch == <batch>`, `out_dir` `/srv/media/staging/<batch>.answers`. Then on
-   desk:
+   `batch == <batch>`, `out_dir` `/srv/media/staging/<batch>.answers` (or the
+   answers directory your CLAUDE.md names, if staging isn't writable for you:
+   use that path for `<batch>.answers` in every command below, and remove
+   it after `close`). Then on desk:
    - Tables: `media-stage review import /srv/media/staging/<batch> --answers
      /srv/media/staging/<batch>.answers`, then `check` again.
    - Audio: `beet stage-review --answers /srv/media/staging/<batch>.answers
@@ -155,17 +159,28 @@ agent or person per batch.
    moves `trash` rows to `staging/trash/<batch>/`, and logs each file with its
    original sha256 to `<batch>.applied.jsonl` (kept after `close`: it is how
    a later batch knows the content is filed). It can be rerun.
-10. **Lint and close**: `media-stage lint`. Mark the review filed with
-   `ArtifactData` `update` on `reviews/<batch>` (and `<batch>-audit`):
-   `{"closed": "<date>"}`. Report what is filed, what is left in staging and
-   why, and ask what to do with the leftovers and with the source. When the
-   user has settled the leftovers: `media-stage close
-   /srv/media/staging/<batch>`, which removes the batch's records. It refuses
-   while files remain or before a music batch's audit has passed.
-   `staging/trash/<batch>/` is not the batch's: it stays until the user
-   empties it. Never
-   delete `<batch>.manifest.jsonl` or the review files by hand: the manifest
-   is the only record of what each file was before beets renamed it.
+10. **Lint and close**: `media-stage lint`. Then take the filed batch off
+   the review page, so the page shows only reviews still waiting: every
+   `reviews` document of the batch (`<batch>`, `<batch>-2` and later
+   rounds, `<batch>-audit`) and its `answers` documents (`query`, `batch`
+   in those ids). Every answer was already saved to
+   `/srv/media/staging/<batch>.answers` in step 7; if a round's answers
+   were never read, read them first. Delete them all in one `ArtifactData`
+   `batch`. Report what is filed, what is left in staging and why, and ask
+   what to do with the leftovers and with the source. When the user has
+   settled the leftovers: `media-stage close /srv/media/staging/<batch>`,
+   which removes the batch's records. It refuses while files remain or
+   before a music batch's audit has passed. `staging/trash/<batch>/` is not
+   the batch's: it stays until the user empties it. Never delete
+   `<batch>.manifest.jsonl` or the review files in staging by hand: the
+   manifest is the only record of what each file was before beets renamed
+   it.
+
+## Finding and downloading
+
+To find and download media the user asks for, use the **media-fetch**
+skill. It downloads into a staging batch and hands it back here at step 2
+(Scan).
 
 ## Rules
 

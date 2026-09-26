@@ -23,12 +23,14 @@
     ./music.nix
     ./jellyfin.nix
     ./kavita.nix
+    ./soulseek.nix
     ./icloud.nix
     ./printing.nix
     ./iphone.nix
     ./eco.nix
     ./sensors.nix
     ./power-menu.nix
+    ./drlindsey.nix
   ];
 
   # Simultaneously the Tailscale node name, what avahi publishes (desk.local),

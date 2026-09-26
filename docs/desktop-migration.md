@@ -3708,6 +3708,76 @@ is for the phone on a slow link.
 Feishin also speaks Jellyfin, but it stays pointed at Navidrome: that is
 where the phone's favourites and playlists live.
 
+#### Finding music: Soulseek
+
+Added 2026-09-26. [slskd](https://github.com/slskd/slskd), a headless
+Soulseek client, runs on desk
+([`hosts/desk/soulseek.nix`](../hosts/desk/soulseek.nix)): web UI at
+`http://desk:5030`, tailnet-only like the other servers, and an HTTP API
+that `media-fetch` ([`pkgs/media-fetch`](../pkgs/media-fetch)) drives, so a
+Claude session can search, show the choices and download what the user
+picks. media-fetch's commands, IDs and JSON name no network: slskd is its
+one backend, and another could replace it without changing the `media-share`
+skill. Downloads land in `staging/soulseek/`, never the library. The
+`media-fetch` service on desk (`media-fetch pump`) asks each peer for one
+file at a time and moves a finished download into its `staging/<batch>`,
+filed like any other batch ([Filing a batch](#filing-a-batch)). Six albums
+queued at once from one peer were all refused, "Overwhelmed with requests".
+
+- **One client.** Soulseek disconnects the older session when an account
+  logs in twice, so nothing else (Nicotine+ on the Mac, sldl) uses the
+  account. Everything goes through slskd's API.
+- **Shares `music/`, read-only.** Many peers refuse users who share
+  nothing. Uploads are capped (3 slots, 2 MiB/s) so they cannot take the
+  whole uplink.
+- **Runs as n8,** so `media-stage` can move what it downloaded. The unit's
+  sandbox limits it to `/var/lib/slskd`, the two staging folders
+  (read-write) and `music/` (read-only).
+- **Measured 2026-09-26:** logged in on the first start, sharing 48 folders
+  and 694 files.
+
+##### No open port without a VPN
+
+A Soulseek transfer is a direct connection between two peers, and one of
+them has to accept it. desk cannot: T-Mobile Home Internet puts the gateway
+behind carrier-grade NAT (no public IPv4 of its own) and the gateway has no
+port-forwarding setting. Soulseek is IPv4-only, so IPv6 does not help. So
+today desk downloads only from peers whose own port is open, misses some
+search results, and shows every peer the home IP.
+
+A VPN with a forwarded port fixes both: peers see the VPN's address, and
+the forwarded port makes desk reachable.
+
+| Provider | Price (checked when bought) | Forwarding | Notes |
+| --- | --- | --- | --- |
+| **AirVPN** (chosen) | ~€2–3/mo multi-year, €7 monthly | Static, up to 5 ports | Email-only sign-up, takes crypto |
+| PIA | ~$2–3/mo multi-year | Dynamic, not on US servers | US-owned (Kape) |
+| ProtonVPN Plus | ~$4–5/mo | Dynamic, NAT-PMP | Swiss, audited |
+| Mullvad | €5/mo | None since 2023 | Rules itself out |
+
+AirVPN because it is the cheapest of the three and its port is **static**:
+it goes into slskd's `soulseek.listen_port` once, with no NAT-PMP renewal
+loop to run beside it.
+
+**Shape, when it lands.** Only slskd goes through the tunnel. Tailscale,
+the servers, restic and everything else stay on the normal connection.
+
+- slskd runs in its own network namespace whose only route out is a
+  WireGuard interface to AirVPN (the
+  [VPN-Confinement](https://github.com/Maroka-chan/VPN-Confinement) flake
+  module: `vpnNamespaces.<name>` plus `vpnConfinement.enable` on the
+  unit). If the tunnel is down, slskd has no network at all, so there is
+  no leak to the home IP and no separate kill switch to get wrong.
+- `openVPNPorts` lets the forwarded port into the namespace, and
+  `portMappings` exposes 5030 back to the host, so `http://desk:5030` on
+  the tailnet keeps working.
+- The WireGuard config from AirVPN's Config Generator (its private key
+  included) is hand-provisioned state, like `/etc/slskd/credentials`, and is
+  never in this repo: `/etc/slskd/airvpn.conf`, root 0600.
+- Not Gluetun: slskd has built-in Gluetun support, but that means a
+  container runtime on desk for one service, where a namespace does the same
+  job natively.
+
 **Keeping Claude on the procedure.** Added 2026-09-25. A Claude Code session on
 the Mac starts knowing nothing of this plan. Three layers, from soft to hard:
 
@@ -3914,6 +3984,12 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       their libraries, and check that Jellyfin Desktop on desk and the Mac
       plays a video, a transcode shows VAAPI in the dashboard's active
       sessions, and Kavita opens an EPUB and an RPG PDF
+- [x] Soulseek: slskd logged in, `music/` shared read-only — *2026-09-26*
+- [ ] Soulseek through AirVPN: account and forwarded port from AirVPN's
+      client area, WireGuard config to `/etc/slskd/airvpn.conf`, slskd
+      confined to the namespace. Check: slskd's reported IP is AirVPN's,
+      `ip netns exec` shows no route but the tunnel, AirVPN's port checker
+      reports the port open, and `http://desk:5030` still works from the Mac
 - [ ] **Postponed** (decided 2026-09-25): the Mac's Downloads videos, by
       [Filing a batch](#filing-a-batch). Not before `print` and `audio` are
       filed and `lint` is clean, so the procedure has been through one real
