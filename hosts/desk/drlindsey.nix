@@ -16,22 +16,15 @@
 # retries every 10 s.
 #
 # Media: their agent gets the media-fetch and media-share skills and runs the
-# whole procedure, search to filing. The tools run as n8, through sudo: the
-# slskd API key, the media-fetch jobs the pump service serves
-# (hosts/desk/soulseek.nix) and /srv/media are all n8's. `media-fetch`,
-# `media-stage` and `beet` in drlindsey's PATH are wrappers for
-# `sudo -u n8 -H <n8's copy>`, so the skills' commands work unchanged, on
-# n8's state and beets config. The sudo rule takes any arguments, and beet
-# takes --config and plugin paths — so this is, in effect, drlindsey running
-# code as n8. Chosen knowingly; narrow it with a wrapper that checks the
-# arguments if that stops being acceptable. Use absolute /srv/media paths:
-# n8 cannot read drlindsey's home, so relative paths from there fail.
+# whole procedure, search to filing, as n8's does. They are in the media
+# group (hosts/desk/media-group.nix) and get the same tools and beets config
+# (home/media-tools.nix), so they run media-fetch, media-stage and beet as
+# themself, on the shared state: staging and the library, media-fetch's jobs,
+# beets' library, slskd's API key. Nothing of n8's account beyond that.
 #
-# Two places the media-share skill assumes n8 (their CLAUDE.md lines below
-# override them): the Media Filing Review page is n8's artifact, which
-# drlindsey's Claude account can't list, so they have their own; and
-# /srv/media/staging is n8's and not writable for drlindsey, so the page's
-# answers are saved to answersDir instead — drlindsey's, readable by n8.
+# One place the media-share skill assumes n8 (their CLAUDE.md line below
+# overrides it): the Media Filing Review page is n8's artifact, which
+# drlindsey's Claude account can't list, so they have their own.
 #
 # linger: the rc service is a systemd user unit, and without linger drlindsey's
 # user manager — and so the service — only runs while drlindsey is logged in.
@@ -40,33 +33,14 @@
 
 let
   user = "drlindsey";
-
-  # n8's own copies, by their stable profile path, so the sudo rule survives
-  # rebuilds.
-  n8Bin = "/etc/profiles/per-user/n8/bin";
-  mediaTools = [ "media-fetch" "media-stage" "beet" ];
-
-  answersDir = "/var/lib/media-answers";
   reviewPage = "https://claude.ai/artifact/D4LiLNMwES1pCW8iHebEqC";
 in
 {
-  security.sudo.extraRules = [
-    {
-      users = [ user ];
-      runAs = "n8";
-      commands = map (tool: {
-        command = "${n8Bin}/${tool}";
-        options = [ "NOPASSWD" ];
-      }) mediaTools;
-    }
-  ];
-
-  systemd.tmpfiles.rules = [ "d ${answersDir} 0755 ${user} users -" ];
-
   users.users.${user} = {
     isNormalUser = true;
     home = "/home/${user}";
     linger = true;
+    extraGroups = [ "media" ];
   };
 
   home-manager.users.${user} =
@@ -76,24 +50,17 @@ in
         ../../modules/home/claude-code.nix
         ../../modules/home/claude-remote-control.nix
         ../../modules/home/gh.nix
-        ../../modules/home/media-skills.nix
+        ./home/media-tools.nix
       ];
 
       home.packages = [
         pkgs.jq
         pkgs.python3
-      ]
-      ++ map (
-        tool: pkgs.writeShellScriptBin tool ''
-          exec /run/wrappers/bin/sudo -u n8 -H ${n8Bin}/${tool} "$@"
-        ''
-      ) mediaTools;
+      ];
 
       home.file.".claude/CLAUDE.md".text = ''
         - Media Filing Review page (media-share step 6): ${reviewPage}
           — yours; the shared one isn't visible to this account.
-        - media-share answers (step 7): staging isn't writable for you, so
-          save them to `${answersDir}/<batch>.answers` instead.
       '';
 
       # A managed git config, with no identity: gh.nix's credential helper is

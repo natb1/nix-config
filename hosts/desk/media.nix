@@ -70,8 +70,11 @@
         "read only" = "no";
         "valid users" = "n8";
         "force user" = "n8";
-        "create mask" = "0644";
-        "directory mask" = "0755";
+        # Group-writable, and the media group's default ACL honoured, so what
+        # the Mac stages is the group's to edit too (hosts/desk/media-group.nix).
+        "inherit acls" = "yes";
+        "create mask" = "0664";
+        "directory mask" = "0775";
       };
     };
   };
@@ -79,9 +82,11 @@
   # disko creates the subvolume root-owned, and `force user = n8` means every
   # write through the share is n8's — so without this the share is read-only
   # in practice. `d` adjusts the owner of a directory that already exists.
+  # 0775: with the media group's ACL on them, the group bits are the ACL mask
+  # (hosts/desk/media-group.nix).
   systemd.tmpfiles.rules = [
-    "d /srv/media 0755 n8 users -"
-    "d /srv/media/staging 0755 n8 users -"
+    "d /srv/media 0775 n8 users -"
+    "d /srv/media/staging 0775 n8 users -"
   ];
 
   # The procedure, where anyone listing either share sees it. Installed, not

@@ -276,6 +276,21 @@ class Helpers(unittest.TestCase):
         self.assertEqual(ms.norm_title("Aguirre, the Wrath of God"), ms.norm_title("Aguirre The Wrath Of God"))
         self.assertEqual(ms.norm_title("Big Sick, The"), ms.norm_title("The Big Sick"))
 
+    def test_year_from_embedded_title_or_folder(self):
+        rec = {"path": "The Dark Crystal (1982)/The Dark Crystal - Bluray-1080p.mkv",
+               "guess": ms.guess("The Dark Crystal - Bluray-1080p.mkv"),
+               "meta": {"tags": {"title": "The Dark Crystal (1982) RM4K"}}}
+        t = ms.video_target(rec)
+        self.assertEqual(t["stem"], "movies/The Dark Crystal (1982)/The Dark Crystal (1982)")
+        self.assertIn("year from embedded title", t["note"])
+        rec["meta"] = {}
+        t = ms.video_target(rec)
+        self.assertEqual(t["stem"], "movies/The Dark Crystal (1982)/The Dark Crystal (1982)")
+        self.assertIn("year from folder", t["note"])
+        # A folder that names another film says nothing about this one.
+        rec["path"] = "Labyrinth (1986)/The Dark Crystal - Bluray-1080p.mkv"
+        self.assertIsNone(ms.video_target(rec)["stem"])
+
     def test_ep_code(self):
         self.assertEqual(ms.ep_code(1, 2), "S01E02")
         self.assertEqual(ms.ep_code(1, [2, 3]), "S01E02-E03")
@@ -375,6 +390,25 @@ class Checks(unittest.TestCase):
                                                         {"track": "5", "title": "Prelude No. 5"}))
         self.assertIn("in the tags", sc.name_conflict("03 Greensleeves.mp3", {"track": "3", "title": "Fantasia"}))
         self.assertEqual(sc.name_conflict("track.mp3", {"track": "3", "title": "Fantasia"}), "")
+
+    def test_name_layout(self):
+        vinyl = [f"Animals as Leaders - The Joy of Motion [12 Vinyl 0{d}] - 0{t} T{d}{t}.flac"
+                 for d in (1, 2) for t in range(1, 7)]
+        layout = sc.name_layout(vinyl)
+        self.assertEqual(layout, {"format": "Vinyl", "discs": [6, 6]})
+        # Side two's "01" is track 7 across the release: no conflict.
+        self.assertEqual(sc.name_offset(vinyl[6], layout), 6)
+        self.assertEqual(sc.name_conflict(vinyl[6], {"track": "7", "title": "T21"}, 6), "")
+        self.assertIn("track 1 in the name, 8 in the tags",
+                      sc.name_conflict(vinyl[6], {"track": "8", "title": "T21"}, 6))
+        self.assertTrue(sc.layout_fits(layout, '12" Vinyl', [6, 6]))
+        self.assertFalse(sc.layout_fits(layout, "CD", [12]))
+        self.assertFalse(sc.layout_fits(layout, "CD", [6, 6]))  # the format too
+        self.assertEqual(sc.name_layout([f"1-0{t} T.flac" for t in (1, 2)] + [f"2-0{t} T.flac" for t in (1, 2, 3)]),
+                         {"format": None, "discs": [2, 3]})
+        self.assertIsNone(sc.name_layout([f"0{t} T.flac" for t in (1, 2)]))  # no discs
+        self.assertIsNone(sc.name_layout(["1-01 T.flac", "1-02 T.flac"]))  # one disc, no format
+        self.assertIsNone(sc.name_layout(["1-01 T.flac", "2-02 T.flac"]))  # a gap
 
     def test_length_off(self):
         self.assertEqual(sc.length_off(242, 240), 0)
