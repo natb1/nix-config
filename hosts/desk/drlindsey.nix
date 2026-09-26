@@ -1,6 +1,7 @@
 # drlindsey — a second user on desk whose only job is running their own
 # `claude rc` (modules/home/claude-remote-control.nix), signed in to their own
-# Claude account, in their own repo at ~/work.
+# Claude account, in their own clone of this repo at ~/natb1/nix-config (the
+# module's default directory).
 #
 # Deliberately not given n8's home config (modules/home): that carries n8's git
 # identity and n8's SSH authorized_keys. Of it they get only what is generic —
@@ -10,9 +11,9 @@
 #   sudo machinectl shell drlindsey@
 #
 # and the one-time setup there is `gh auth login` for their GitHub account, then
-# `cd ~/work && claude` — sign in with /login and accept the workspace trust
-# dialog. Until then the rc service exits with an
-# error and retries every 10 s.
+# `cd ~/natb1/nix-config && claude` — sign in with /login and accept the
+# workspace trust dialog. Until then the rc service exits with an error and
+# retries every 10 s.
 #
 # linger: the rc service is a systemd user unit, and without linger drlindsey's
 # user manager — and so the service — only runs while drlindsey is logged in.
@@ -38,8 +39,6 @@ in
         ../../modules/home/gh.nix
       ];
 
-      services.claudeRemoteControl.directory = "${config.home.homeDirectory}/work";
-
       # A managed git config, with no identity: gh.nix's credential helper is
       # written into it, so `gh auth login` also covers git over https.
       programs.git.enable = true;
@@ -48,15 +47,16 @@ in
       # shell stops at zsh-newuser-install.
       programs.zsh.enable = true;
 
-      # rc's worktree mode needs a git repo with a commit to branch from, so
-      # make one on first activation. Left alone once it exists.
+      # rc's worktree mode needs a git repo to branch from, so clone this one
+      # (public, so no credentials needed) on first activation. Left alone once
+      # it exists. A failed clone (no network) only warns; the next activation
+      # retries, and until then the rc service retries too.
       home.activation.claudeRemoteControlRepo = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         repo="${config.services.claudeRemoteControl.directory}"
         if [ ! -e "$repo/.git" ]; then
-          $DRY_RUN_CMD ${pkgs.git}/bin/git init -q "$repo"
-          $DRY_RUN_CMD ${pkgs.git}/bin/git -C "$repo" \
-            -c user.name=${user} -c user.email=${user}@desk \
-            commit -q --allow-empty -m "Initial commit"
+          $DRY_RUN_CMD ${pkgs.git}/bin/git clone -q \
+            https://github.com/natb1/nix-config.git "$repo" \
+            || echo "warning: could not clone nix-config into $repo" >&2
         fi
       '';
 
