@@ -20,6 +20,7 @@
     ./desktop.nix
     ./gdrive.nix
     ./media.nix
+    ./media-group.nix
     ./music.nix
     ./jellyfin.nix
     ./kavita.nix

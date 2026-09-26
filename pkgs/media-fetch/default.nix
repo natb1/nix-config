@@ -3,8 +3,12 @@
 # Its interface names no network; the backend behind it today is desk's
 # slskd (hosts/desk/soulseek.nix). Standard library only. The tests run in
 # the build, against a fake slskd.
+#
+# stateDir: where results and jobs live, for every user of this copy (the
+# script's MEDIA_FETCH_STATE, which still overrides it). Default: each
+# user's own $XDG_STATE_HOME/media-fetch.
 
-{ python3Packages }:
+{ lib, python3Packages, stateDir ? null }:
 
 python3Packages.buildPythonApplication {
   pname = "media-fetch";
@@ -17,6 +21,8 @@ python3Packages.buildPythonApplication {
     install -Dm755 media_fetch.py $out/bin/media-fetch
     runHook postInstall
   '';
+
+  makeWrapperArgs = lib.optionals (stateDir != null) [ "--set-default" "MEDIA_FETCH_STATE" stateDir ];
 
   doCheck = true;
   checkPhase = ''
