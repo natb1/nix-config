@@ -256,8 +256,28 @@ class MediaFetchTest(unittest.TestCase):
         self.fake.hold = False
         code, out = self.cli("wait", "b", "--timeout", "5", "--interval", "0")
         self.assertEqual(code, 0, out)
+        moves, _, final = out.partition("--\n")
+        self.assertEqual(sum("delivered" in l for l in moves.splitlines()), 3)  # as each arrived
+        self.assertEqual(sum("delivered" in l for l in final.splitlines()), 3)
         self.assertEqual(asked("peer"), [])  # all delivered, then forgotten
         self.assertEqual(sorted(p.name for p in (self.staging / "b").iterdir()), ["A", "B", "C"])
+
+    def test_estimates_count_the_jobs_ahead_at_the_source(self):
+        # Offered at 1 B/s; the files are 10 and 11 bytes, then 10.
+        self.fake.responses = [response("peer", "M\\A", ["01", "02"], speed=1),
+                               response("peer", "M\\B", ["01"], speed=1)]
+        ids = [c["id"] for c in self.search()["candidates"]]
+        self.fake.hold = True
+        code, out = self.cli("get", ids[0], "--batch", "b", "--json")
+        self.assertEqual(json.loads(out)["eta"], 21)
+        self.cli("get", ids[1], "--batch", "b")
+        eta = lambda: {s["title"]: s.get("eta") for s in json.loads(self.cli("status", "--json")[1])}
+        self.assertEqual(eta(), {"A": 21, "B": 31})
+        # Measured speed wins once a file is under way: 7 B/s, 3 bytes in.
+        [t] = self.fake.transfers["peer"]
+        t.update(state="InProgress", averageSpeed=7, bytesTransferred=3)
+        self.assertEqual(eta()["A"], 3)  # (7 + 11) / 7
+        self.assertIn("(under a minute left)", self.cli("status")[1])
 
     def test_per_source_limit_is_configurable(self):
         self.fake.responses = [response("peer", "M\\A", ["01", "02", "03"])]

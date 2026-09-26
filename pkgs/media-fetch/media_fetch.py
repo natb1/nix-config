@@ -25,7 +25,11 @@ backend today is slskd (Soulseek), chosen by MEDIA_FETCH_BACKEND.
 
 A source is asked for at most MEDIA_FETCH_PER_SOURCE files at a time, across
 all jobs; the rest of a job waits here, queued, and `wait` or `status` asks
-for the next ones as earlier ones finish. Keep `wait` running.
+for the next ones as earlier ones finish. Keep `wait` running: it prints a
+line whenever a job moves. `status`, `wait` and `get` estimate the time
+left: what is left of the job and of the jobs ahead of it at its source,
+at the source's measured speed (before a file starts: the speed it offered
+in the search). Time spent in a source's own queue is not counted.
 
 Environment:
   MEDIA_STAGING        batch directories' parent (default /srv/media/staging)
@@ -93,7 +97,8 @@ class Backend:
 
     def progress(self, job):
         """{file name: {"state": one of STATES, "bytes": transferred}}, plus
-        "reason" (why, in a few words) on a failed file."""
+        "reason" (why, in a few words) on a failed file and "speed" (bytes/s)
+        on a downloading one."""
         raise NotImplementedError
 
     def locate(self, job, file):
@@ -251,6 +256,7 @@ class Slskd(Backend):
                 p["reason"] = self._reason(st, t.get("exception"))
             elif st == "InProgress":
                 p["state"] = "downloading"
+                p["speed"] = t.get("averageSpeed") or 0
             else:
                 p["state"] = "queued"
             out[f["name"]] = p
@@ -492,10 +498,42 @@ def job_summary(job, prog):
             "failures": {k: p.get("reason", "") for k, p in prog.items() if p["state"] == "failed"}}
 
 
-def print_job(s):
+def with_eta(be, progs, selectors=()):
+    """Summaries of the selected jobs, each still moving with "eta" (s). A
+    source serves its jobs one after another, oldest first, so a job's
+    estimate covers what is left of it and of the jobs before it there."""
+    jobs = sorted(load_jobs(), key=lambda j: j["at"])
+    sums = {j["id"]: job_summary(j, progs.get(j["id"], {})) for j in jobs}
+    ahead = Counter()
+    for j in jobs:
+        s, prog = sums[j["id"]], progs.get(j["id"], {})
+        if s["state"] not in ("queued", "downloading"):
+            continue
+        live = {n: p for n, p in prog.items() if p["state"] in ("queued", "downloading")}
+        left = sum(f["size"] - live[f["name"]]["bytes"] for f in j["files"] if f["name"] in live)
+        speed = sum(p.get("speed") or 0 for p in live.values()) or j.get("speed") or 0
+        key = be.source_key(j)
+        ahead[key] += left
+        if speed:
+            s["eta"] = round(ahead[key] / speed)
+    return [sums[j["id"]] for j in load_jobs(selectors)] if selectors else list(sums.values())
+
+
+def _eta(s):
+    if s < 60:
+        return "under a minute"
+    m = round(s / 60)
+    return f"~{m}m" if m < 60 else f"~{m // 60}h{m % 60:02d}m"
+
+
+def print_job(s, brief=False):
     pct = f"{100 * s['bytes'] / s['size']:.0f}%" if s["size"] else ""
     line = f"{s['id']:<10} {s['state']:<11} {pct:>4}  {s['batch']}/{s['title']}"
-    print(line)
+    if "eta" in s:
+        line += f"  ({_eta(s['eta'])} left)"
+    print(line, flush=True)
+    if brief:
+        return
     if s["state"] == "failed":
         for name, why in s["failures"].items():
             print(f"{'':12}failed: {name}" + (f" ({why})" if why else ""))
@@ -601,25 +639,29 @@ def cmd_get(a):
     if a.files:
         files = [files[i - 1] for i in parse_picks(a.files, len(files))]
     job = {"id": c["id"], "batch": a.batch, "title": _safe(c["title"]), "files": files,
-           "source": c["source"], "at": _now(), "pending": [f["name"] for f in files]}
+           "source": c["source"], "at": _now(), "pending": [f["name"] for f in files],
+           "speed": c["availability"]["speed"]}
     save_job(job)
     try:
-        pump(be, raise_for=job["id"])
+        progs = pump(be, raise_for=job["id"])
     except FetchError:
         (state_dir() / "jobs" / f"{job['id']}.json").unlink()
         raise
     [job] = load_jobs([job["id"]])
+    [s] = with_eta(be, progs, [job["id"]])
+    if "eta" in s:
+        job["eta"] = s["eta"]
     if a.json:
         print(json.dumps(public(job), indent=1))
     else:
+        eta = f", {_eta(s['eta'])}" if "eta" in s else ""
         print(f"{job['id']}: {len(files)} file(s), {_size(sum(f['size'] for f in files))}, "
-              f"for {a.batch}/{job['title']}")
+              f"for {a.batch}/{job['title']}{eta}")
 
 
 def cmd_status(a):
     be = backend()
-    progs = pump(be)
-    out = [job_summary(j, progs.get(j["id"], {})) for j in load_jobs(a.jobs)]
+    out = with_eta(be, pump(be), a.jobs)
     if a.json:
         print(json.dumps(out, indent=1))
         return
@@ -656,6 +698,7 @@ def deliver(be, job):
 def cmd_wait(a):
     be = backend()
     deadline = time.monotonic() + a.timeout if a.timeout is not None else None
+    seen = {}
     while True:
         progs = pump(be)
         jobs = [j for j in load_jobs(a.jobs) if not j.get("delivered")]
@@ -669,14 +712,21 @@ def cmd_wait(a):
                 deliver(be, j)
             elif s["state"] != "failed":
                 pending = True
+        if not a.json:  # a line whenever a job moves: what a background run shows
+            for s in with_eta(be, progs, a.jobs):
+                mark = (s["state"],) if s["state"] == "delivered" else \
+                    (s["state"], s.get("done", 0), s.get("failed", 0))
+                if seen.get(s["id"]) != mark:
+                    seen[s["id"]] = mark
+                    print_job(s, brief=True)
         if not pending or (deadline is not None and time.monotonic() >= deadline):
             break
         time.sleep(a.interval)
-    progs = pump(be)
-    out = [job_summary(j, progs.get(j["id"], {})) for j in load_jobs(a.jobs)]
+    out = with_eta(be, pump(be), a.jobs)
     if a.json:
         print(json.dumps(out, indent=1))
     else:
+        print("--")
         for s in out:
             print_job(s)
     if any(s["state"] not in ("delivered",) for s in out):
