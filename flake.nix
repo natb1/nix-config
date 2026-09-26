@@ -69,6 +69,9 @@
         pkg: builtins.elem (nixpkgs.lib.getName pkg) [
           "claude-code"
           "google-chrome"
+          # hosts/desk/gaming.nix
+          "steam"
+          "steam-unwrapped"
         ];
 
       # Home-manager wiring shared by every host. hostPlatform in-module is the
