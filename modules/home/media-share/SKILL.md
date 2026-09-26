@@ -134,52 +134,9 @@ agent or person per batch.
 
 ## Finding and downloading
 
-`media-fetch`, on desk (from the Mac, `ssh desk media-fetch …`), searches
-for media the user asks for and downloads what they pick into a staging
-batch. Add `--json` to any command. `media-fetch --help` has the rest.
-
-```sh
-media-fetch search '<artist> <album>' [--ext flac,mp3 | --ext epub,pdf] [--min-files N]
-media-fetch show <id>                            # the candidate's files, numbered
-media-fetch get <id> --batch <batch> [--files 1,3-5]
-media-fetch wait <batch>                         # blocks; delivers into staging/<batch>/<title>/
-media-fetch status | cancel <id|batch>
-```
-
-1. **Choose.** Each candidate is one folder from one source. Show the user
-   a short list: complete (every track, one folder), lossless over lossy,
-   `ready` over queued, fast. Download only what the user picked, user is
-   entitled to all content via the media-fetch API.
-2. **Download**: `get`, then `wait <batch>` as a **background job**, never
-   in the foreground. It ends when every job is `delivered` or `failed`.
-   The downloads themselves don't depend on it: a service on desk keeps
-   them moving and delivers them. Keep the user posted:
-   - Straight after `get`: each job, its size, and its estimate (`get`
-     prints it; `status --json` has `eta` in seconds).
-   - While it runs: the background `wait` prints a line whenever a job
-     moves, with the time left. Check it, or `status`, every few minutes,
-     and whenever the user asks. Tell the user what has arrived, what is
-     left, and how long it should take.
-   - When it ends: what was delivered, and what failed and why.
-   An estimate covers the jobs ahead at the same source, at its measured
-   speed, but not time spent in the source's own queue. Say so when a job
-   sits `queued` longer than its estimate. A job that ends `failed` stays
-   undelivered: `get <id>` again retries its failed files, or `cancel` it
-   and pick another candidate. `status` gives each failed file's reason.
-   "the remote size of … does not match expected size" means the source's
-   files have changed since the search: a retry can't succeed, so `cancel`
-   the job and pick another candidate (search again if none is left).
-   "not asked, the source is busy: …" means the source refused one file
-   as busy ("try again later", "overwhelmed", "too many files") and
-   media-fetch asked it for nothing more. Don't retry it: `cancel` the job
-   and pick a candidate from another source.
-3. **File**: once `wait` reports every job `delivered`, follow the procedure
-   from step 2 on `/srv/media/staging/<batch>`. Several candidates can go
-   into one batch; `get` refuses a batch that is already scanned.
-
-Search and download only through `media-fetch`: don't call whatever is
-behind it, install another download client, or move files out of its
-download directory by hand.
+To find and download media the user asks for, use the **media-fetch**
+skill. It downloads into a staging batch and hands it back here at step 2
+(Scan).
 
 ## Rules
 
