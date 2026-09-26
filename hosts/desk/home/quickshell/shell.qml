@@ -15,6 +15,8 @@ import Quickshell
 import Quickshell.Io
 
 ShellRoot {
+    Wallpaper {}
+
     Panel {
         id: panel
     }

@@ -99,6 +99,13 @@ environment {
 
 prefer-no-csd
 
+// Quickshell's wallpaper (quickshell/Wallpaper.qml) also shows behind the
+// workspaces in the overview, instead of a plain backdrop.
+layer-rule {
+    match namespace="^quickshell-wallpaper$"
+    place-within-backdrop true
+}
+
 screenshot-path "~/screenshots/%Y-%m-%d %H-%M-%S.png"
 
 animations {

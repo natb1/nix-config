@@ -45,8 +45,8 @@
     terminal=xdg-terminal-exec
   '';
 
-  # The desktop shell, one Quickshell config (./quickshell): notification
-  # pop-ups and history, and a panel on Mod+Shift+N with the clock, status
+  # The desktop shell, one Quickshell config (./quickshell): the wallpaper,
+  # notification pop-ups and history, and a panel on Mod+Shift+N with the clock, status
   # (Tailscale, Bluetooth, Wi-Fi, CPU/memory), volume, what is playing and any
   # tray icons. There is no bar. It is also the notification daemon, which
   # the phone relies on once it forwards everything over ANCS — a stream of
@@ -70,9 +70,24 @@
     };
     # Icons named by notifications and tray items (notify-send -i phone)
     # come from a theme, and desk had only hicolor, so most had no icon.
-    Service.Environment = [ "QS_ICON_THEME=Adwaita" ];
+    #
+    # The wallpaper is NixOS's own, cropped to fill the ultrawide.
+    Service.Environment = [
+      "QS_ICON_THEME=Adwaita"
+      "DESK_WALLPAPER=${pkgs.nixos-artwork.wallpapers.nineish-dark-gray.gnomeFilePath}"
+    ];
   };
   home.packages = [ pkgs.adwaita-icon-theme ];
+
+  # Dark mode. color-scheme is what the settings portal
+  # (xdg-desktop-portal-gnome) reports, which Chrome and libadwaita apps
+  # follow; GTK 3 apps read only their theme name, so they get Adwaita-dark.
+  dconf.settings."org/gnome/desktop/interface".color-scheme = "prefer-dark";
+  gtk = {
+    enable = true;
+    theme.name = "Adwaita-dark";
+    gtk4.theme = null;
+  };
 
   services.swayidle = {
     enable = true;
