@@ -49,6 +49,85 @@ Home-manager is integrated as a NixOS / nix-darwin module, so one rebuild does
 both system and user config. There is no standalone `home-manager switch`
 entry point.
 
+## Setting up a device
+
+What a switch cannot do: the sign-ins, passwords and pairings, once per
+device. Everything desk serves — the media shares, the printer, the music
+server — is **tailnet-only**, so Tailscale comes first on every device. What
+each step creates is listed under [State this repo does not
+manage](#state-this-repo-does-not-manage).
+
+### Tailscale (every device)
+
+| Device | Steps |
+| --- | --- |
+| desk, wsl | After the first switch, `sudo tailscale up` and follow the login URL ([`modules/nixos/tailscale.nix`](modules/nixos/tailscale.nix)). |
+| mba | After the first switch, `sudo tailscale up` ([`modules/darwin/tailscale.nix`](modules/darwin/tailscale.nix) runs the open-source `tailscaled`, not the App Store app). |
+| iPhone | Install **Tailscale** from the App Store, sign in to the same tailnet, and leave the VPN on. |
+
+Check: `tailscale status` lists `desk`, and `tailscale ping desk` answers. The
+short name `desk` works everywhere through MagicDNS.
+
+### desk (once, after its first switch)
+
+1. **Samba password** for the media shares: `sudo smbpasswd -a n8`. It is
+   Samba's own, not the login password.
+2. **Music server account:** open `http://desk:4533` and create the admin
+   ([`hosts/desk/music.nix`](hosts/desk/music.nix)). Then start **Feishin**
+   and add the server `http://localhost:4533` with that account.
+3. **iPhone over Bluetooth** (notifications and texts,
+   [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):
+   `tether --bt-status` should report MAP + PBAP + ANCS. Pair from
+   `tether-gtk` (Devices) or `tether --bt-pair <phone address>`, and on the
+   phone allow **Show Notifications** and **Sync Contacts**.
+   `tether --bt-setup` names anything missing.
+4. The rest (Google Drive, iCloud Photos, the restic backup) have their own
+   steps in [State this repo does not manage](#state-this-repo-does-not-manage).
+
+The printer needs nothing: the queue is declared
+([`hosts/desk/printing.nix`](hosts/desk/printing.nix)). Check: `lpstat -t`
+shows `brother` enabled and default.
+
+### mba (once, after its first switch)
+
+1. **Media shares.** The launchd agent in
+   [`hosts/mba/desk.nix`](hosts/mba/desk.nix) mounts both at login and
+   every five minutes while desk is up. The first time, macOS asks for the
+   Samba password: enter it and tick **Remember this password in my
+   keychain**. Check: `/Volumes/media` (the library, **read-only**) and
+   `/Volumes/media-staging` (writable) both exist, and
+   `touch /Volumes/media/x` fails.
+2. **Printer.** Nothing to do: every switch runs `lpadmin` for the
+   `desk_brother` queue. A switch made while desk was down only warns, so
+   switch again once it is up. Check: `lpstat -p desk_brother`. To add it by
+   hand, use Terminal, not the Add Printer window:
+   `lpadmin -p desk_brother -D "Brother (desk)" -E -v ipp://desk/printers/brother -m everywhere`.
+3. **ssh to desk,** for filing media (`ssh desk media-stage …`): nothing to
+   do. The Mac's public key is in `services.sshAuthorizedKeys.keys` in
+   [`modules/home/default.nix`](modules/home/default.nix), which every host
+   accepts. A new device adds its key there. Check: `ssh desk true`.
+4. **Music:** Navidrome's web player at `http://desk:4533`.
+
+### iPhone (once)
+
+1. **Tailscale**, as above.
+2. **Printer.** iOS has no screen for a printer by address, so it takes a
+   profile: AirDrop
+   [`hosts/desk/airprint-desk.mobileconfig`](hosts/desk/airprint-desk.mobileconfig)
+   from the Mac, then **Settings → Profile Downloaded → Install**. Check: the
+   share sheet's Print lists **Brother on desk** and a page prints. (A
+   profile can add a printer; it cannot install or configure an app.)
+3. **Media in Files:** Files → ⋯ → **Connect to Server** → `smb://desk/media`,
+   as **Registered User** `n8` with the Samba password. It is read-only; add
+   `smb://desk/media-staging` too for putting files on the share (they are
+   filed from there, [Filing a batch](docs/desktop-migration.md#filing-a-batch)).
+4. **Music: Amperfy** from the App Store. Server `http://desk:4533`, the
+   Navidrome account from desk step 2. Downloads play offline; CarPlay works.
+5. **Notifications and texts on desk:** pair from desk (desk step 3); allow
+   **Show Notifications** and **Sync Contacts** when the phone asks. If
+   notifications stop while texts still arrive, turn Bluetooth off and on
+   **on the phone**; desk shows an alert when this happens.
+
 ## Updating inputs
 
 `flake.lock` is shared by every host, and its routine writer is
@@ -169,8 +248,8 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   `nix-config-509614`. To recreate, follow the comment at the top of
   `hosts/desk/gdrive.nix`; if only the token has expired,
   `rclone config reconnect gdrive:`.
-- `desk`'s Samba password for n8, which the `media` share in
-  `hosts/desk/media.nix` checks. Samba keeps its own database, separate from
+- `desk`'s Samba password for n8, which the `media` and `media-staging`
+  shares in `hosts/desk/media.nix` check. Samba keeps its own database, separate from
   Unix accounts; set it with `sudo smbpasswd -a n8`. On `mba` the same
   password sits in the login keychain, saved the first time
   `hosts/mba/desk.nix` mounts the share ("Remember this password").
