@@ -75,13 +75,22 @@ short name `desk` works everywhere through MagicDNS.
 2. **Music server account:** open `http://desk:4533` and create the admin
    ([`hosts/desk/music.nix`](hosts/desk/music.nix)). Then start **Feishin**
    and add the server `http://localhost:4533` with that account.
-3. **iPhone over Bluetooth** (notifications and texts,
+3. **Video server (Jellyfin):** open `http://desk:8096`, create the admin, and
+   add the libraries listed in
+   [`hosts/desk/jellyfin.nix`](hosts/desk/jellyfin.nix): `movies`, `tv`,
+   `youtube` (as Home Videos) and `music`. Then start **Jellyfin Desktop** and
+   add the server `http://localhost:8096`. Check: Dashboard → Playback →
+   Transcoding shows VAAPI on the `12:00.0` render node.
+4. **Book server (Kavita):** open `http://desk:5000`, create the admin, and add
+   two libraries of type **Book**: `/srv/media/books` and `/srv/media/rpg`
+   ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)).
+5. **iPhone over Bluetooth** (notifications and texts,
    [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):
    `tether --bt-status` should report MAP + PBAP + ANCS. Pair from
    `tether-gtk` (Devices) or `tether --bt-pair <phone address>`, and on the
    phone allow **Show Notifications** and **Sync Contacts**.
    `tether --bt-setup` names anything missing.
-4. The rest (Google Drive, iCloud Photos, the restic backup) have their own
+6. The rest (Google Drive, iCloud Photos, the restic backup) have their own
    steps in [State this repo does not manage](#state-this-repo-does-not-manage).
 
 The printer needs nothing: the queue is declared
@@ -109,6 +118,10 @@ shows `brother` enabled and default.
 4. **Music:** open **Feishin** (in `~/Applications/Home Manager Apps`), add
    the server `http://desk:4533`, and log in with the Navidrome account from
    desk step 2. The web player at `http://desk:4533` works too.
+5. **Video:** open **Jellyfin Desktop** (beside Feishin), add the server
+   `http://desk:8096`, and log in with the Jellyfin account from desk step 3.
+6. **Books:** `http://desk:5000` in a browser, the Kavita account from desk
+   step 4.
 
 ### iPhone (once)
 
@@ -125,7 +138,11 @@ shows `brother` enabled and default.
    filed from there, [Filing a batch](docs/desktop-migration.md#filing-a-batch)).
 4. **Music: Amperfy** from the App Store. Server `http://desk:4533`, the
    Navidrome account from desk step 2. Downloads play offline; CarPlay works.
-5. **Notifications and texts on desk:** pair from desk (desk step 3); allow
+   **Video:** **Jellyfin** from the App Store (free), server
+   `http://desk:8096`. **Books:** `http://desk:5000` in Safari (Add to Home
+   Screen), or an OPDS reader such as Panels or Chunky with the OPDS URL from
+   Kavita's user settings.
+5. **Notifications and texts on desk:** pair from desk (desk step 5); allow
    **Show Notifications** and **Sync Contacts** when the phone asks. If
    notifications stop while texts still arrive, turn Bluetooth off and on
    **on the phone**; desk shows an alert when this happens.
@@ -259,6 +276,13 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   on the first visit to `http://desk:4533`, and Feishin on desk and Amperfy on
   the phone log in with it. The database in `/var/lib/navidrome` is rebuilt
   by a rescan if lost, except playlists, favourites and play counts.
+- `desk`'s Jellyfin and Kavita accounts and libraries
+  (`hosts/desk/jellyfin.nix`, `hosts/desk/kavita.nix`): the admin of each is
+  created on its first visit (`http://desk:8096`, `http://desk:5000`), and the
+  libraries are added there. State is in `/var/lib/jellyfin` and
+  `/var/lib/kavita` (watched state and reading progress are lost with it).
+  Kavita's login-signing key, `/etc/kavita/token-key`, is generated on first
+  start; deleting it only logs everyone out.
 - `desk`'s restic credentials for the media backup in `hosts/desk/media.nix`,
   in `/etc/restic/` (root, dir 0700, files 0600). `media.password` is the
   repository's **encryption key**: there is no reset, and without it the

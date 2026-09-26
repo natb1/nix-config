@@ -21,6 +21,8 @@
     ./gdrive.nix
     ./media.nix
     ./music.nix
+    ./jellyfin.nix
+    ./kavita.nix
     ./icloud.nix
     ./printing.nix
     ./iphone.nix

@@ -3599,6 +3599,37 @@ read-only to everything but beets.
 Nothing needs a rescan after an import: Navidrome watches the folder, with a
 six-hourly scan as the backstop.
 
+#### Watching and reading
+
+Added 2026-09-26. Two more servers beside Navidrome, both tailnet-only and
+read-only over the library:
+
+| Server | Serves | Port | Config |
+| --- | --- | --- | --- |
+| Navidrome | `music/` | 4533 | [`hosts/desk/music.nix`](../hosts/desk/music.nix) |
+| [Jellyfin](https://jellyfin.org) | `movies/`, `tv/`, `youtube/` **and** `music/` | 8096 | [`hosts/desk/jellyfin.nix`](../hosts/desk/jellyfin.nix) |
+| [Kavita](https://www.kavitareader.com) | `books/`, `rpg/` | 5000 | [`hosts/desk/kavita.nix`](../hosts/desk/kavita.nix) |
+
+Navidrome stays the music server. Jellyfin's API is not Subsonic, so Amperfy
+cannot use it, and Navidrome reads beets' tags (album artists, compilations,
+multi-disc sets) more faithfully than Jellyfin's movie-shaped music library.
+Jellyfin reads `music/` as well so that one app can play both; the two keep
+separate favourites and play counts, and Navidrome's are the ones that count.
+
+Jellyfin transcodes with VAAPI on the **iGPU** (`12:00.0`), never the dGPU:
+the iGPU is always the host's, while the dGPU goes to the guest ([GPU
+topology](#decisions-locked-in)). Most clients below direct-play, so transcoding
+is for the phone on a slow link.
+
+| Where | Video | Books |
+| --- | --- | --- |
+| desk (NixOS) | **Jellyfin Desktop** (`pkgs.jellyfin-desktop`, [`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)) — the official client, mpv underneath, so almost everything direct-plays | Kavita's web reader in Chrome |
+| mba | **Jellyfin Desktop** too ([`hosts/mba/desk.nix`](../hosts/mba/desk.nix)), the same package built for aarch64-darwin | Kavita's web reader |
+| iPhone | **Jellyfin** (App Store, free); Infuse (paid) is the more polished alternative and reads Jellyfin or the share | Kavita's web reader, or an OPDS app (Panels, Chunky) |
+
+Feishin also speaks Jellyfin, but it stays pointed at Navidrome: that is
+where the phone's favourites and playlists live.
+
 **Keeping Claude on the procedure.** Added 2026-09-25. A Claude Code session on
 the Mac starts knowing nothing of this plan. Three layers, from soft to hard:
 
@@ -3800,6 +3831,11 @@ target: one moves, the other stops on the lock, nothing is overwritten.
 - [ ] Listening: after the switch, create the Navidrome admin at
       `http://desk:4533`; Feishin on desk and Amperfy on the phone log in and
       play an album filed by beets
+- [ ] Watching and reading: after the switch, create the Jellyfin admin at
+      `http://desk:8096` and the Kavita admin at `http://desk:5000`, add
+      their libraries, and check that Jellyfin Desktop on desk and the Mac
+      plays a video, a transcode shows VAAPI in the dashboard's active
+      sessions, and Kavita opens an EPUB and an RPG PDF
 - [ ] **Postponed** (decided 2026-09-25): the Mac's Downloads videos, by
       [Filing a batch](#filing-a-batch). Not before `print` and `audio` are
       filed and `lint` is clean, so the procedure has been through one real
