@@ -122,15 +122,21 @@ agent or person per batch.
    (from the Mac: `ssh desk media-stage apply /srv/media/staging/<batch>`).
    It re-checks, moves, writes standard metadata and logs to
    `<batch>.applied.jsonl`. It can be rerun.
-10. **Lint and close**: `media-stage lint`. Mark the review filed with
-   `ArtifactData` `update` on `reviews/<batch>` (and `<batch>-audit`):
-   `{"closed": "<date>"}`. Report what is filed, what is left in staging and
-   why, and ask what to do with the leftovers and with the source. When the
-   user has settled the leftovers: `media-stage close
-   /srv/media/staging/<batch>`, which removes the batch's records. It refuses
-   while files remain or before a music batch's audit has passed. Never
-   delete `<batch>.manifest.jsonl` or the review files by hand: the manifest
-   is the only record of what each file was before beets renamed it.
+10. **Lint and close**: `media-stage lint`. Then take the filed batch off
+   the review page, so the page shows only reviews still waiting: every
+   `reviews` document of the batch (`<batch>`, `<batch>-2` and later
+   rounds, `<batch>-audit`) and its `answers` documents (`query`, `batch`
+   in those ids). Every answer was already saved to
+   `/srv/media/staging/<batch>.answers` in step 7; if a round's answers
+   were never read, read them first. Delete them all in one `ArtifactData`
+   `batch`. Report what is filed, what is left in staging and why, and ask
+   what to do with the leftovers and with the source. When the user has
+   settled the leftovers: `media-stage close /srv/media/staging/<batch>`,
+   which removes the batch's records. It refuses while files remain or
+   before a music batch's audit has passed. Never delete
+   `<batch>.manifest.jsonl` or the review files in staging by hand: the
+   manifest is the only record of what each file was before beets renamed
+   it.
 
 ## Finding and downloading
 
