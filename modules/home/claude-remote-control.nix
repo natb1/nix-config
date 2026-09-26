@@ -17,6 +17,9 @@
 # every start. For a service that restarts with the machine, that is an empty
 # session per boot; sessions are started on demand from claude.ai instead.
 #
+# --permission-mode auto: sessions spawned from claude.ai start in auto mode
+# rather than asking for each tool call; switch per session from the mode picker.
+#
 # Prerequisite, once per machine: the directory must already be trusted — run
 # `claude` there interactively and accept the workspace trust dialog. Until then
 # rc exits with "Workspace not trusted" and the service keeps retrying.
@@ -67,6 +70,8 @@ let
     "--spawn"
     "worktree"
     "--no-create-session-in-dir"
+    "--permission-mode"
+    "auto"
   ];
 in
 {
