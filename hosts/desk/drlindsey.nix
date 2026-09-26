@@ -5,8 +5,8 @@
 #
 # Deliberately not given n8's home config (modules/home): that carries n8's git
 # identity and n8's SSH authorized_keys. Of it they get only what is generic —
-# claude-code and gh. Not in wheel, no password: nobody logs in as drlindsey
-# directly. n8 reaches the account with
+# claude-code, gh, jq and python3. Not in wheel, no password: nobody logs in
+# as drlindsey directly. n8 reaches the account with
 #
 #   sudo machinectl shell drlindsey@
 #
@@ -79,7 +79,11 @@ in
         ../../modules/home/media-skills.nix
       ];
 
-      home.packages = map (
+      home.packages = [
+        pkgs.jq
+        pkgs.python3
+      ]
+      ++ map (
         tool: pkgs.writeShellScriptBin tool ''
           exec /run/wrappers/bin/sudo -u n8 -H ${n8Bin}/${tool} "$@"
         ''
