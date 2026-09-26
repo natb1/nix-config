@@ -15,6 +15,18 @@
 # workspace trust dialog. Until then the rc service exits with an error and
 # retries every 10 s.
 #
+# Media: their agent gets the media-fetch and media-share skills and runs the
+# whole procedure, search to filing. The tools run as n8, through sudo: the
+# slskd API key, the media-fetch jobs the pump service serves
+# (hosts/desk/soulseek.nix) and /srv/media are all n8's. `media-fetch`,
+# `media-stage` and `beet` in drlindsey's PATH are wrappers for
+# `sudo -u n8 -H <n8's copy>`, so the skills' commands work unchanged, on
+# n8's state and beets config. The sudo rule takes any arguments, and beet
+# takes --config and plugin paths — so this is, in effect, drlindsey running
+# code as n8. Chosen knowingly; narrow it with a wrapper that checks the
+# arguments if that stops being acceptable. Use absolute /srv/media paths:
+# n8 cannot read drlindsey's home, so relative paths from there fail.
+#
 # linger: the rc service is a systemd user unit, and without linger drlindsey's
 # user manager — and so the service — only runs while drlindsey is logged in.
 
@@ -22,8 +34,24 @@
 
 let
   user = "drlindsey";
+
+  # n8's own copies, by their stable profile path, so the sudo rule survives
+  # rebuilds.
+  n8Bin = "/etc/profiles/per-user/n8/bin";
+  mediaTools = [ "media-fetch" "media-stage" "beet" ];
 in
 {
+  security.sudo.extraRules = [
+    {
+      users = [ user ];
+      runAs = "n8";
+      commands = map (tool: {
+        command = "${n8Bin}/${tool}";
+        options = [ "NOPASSWD" ];
+      }) mediaTools;
+    }
+  ];
+
   users.users.${user} = {
     isNormalUser = true;
     home = "/home/${user}";
@@ -37,7 +65,14 @@ in
         ../../modules/home/claude-code.nix
         ../../modules/home/claude-remote-control.nix
         ../../modules/home/gh.nix
+        ../../modules/home/media-skills.nix
       ];
+
+      home.packages = map (
+        tool: pkgs.writeShellScriptBin tool ''
+          exec /run/wrappers/bin/sudo -u n8 -H ${n8Bin}/${tool} "$@"
+        ''
+      ) mediaTools;
 
       # A managed git config, with no identity: gh.nix's credential helper is
       # written into it, so `gh auth login` also covers git over https.
