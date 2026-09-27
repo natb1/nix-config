@@ -23,8 +23,16 @@
 # lock their worktree ("claude agent … (pid N …)"), so a lock is an open
 # session unless the pid it names has exited. Branches with no worktree that
 # are in origin/main are deleted too. The main checkout and `main` are never
-# touched. Nothing unmerged is removed, so nothing is lost that isn't on
-# GitHub.
+# touched.
+#
+# A HEAD not in origin/main is done with too when its branch's pull request
+# was closed or merged on GitHub, the branch is gone from origin, and HEAD is
+# still the commit the pull request ended on. That covers a PR folded into
+# another one and closed (#26 went into #23 as a different commit), and a
+# squash merge. A commit made after the PR closed keeps the worktree, and so
+# does being offline: without both answers nothing extra is removed. The
+# commit is still on GitHub, in the closed PR. This also removes the work of
+# a PR closed to abandon it — deliberately, since abandoning it is the point.
 
 { pkgs, ... }:
 
@@ -101,6 +109,27 @@ let
         timeout 15 git -C "$repo" fetch -q origin main || true
 
         merged() { g merge-base --is-ancestor "$1" origin/main 2>/dev/null; }
+
+        # Branches whose PR is closed or merged and which are gone from
+        # origin, with the commit the PR ended on. Left empty unless both gh
+        # and ls-remote answer.
+        local -A pr_end=()
+        local closed remote_heads ref oid
+        if closed=$(cd "$repo" && timeout 15 gh pr list --state closed --limit 200 \
+            --json headRefName,headRefOid \
+            --jq '.[] | "\(.headRefName)\t\(.headRefOid)"' 2>/dev/null) &&
+          remote_heads=$(timeout 15 git -C "$repo" ls-remote --heads origin 2>/dev/null |
+            awk '{ print substr($2, 12) }'); then
+          while IFS=$'\t' read -r ref oid; do
+            [ -n "$ref" ] || continue
+            grep -qxF "$ref" <<<"$remote_heads" || pr_end[$ref]=$oid
+          done <<<"$closed"
+        fi
+        # done_with COMMIT BRANCH: merged, or the end of the branch's finished PR.
+        done_with() {
+          merged "$1" || { [ -n "$2" ] && [ "''${pr_end[$2]:-}" = "$(g rev-parse "$1")" ]; }
+        }
+
         local tidied=0 path branch locked reason pid checked_out
 
         # "path|branch|locked|lock reason" per worktree but the main checkout
@@ -113,7 +142,7 @@ let
             [ -n "$pid" ] && [ ! -d "/proc/$pid" ] || continue
           fi
           [ -z "$(git -C "$path" status --porcelain)" ] || continue
-          merged "$(git -C "$path" rev-parse HEAD)" || continue
+          done_with "$(git -C "$path" rev-parse HEAD)" "$branch" || continue
           # --force twice is what removes a (stale) locked worktree; the
           # checks above are what make that safe.
           g worktree remove --force --force "$path" || continue
@@ -132,7 +161,7 @@ let
         while read -r branch; do
           [ "$branch" != main ] || continue
           grep -qxF "$branch" <<<"$checked_out" && continue
-          merged "refs/heads/$branch" || continue
+          done_with "refs/heads/$branch" "$branch" || continue
           if g branch -D -q "$branch"; then tidied=$((tidied + 1)); fi
         done < <(g for-each-ref --format='%(refname:short)' refs/heads)
 
@@ -143,7 +172,7 @@ let
       if [ "''${1:-}" = --refresh ]; then
         tidied=$(tidy)
         [ "$tidied" = 0 ] ||
-          notify-send -a "Rebuild menu" "Removed $tidied merged worktree(s)/branch(es)"
+          notify-send -a "Rebuild menu" "Removed $tidied finished worktree(s)/branch(es)"
         rows
         exit
       fi
