@@ -18,6 +18,7 @@
     ./hardware-configuration.nix
     ./disko.nix
     ./desktop.nix
+    ./gaming.nix
     ./gdrive.nix
     ./media.nix
     ./mail.nix

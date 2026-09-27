@@ -1,10 +1,19 @@
 # The desktop session — user half. The system half is ../desktop.nix.
 #
-# waybar, swaync, fuzzel and swayidle, plus the shell hook that starts niri.
+# The Quickshell panel and launcher and swayidle, plus the shell hook that
+# starts niri.
 # docs/desktop-migration.md, "The desktop session", is the design.
 
 { pkgs, lib, ... }:
 
+let
+  # Built on desk, not in the store (see ./knights-wallpaper.nix). The file
+  # name carries the script's store hash, so a changed recipe builds afresh.
+  knightsWallpaper = pkgs.callPackage ./knights-wallpaper.nix { };
+  wallpaper = "%h/.cache/desk/wallpaper-${
+    builtins.substring 11 8 (builtins.unsafeDiscardStringContext "${knightsWallpaper}")
+  }.png";
+in
 {
   # Start niri from the login shell on tty1 only. SSH logins and tty2 get a
   # plain shell, which is what makes a broken session recoverable: niri
@@ -36,46 +45,56 @@
   # as the mux client for the WSL box; Ghostty is what opens locally. Its
   # defaults — bundled JetBrains Mono with Nerd Font symbols — need no
   # settings. Which terminal is "the" terminal is decided once, system-side,
-  # by xdg-terminal-exec (../desktop.nix); niri's Mod+Return and fuzzel's
-  # Terminal=true apps both go through it.
+  # by xdg-terminal-exec (../desktop.nix); niri's Mod+Return and the
+  # launcher's Terminal=true apps both go through it.
   programs.ghostty.enable = true;
-  xdg.configFile."fuzzel/fuzzel.ini".text = ''
-    [main]
-    terminal=xdg-terminal-exec
-  '';
 
-  programs.waybar = {
+  # The desktop shell, one Quickshell config (./quickshell): the wallpaper,
+  # notification pop-ups and history, and a panel on Mod+Shift+N with the clock, status
+  # (Tailscale, Bluetooth, Wi-Fi, CPU/memory), volume, what is playing and any
+  # tray icons. There is no bar. It is also the notification daemon, which
+  # the phone relies on once it forwards everything over ANCS — a stream of
+  # transient pop-ups with no backlog would be useless.
+  #
+  # The unit, not a niri spawn-at-startup line, owns it (see niri.kdl).
+  programs.quickshell = {
     enable = true;
-    settings.mainBar = {
-      layer = "top";
-      position = "top";
-      height = 30;
-      modules-left = [ "niri/workspaces" ];
-      modules-center = [ "clock" ];
-      modules-right = [ "tray" "pulseaudio" "network" "cpu" "memory" ];
-
-      clock.format = "{:%a %d %b  %H:%M}";
-      cpu.format = "cpu {usage}%";
-      memory.format = "mem {percentage}%";
-      # wlp14s0 is the only link — the I225-V port is not cabled. See the
-      # Phase 0 Linux-side table.
-      network = {
-        format-wifi = "{essid} {signalStrength}%";
-        format-disconnected = "offline";
-      };
-      pulseaudio = {
-        format = "vol {volume}%";
-        format-muted = "muted";
-        on-click = "pwvucontrol";
-      };
-      tray.spacing = 8;
-    };
+    configs.desk = ./quickshell;
+    activeConfig = "desk";
+    systemd.enable = true;
   };
+  systemd.user.services.quickshell = {
+    Unit = {
+      PartOf = [ "graphical-session.target" ];
+      ConditionEnvironment = "WAYLAND_DISPLAY";
+      # Restart on a config change. That clears the notification history,
+      # but a hot reload through the store symlink is not something to rely
+      # on.
+      X-Restart-Triggers = [ "${./quickshell}" ];
+    };
+    # Icons named by notifications and tray items (notify-send -i phone)
+    # come from a theme, and desk had only hicolor, so most had no icon.
+    #
+    # The wallpaper is five Mythic Bastionland knights, built before the
+    # shell starts. `-`: if it cannot be built (the share is missing), the
+    # shell still starts, on a plain background.
+    Service.ExecStartPre = "-${lib.getExe knightsWallpaper} ${wallpaper}";
+    Service.Environment = [
+      "QS_ICON_THEME=Adwaita"
+      "DESK_WALLPAPER=${wallpaper}"
+    ];
+  };
+  home.packages = [ pkgs.adwaita-icon-theme ];
 
-  # Notifications, with a history panel and do-not-disturb. The panel is what
-  # matters once the phone starts forwarding everything over ANCS — a stream
-  # of transient pop-ups with no backlog would be useless.
-  services.swaync.enable = true;
+  # Dark mode. color-scheme is what the settings portal
+  # (xdg-desktop-portal-gnome) reports, which Chrome and libadwaita apps
+  # follow; GTK 3 apps read only their theme name, so they get Adwaita-dark.
+  dconf.settings."org/gnome/desktop/interface".color-scheme = "prefer-dark";
+  gtk = {
+    enable = true;
+    theme.name = "Adwaita-dark";
+    gtk4.theme = null;
+  };
 
   services.swayidle = {
     enable = true;

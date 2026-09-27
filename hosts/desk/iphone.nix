@@ -1,6 +1,6 @@
-# The iPhone, paired to desk over Bluetooth: its notifications in swaync, and
-# SMS/iMessage read and reply. docs/desktop-migration.md, "iPhone
-# notifications", is the design.
+# The iPhone, paired to desk over Bluetooth: its notifications on the
+# desktop, and SMS/iMessage read and reply. docs/desktop-migration.md,
+# "iPhone notifications", is the design.
 #
 # Tether, not ancs4linux (decided 2026-09-24). ancs4linux's author no longer
 # uses it and points to Tether, which is actively developed, ships this NixOS
@@ -30,7 +30,7 @@ let
   # turning Bluetooth off and on *on the phone* clears it — nothing on desk
   # can (Tether's docs/BLUETOOTH.md, 2026-08-19; seen here 2026-09-24).
   # That looks like "no notifications lately", so say it out loud: one
-  # swaync alert per episode, after five minutes of Classic up and
+  # desktop alert per episode, after five minutes of Classic up and
   # notifications down. Genuinely away, Classic is down too, and it stays
   # quiet. The alert withdraws itself once notifications flow again (after
   # the Bluetooth cycle), and only then: leaving while wedged keeps it up.
@@ -66,7 +66,7 @@ let
         else
           down=0
         fi
-        # Critical, so swaync keeps it on screen until dismissed: a normal
+        # Critical, so the panel keeps it on screen until dismissed: a normal
         # pop-up times out, and the 2026-09-25 outage went unseen for 16 h.
         if [ "$down" -ge 5 ] && [ -z "$alert" ]; then
           alert=$(notify-send -p -u critical -a Tether -i phone \
@@ -112,7 +112,10 @@ in
   # hardware.enableRedistributableFirmware in default.nix.
   hardware.bluetooth.powerOnBoot = true;
   # Pairing UI for everything that is not the phone. The applet is started by
-  # home-manager's user unit, not XDG autostart, which niri does not run.
+  # home-manager's user unit, not XDG autostart, which niri does not run. It
+  # stays for its pairing agent (the prompts when a device pairs); its tray
+  # icon is hidden, because the panel's Bluetooth tile shows the same and
+  # opens blueman-manager.
   services.blueman.enable = true;
   home-manager.users.n8.services.blueman-applet.enable = true;
 

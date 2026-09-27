@@ -510,7 +510,11 @@ fonts, browser") but no desktop in it. Settled here, in full in
 [The desktop session](#the-desktop-session):
 
 - **niri**, assembled à la carte: waybar, **swaync** for notifications,
-  fuzzel, swayidle. No prebuilt shell.
+  fuzzel, swayidle. No prebuilt shell. *Changed 2026-09-26:* waybar and
+  swaync are replaced by one hand-written **Quickshell** config — no bar,
+  notifications and status in one panel — and fuzzel by that config's
+  launcher and menus. See
+  [The desktop session](#the-desktop-session).
 - **getty autologin straight into niri, and no screen lock.** Anything
   sensitive sits behind its own encryption — **gnome-keyring** holds Chrome's
   and other apps' secrets under a password of its own.
@@ -756,12 +760,24 @@ two changes later cannot be attributed.
    Down Enable**, *after* the timings are final — with MCR on a marginal tune
    can pass training and fail later, so it must not be on while tuning.
    Re-validate: a tune that is stable with MCR off is not proven with it on.
-5. **CPU: PBO + Curve Optimizer**, or nothing. Negative per-core offsets,
-   modest ones (−10 to −20), validated per-core — an all-core load does not
-   test the light-load boost states where Curve Optimizer instability lives.
-   The payoff on a 7600X is lower temperatures and a little clock; the cost of
-   getting it wrong is a compile that segfaults once a week. If the per-core
-   test is too tedious, skip it: stock is a perfectly good answer here.
+5. **CPU: Curve Optimizer**, the one CPU lever this machine has.
+   *Revised 2026-09-26 from "or nothing":* the 2026-09-25 load test
+   ([Fan control checklist](#fan-control-checklist)) found the CPU
+   **cooling-limited**: stock holds 4991 MHz all-core at 94–96 W and hits the
+   95 °C ceiling long before its 142 W PPT. Reviews on open coolers see
+   ~5.2 GHz at ~110 W, so the gap to "full performance" is ~4 % in all-core
+   loads and nothing in games. Raising PBO power limits buys nothing here;
+   the chip never reaches them. A negative offset lowers the voltage at each
+   frequency, so the same 95 °C carries more clock: typically +100–150 MHz
+   on a 7600X, which closes most of that 4 %. *AMD Overclocking* →
+   *Precision Boost Overdrive* → *Advanced* → *Curve Optimizer* → *Per Core*,
+   **Negative**, start at −15 on every core, then walk each core down in steps of 5
+   (stop at −30) as CoreCycler passes. PBO limits stay at *Motherboard* or
+   *Auto*; no boost override, no scalar. Validated per-core: an all-core load
+   does not test the light-load boost states where Curve Optimizer
+   instability lives, and the cost of getting it wrong is a compile that
+   segfaults once a week. Independent of memory, so it may run before step 3
+   once XMP has passed.
 6. **Fan curves, re-checked** — the tune changes the heat. The curves
    themselves are set earlier, in [Fan control](#fan-control); here they are
    re-checked against the tuned machine's hot run. On mini-ITX the DIMMs sit
@@ -885,8 +901,12 @@ where.
       time is 15–41 s now, mostly training, which MCR removes. If boots turn
       flaky, it is the first thing to turn off. Changing DIMMs or memory
       settings forces a retrain anyway
-- [ ] Curve Optimizer: optional, skipping is fine; would lower temperatures
-      a little
+- [ ] Curve Optimizer (step 5): per-core negative, −15 start, CoreCycler
+      overnight per step. *Upgraded 2026-09-26 from optional: the CPU is
+      cooling-limited, so this is the only way to more all-core clock.* May
+      come before the timings. Measure with the same `stress-ng --cpu 12
+      --cpu-method matrixprod` run as `hosts/desk/bios.md`'s load test:
+      stock was 4991 MHz, 94.4 W, 95.4 °C
 - [ ] Fast Boot last: straight to *Ultra Fast* when the rest is done (decided
       2026-09-25; no *Enabled* trial). Note `systemd-analyze` before and
       after. If it won't boot at all: clear CMOS, reload the USB profile
@@ -943,7 +963,8 @@ BIOS settings are not declarative, so the record is the declaration:
 - [ ] Timings tightened (or explicitly stopped at the rated profile); VSOC ≤ 1.30 V; validated
 - [ ] Memory Context Restore + Power Down Enable on; re-validated; cold boot
       is fast and warm reboots do not retrain
-- [ ] Curve Optimizer validated per-core (or explicitly skipped)
+- [ ] Curve Optimizer validated per-core; all-core clock re-measured
+      against the 4991 MHz stock baseline
 - [ ] Fan curves re-checked; hot run clean, DIMMs under ~55 °C
 - [ ] Fast Boot Ultra Fast; the power menu's reboot targets (setup, Windows,
       MemTest86+, boot menu) still work
@@ -1064,6 +1085,51 @@ louder curve.
 `hosts/desk/bios.md`, plus Smart Fan 6's own *Save Fan Profile* (F3) to USB,
 since the next firmware update resets them too.
 
+#### The cooler — decided 2026-09-26
+
+The case is a Fractal Terra, the cooler a Noctua NH-L12 Ghost S1 (~66 mm, its
+NF-A12x15 is `fan1`, full speed ~1830 RPM), the GPU an ASRock RX 6600 XT
+Challenger D (`RX6600XT CLD 8GO`, ~269 × 132 × 41 mm). The load test showed
+the cooler, not the curves, is the limit. The options, and why:
+
+- **Keep the NH-L12 Ghost S1.** Terra owners report full boost clocks on
+  low-profile air, but on X3D chips (lower power at the same clock) or with
+  tuning. Nobody documents a Terra holding a 7600X at its 142 W on any
+  cooler. The closest match found (PCPartPicker `tHJfrH`, read 2026-09-26)
+  is this board and this cooler with a 7800X3D and an RTX 3080: 65–79 °C in
+  games, but with Curve Optimizer −12 all-core, an 85 W power limit and an
+  85 °C temperature limit. That is the Curve Optimizer route, not more
+  cooler.
+- **Liquid: rejected.** The Terra takes only a 120 mm radiator, in the
+  bottom fan position, which shortens the GPU limit and takes the bottom
+  2.5" mount the media SSD may need. A 120 mm AIO performs about like a good
+  low-profile air cooler. The 240 mm Terra builds found both need something
+  given up: one (PCPartPicker `LsNPxr`, 8700G, Lumen S24) puts the radiator
+  where the GPU goes, so it has no graphics card, tight tubes and a noisy
+  pump; the other (SFF.Network "Actual liquid Terra!") is a custom loop with
+  a 240 mm radiator in a bolt-on bottom extender.
+- **No bottom intake fan.** Testing of sandwich-layout cases like this one
+  (cited in the `tHJfrH` comments) found a bottom *intake* fan does worse
+  than none; if one is ever added, it exhausts. So the empty bottom position
+  costs nothing, and the second 2.5" mount there is free for storage.
+- **Noctua NH-L12Sx77: rejected for now.** Six heatpipes where the NH-L12S family has
+  four, built for the Terra's 77 mm limit. But at 77 mm the spine leaves the
+  GPU 43 mm, ~2 mm more than this card, which would choke its side-panel
+  intake: CPU cooling bought with GPU cooling, and the GPU's exhaust already
+  heats the DIMMs. Reconsider with a thinner GPU.
+- **Do: PTM7950 pad** in place of the paste, at the next time the case is
+  open (the media SSD install). A few degrees under load, which at the 95 °C
+  ceiling is a few more watts of clock, and it does not pump out or dry up.
+  Needs the cooler off; re-run the load test after.
+- **Do: check the spine position.** It should give the CPU cooler as much
+  room as the GPU can spare without its fans closer than ~10 mm to the side
+  panel.
+- **Open: what `fan3` is.** It spins ~3500 RPM at 40 %, ~7400 RPM at 25 %
+  before the curves, and ignores CPU temperature. It is not a bottom case fan
+  (there is none, 2026-09-26) and not the PSU's (SFX units don't use a board
+  header). Smart Fan 6 names its header; trace the cable. A 3-pin fan on a
+  PWM header would explain the RPM (the open mode item below).
+
 #### Fan control checklist
 
 - [x] Loud source identified: which header, or the GPU / PSU — *fan3, the
@@ -1094,7 +1160,9 @@ since the next firmware update resets them too.
       (RAPL 96 W) at Tctl 95.4 °C, 4991 MHz — at stock this CPU hits its
       95 °C ceiling long before 142 W, so it is cooling-limited and Eco Mode
       buys ~6 W and ~5 °C for 0.7 % clock. The cooler and the fan curves are
-      the lever here, not Eco. Also in the power menu (`eco@on`/`eco@off`
+      the lever here, not Eco. *2026-09-26: stock kept (Eco off); the fan
+      curves are done, so the levers left are Curve Optimizer and the
+      cooler's thermal interface ([The cooler](#the-cooler--decided-2026-09-26)).* Also in the power menu (`eco@on`/`eco@off`
       units, polkit). Originally: `eco on`
       makes it 88/75/150, and an all-core build holds package power near 88 W*
 - [x] Recorded in `hosts/desk/bios.md`; fan profile saved to USB — *curves decoded from the saved profile; Temperature Interval, mode and the case fan's input aren't stored in a readable form in it*
@@ -1107,7 +1175,7 @@ since the next firmware update resets them too.
 | Question | Answer | What it rules out |
 | --- | --- | --- |
 | GPU topology | AMD iGPU → the NixOS desktop, always. dGPU → guest, **lent to the host on demand** for native/Proton games | Single-GPU teardown hooks; the host never goes headless; the compositor ever holding the dGPU |
-| Desktop session | niri, à la carte (waybar, swaync, fuzzel, swayidle); getty autologin, no lock; suspend on idle only if Wake-on-WLAN proves reliable | A display manager; a screen locker; a prebuilt shell |
+| Desktop session | niri, à la carte (Quickshell panel and launcher — no bar — swayidle; waybar, swaync and fuzzel until 2026-09-26); getty autologin, no lock; suspend on idle only if Wake-on-WLAN proves reliable | A display manager; a screen locker; a prebuilt shell (Noctalia, DankMaterialShell) |
 | How many Windows installs | **One.** The existing one, booted bare metal *or* as a guest | A separate VM image; an unactivated second copy; two config profiles |
 | How the guest gets its disk | **VFIO the whole fast NVMe controller** | Repartitioning Windows; a `qcow2`; virtio storage drivers |
 | Where NixOS lives | Entirely on the bulk drive, which disko owns outright | Disko ever meeting a Windows partition |
@@ -1766,8 +1834,9 @@ hosts/desk/
   media.nix                   # Samba, btrfs scrub, restic (Media storage)
   windows/                    # the DSC profile Windows pulls and applies (§6)
   home/                       # host-only home modules
-    desktop.nix               # waybar, swaync, fuzzel, swayidle, the niri-session exec
+    desktop.nix               # Quickshell, swayidle, the niri-session exec
     niri.kdl                  # niri's config; `niri validate` runs as a flake check
+    quickshell/               # the panel and notification daemon; loaded by a flake check
 ```
 
 Promote a file to `modules/nixos/` the day a *second* machine wants it — not
@@ -2057,6 +2126,12 @@ brings it near a formatting tool.
 ```
 
 #### Where the Steam library lives
+
+> *Changed 2026-09-26:* the host-side library is Steam's default,
+> `~/.local/share/Steam` on the root. There is room there for now (155 GB
+> free), and `/srv/games` was removed from `disko.nix` before anything was
+> installed in it. Revisit if the root runs short. The reasoning below is
+> kept for that day.
 
 **Decided: on the 2 TB drive, with Windows, where it is today**
 (`C:\Program Files (x86)\Steam`). Windows owns that whole disk and the guest gets
@@ -2534,9 +2609,9 @@ never touches the others.
 | niri config | `hosts/desk/home/niri.kdl`, **validated at build** | A flake check runs `niri validate -c` on it, so a typo fails `nix flake check`, not the next login |
 | Login | **getty autologin** on tty1, `exec niri-session -l` from the login shell | No display manager to configure or break. The cost, accepted: a niri crash drops tty1 to a shell |
 | Screen lock | **None** | Decided: nothing sensitive is protected by the session. It sits behind its own encryption |
-| Bar | **waybar** | niri workspaces, tray (Steam, Tailscale, blueman), clock, a swaync button |
-| Notifications | **swaync** | Pop-ups, plus a history panel and do-not-disturb. The panel matters once a phone is forwarding everything ([ANCS](#iphone-notifications-over-ancs)). Action buttons are drawn, so a notification's actions are clickable |
-| Launcher | **fuzzel** | Wayland-native. niri's default config already binds it |
+| Bar | **None** | Replaced 2026-09-26 (it was waybar). The clock and status moved into the panel below |
+| Notifications and status | **Quickshell**, a hand-written config in `hosts/desk/home/quickshell/` | One panel on `Mod+Shift+N`: clock; tiles for Tailscale (up/down, exit node), Bluetooth, Wi-Fi and CPU/memory; volume; now playing; tray icons for apps that insist (Steam); then the notification history with do-not-disturb. It is also the notification daemon: pop-ups, action buttons, and critical alerts that stay until dismissed. The history matters once a phone is forwarding everything ([ANCS](#iphone-notifications-over-ancs)). Chosen over swaync (widgets too fixed: a toggle's label cannot change) and over Noctalia/DMS (their panels show notifications on a separate tab from status) |
+| Launcher and menus | **Quickshell** (`Launcher.qml`, `Picker.qml`) | Replaced 2026-09-26 (it was fuzzel, whose entries are one line). `Mod+D` launches apps, most-used first; the rebuild and power menus use the same list through `pick` (`hosts/desk/pick`). Rows can be several lines with an icon, and the first ten are numbered for one-key picks |
 | Idle | **swayidle** | Screens off, then the guarded suspend ([Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)). It honours Wayland idle inhibitors, so a playing video holds it off |
 | Secrets | **gnome-keyring** (Secret Service) | What Chrome and most apps expect. Locked at boot (autologin has no password to unlock it with), and it asks for its own password on first use |
 | X11 apps | **xwayland-satellite** on `PATH` | niri has no built-in Xwayland and starts this on demand. Steam needs it |
@@ -2902,11 +2977,24 @@ What to expect:
       and a saved password survives a reboot after one keyring prompt —
       *2026-09-24, flag confirmed at the console*
 - [x] fuzzel launches (`Mod+D`), and `Mod+Return` gives WezTerm — *2026-09-24*
-- [ ] waybar tray shows Steam, Tailscale and blueman — *2026-09-25 reboot:
+- [x] ~~waybar tray shows Steam, Tailscale and blueman~~ — *superseded
+      2026-09-26: no bar; Tailscale and Bluetooth are panel tiles and
+      `tailscale systray` is gone. Kept for the record: 2026-09-25 reboot:
       blueman yes, the other two no, because nothing started them.
       Tailscale's own `tailscale systray` is now a user unit
       (`hosts/desk/desktop.nix`, operator=n8); Steam shows only while it
       runs. One gnome-keyring prompt at login, as intended*
+- [ ] Quickshell panel, after the switch that lands it: `Mod+Shift+N` opens
+      and closes it, Esc and a click outside close it; the tiles show live
+      state; a Tether text pops up with a working **Reply**; the
+      `tether-ancs-watch` critical alert stays up until dismissed and is
+      withdrawn by its sender; Steam's tray menu opens from the panel —
+      *2026-09-26, before the switch: all but the keyboard and mouse parts
+      and the tray menu were checked in a nested niri on a private D-Bus
+      (pop-ups, critical staying, do-not-disturb letting only critical
+      through, an action's id reaching `notify-send -A`, CloseNotification
+      removing an alert, live tiles). The flake check `quickshell-config`
+      loads the config in a headless sway and fails on any QML error*
 - [x] `notify-send test` pops up in swaync and lands in its history —
       *2026-09-24, with two fixes on the way. swaync was started twice, by
       niri's `spawn-at-startup` and by the unit `services.swaync.enable`
@@ -4033,7 +4121,7 @@ once, for the one-time copy, and never again.
 | --- | --- | --- |
 | What lands in it | Everything **before** the camera switch, plus, afterwards, screenshots, images saved from Messages/Safari, and photos from other camera apps | Every **Camera app** photo and video from both phones after the switch, taken with the Shared Library button on |
 | Backup | **Once**, per account, right after the switch | **Ongoing**, daily timer, n8's account only |
-| Lands in | `/srv/media/icloud/n8/`, `/srv/media/icloud/<FILL_ME_wife>/` | `/srv/media/icloud/shared/` |
+| Lands in | `/srv/media/icloud/n8/`, `/srv/media/icloud/lindsey/` | `/srv/media/icloud/shared/` |
 | Accepted gap | Screenshots and saved images after the switch are not backed up. The one-time run can be repeated by hand at any time; it skips files it already has | Items someone moves back to their personal library, and any shot taken with the Camera button switched off, drop out of the ongoing backup |
 
 #### Prerequisites, on both Apple IDs
@@ -4088,7 +4176,7 @@ switched off and forgotten: make n8's own personal library ongoing too. The
 same session on n8's account sees both `PrimarySync` and `SharedSync-…`, so
 that costs a second timer instance and no extra 2FA. The wife's personal
 library is the one that cannot be made ongoing without keeping a second
-session alive, so the wife's Camera button is what to check.
+session alive, so Lindsey's Camera button is what to check.
 
 #### The module: `hosts/desk/icloud.nix`
 
@@ -4105,7 +4193,7 @@ LIBRARY=PrimarySync            # or SharedSync-<UUID>, as icloudpd-login prints 
 | --- | --- | --- | --- | --- |
 | `shared` | n8's | `SharedSync-…` | `/srv/media/icloud/shared/` | Daily user timer, `Persistent` (a run missed while suspended happens on wake) |
 | `n8` | n8's | `PrimarySync` | `/srv/media/icloud/n8/` | Once, by hand |
-| `<FILL_ME_wife>` | the wife's | `PrimarySync` | `/srv/media/icloud/<FILL_ME_wife>/` | Once, by hand |
+| `lindsey` | Lindsey's | `PrimarySync` | `/srv/media/icloud/lindsey/` | Once, by hand |
 
 What the module decides, and why:
 
@@ -4119,7 +4207,7 @@ What the module decides, and why:
 - **The session cookies are not encrypted.** pyicloud writes them in the
   clear to `~/.local/state/icloudpd/<apple-id>/`, and they grant access to the
   photos for as long as Apple honours them. That is an accepted exception to
-  the rule for n8's own account. For the wife's account, `icloudpd-forget`
+  the rule for n8's own account. For Lindsey's account, `icloudpd-forget`
   removes both the cookies and the keyring entry once the backfill is
   verified.
 - **Cookies are keyed on the Apple ID, not the instance.** `shared` and `n8`
@@ -4135,6 +4223,11 @@ What the module decides, and why:
   and each Live Photo's video saved next to its still. An edited photo comes
   down as the camera's original, without the edit; add `--size adjusted`
   beside `--size original` if the edits turn out to matter.
+- **Every run verifies itself.** `ExecStartPost=icloudpd-verify %i`
+  ([`icloudpd-verify.py`](../hosts/desk/icloudpd-verify.py)) checks each
+  original and Live Photo video in the library against **Apple's own
+  checksum**, and fails the unit if any file lacks a byte-exact copy on desk.
+  Details [below](#verification-against-apples-checksums).
 - **The alert:** `OnFailure=icloudpd-failed@%i` sends a critical swaync
   pop-up, which stays in swaync's history, until the plan's ntfy
   (`<FILL_ME_notify_unit>`) exists.
@@ -4144,6 +4237,9 @@ Two helper commands ship with it:
 - `icloudpd-login <instance>`: the password (typed once, then saved to the
   keyring) and the 2FA code, then the account's libraries, including the
   `SharedSync-<UUID>` name the `shared` env file needs.
+- `icloudpd-verify <instance>`: the same verification the unit runs, by
+  hand. Exit 0 means everything is verified, 1 that something is missing or
+  corrupt, and 2 that the login needs a 2FA code.
 - `icloudpd-forget <instance>`: deletes that Apple ID's session and keyring
   entry. The env file is left in place.
 
@@ -4151,31 +4247,55 @@ Running as n8, on desk, in the graphical session (the keyring has to be
 unlocked):
 
 ```sh
-# Personal backfills — after the camera switch and BIOS tuning's validation
+# Personal backfills — after the camera switch; each run ends with icloudpd-verify
 icloudpd-login n8
 systemctl --user start --no-block icloudpd@n8
 journalctl --user -fu icloudpd@n8        # hours, for a whole library
-icloudpd-login <FILL_ME_wife>             # with the wife's phone to hand for the 2FA code
-systemctl --user start --no-block icloudpd@<FILL_ME_wife>
+icloudpd-login lindsey                   # with Lindsey's phone to hand for the 2FA code
+systemctl --user start --no-block icloudpd@lindsey
 
 # Ongoing shared library — the timer is already enabled; it waits on the env file
 systemctl --user start icloudpd@shared    # first run by hand, to watch it
 systemctl --user list-timers 'icloudpd@*'
 ```
 
-**Gate for the backfills: [BIOS tuning](#bios-tuning) validated first**, the
-same gate as the Step 3 ingest. icloudpd doesn't check what it downloads
-against Apple's checksums, so a bit flip in the copy would go unnoticed.
-They are not gated on restic: iCloud keeps the originals, the same reasoning
-that let the Takeout download go ahead early. Run them **after** the camera
-switch, so each snapshot is complete up to the date recorded above.
+#### Verification against Apple's checksums
 
-- **Verify by count, as for Takeout.** Photos → Library → *All Photos* shows
-  "N Photos, M Videos" at the bottom on each phone. A Live Photo comes down as
-  a still plus a `.MOV`, so count the stills and videos separately
-  (Takeout trap 2 again). Then **start the same instance again**: its journal
-  must show nothing downloaded.
-- **Then `icloudpd-forget <FILL_ME_wife>`.** Nothing ongoing needs that
+*Added 2026-09-26. It replaces the [BIOS tuning](#bios-tuning) gate these
+downloads used to wait on.* The gate was there because a RAM bit flip can
+corrupt a file before it reaches the disk, and btrfs then checksums the
+corrupted bytes as good. But iCloud gives a reference that desk's RAM never
+touched. Every file version comes with a CloudKit `fileChecksum`, which
+icloudpd fetches and then only uses to name its `.part` file. Its format,
+worked out and confirmed on 2026-09-26 against 18 of 18 real downloads (12
+photos and 6 videos, up to 41 MB):
+
+```
+0x01 || SHA-1("com.apple.XattrObjectSalt\0com.apple.DataObjectSalt\0" || file bytes)
+```
+
+`icloudpd-verify` lists the library's metadata, so nothing is downloaded
+again. It hashes every file under `/srv/media/icloud/<instance>/` and
+requires each original and Live Photo video to have a byte-identical match.
+Matching is by content, not name, so icloudpd's naming rules do not matter,
+and local files that iCloud no longer has are fine. Before hashing, it
+`fsync`s each file and drops its cached pages, so the bytes are read off the
+SSD, not from memory. A flip during the check can only cause a false alarm,
+never a false pass. Hashes are cached by size and mtime, so later runs hash
+only new files. Once verified, a file's safety on disk is btrfs's job
+(checksums plus monthly scrub).
+
+What it does **not** cover: the Step 3 sources (Takeout, Flickr, Drive, GCS),
+which have no such reference. restic's copy is also read through the same
+RAM on its way to Hetzner. Both keep the BIOS tuning gate.
+
+Run the backfills **after** the camera switch, so each snapshot is complete
+up to the date recorded above.
+
+- **Verified means `icloudpd-verify` exits 0.** The unit fails if it does
+  not. Counting by hand against Photos' "N Photos, M Videos" is no longer
+  needed.
+- **Then `icloudpd-forget lindsey`.** Nothing ongoing needs that
   account, and a live session into someone else's iCloud should not stay on a
   machine that no longer needs it.
 - **Overlap with Google Photos is expected.** Phones have historically backed
@@ -4215,7 +4335,7 @@ switch, so each snapshot is complete up to the date recorded above.
       *2026-09-25. The first login hit a missing `~/.local/state/icloudpd`
       (fixed in `icloudpd-login`). Afterwards `--list-libraries` ran with no
       terminal, from the keyring and session alone: `PrimarySync` and one
-      `SharedSync-F99DD9E5-…`. `<FILL_ME_wife>.env` waits for the backfill*
+      `SharedSync-F99DD9E5-…`. `lindsey.env` waits for the backfill*
 - [x] `systemctl --user start icloudpd@shared`, and confirm the test photos
       from both phones landed in `/srv/media/icloud/shared/` — *2026-09-25:
       the first run succeeded and downloaded one Live Photo (`IMG_4482.HEIC`
@@ -4224,9 +4344,21 @@ switch, so each snapshot is complete up to the date recorded above.
       11). Then n8's test shot, `IMG_0220.HEIC` (EXIF: iPhone 13 mini), came
       down on the next run. Both cameras reach the backup*
 - [ ] Break it on purpose (a wrong `LIBRARY=`) and confirm the pop-up; restore it
-- [ ] [BIOS tuning](#bios-tuning) validated
-- [ ] Backfill `icloudpd@n8`, then `icloudpd@<FILL_ME_wife>`. Counts match;
-      a second start downloads nothing. Then `icloudpd-forget <FILL_ME_wife>`
+- [x] `icloudpd-verify` — *2026-09-26. The negative test also passed: one bit
+      flipped in a reflink copy of `n8/` (`IMG_0001.HEIC`, 4.3 MB) was
+      reported, and the command exited 1*
+- [x] Backfill `icloudpd@n8`, verified — *2026-09-26, 13:30–13:35: 370
+      items, 607 files (237 of them Live Photo videos), 2.2 GB, 0 errors.
+      `icloudpd-verify n8`: 607 of 607 byte-exact against Apple's checksums,
+      exit 0, in 13 s. A second start downloaded nothing*
+- [x] Backfill `icloudpd@lindsey`, verified (`icloudpd-verify lindsey`
+      exits 0). Then `icloudpd-forget lindsey` — *2026-09-26, 13:53–13:59:
+      460 items, 791 files, 2.4 GB, 0 errors. The unit's own `ExecStartPost`
+      found 791 of 791 byte-exact against Apple's checksums. A second start
+      downloaded nothing and verified again from the cache. Then
+      `icloudpd-forget lindsey` removed the session directory, and a keyring
+      lookup for the Apple ID came back empty. `lindsey.env` is left in place
+      for a future top-up*
 - [ ] Two weeks later: `systemctl --user list-timers 'icloudpd@*'` shows daily
       runs, and new photos from both phones are on the share
 
@@ -4261,11 +4393,11 @@ never the whole mechanism. It runs last, behind three independent checks,
 each of which must pass in the same unit run:
 
 1. **Download pass**: exactly today's unit, unchanged. It must exit 0.
-2. **Everything is on disk.** The same command with `--only-print-filenames`
-   prints what it *would* download, which is anything iCloud has that
-   `/srv/media/icloud/shared` does not. Straight after a download pass it
-   must print **nothing**. Anything it prints is a failed download, and the
-   run stops there and alerts.
+2. **Everything is on disk, byte-exact.** `icloudpd-verify shared` (already
+   the unit's `ExecStartPost=`) must exit 0: every item in iCloud, old ones
+   included, has a copy on desk that matches Apple's own checksum.
+   *Replaced 2026-09-26:* this was an `--only-print-filenames` check, which
+   compared names only and would have passed a corrupt file.
 3. **Everything is offsite.** `restic-backups-media` last succeeded less than
    36 hours ago (`systemctl show -p Result,ExecMainExitTimestamp`). A
    365-day window then means every deleted photo spent roughly a year in
@@ -4303,8 +4435,9 @@ defence is Apple's, not ours. The quota is freed once they leave it.
 - [ ] The [retirement gate](#before-any-original-is-retired) closed: trimming
       iCloud retires originals, so the restic password must already be off
       `desk` and the recovery plan written
-- [ ] [BIOS tuning](#bios-tuning) validated. A bit flip in the downloaded
-      copy becomes permanent the day iCloud's copy goes
+- [ ] [BIOS tuning](#bios-tuning) validated. The downloaded copy is already
+      verified against Apple's checksums, but restic reads it through the same
+      RAM on its way to Hetzner, and nothing checks that copy against Apple's
 - [ ] ntfy (`<FILL_ME_notify_unit>`) reaches a phone. Once deletion is on,
       a silently failing unit is no longer harmless
 - [ ] 30+ days of clean daily `shared` runs, **and** a deliberately broken

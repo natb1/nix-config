@@ -1,6 +1,7 @@
 # The power menu: Mod+Shift+Escape in niri (hosts/desk/home/niri.kdl) opens
-# `power-menu`, a fuzzel list of suspend / reboot / reboot-into-something /
-# power off / log out, plus the Eco Mode switch that applies (eco.nix).
+# `power-menu`, a list (`pick`, ./pick) of suspend / reboot /
+# reboot-into-something / power off / log out, plus the Eco Mode switch that
+# applies (eco.nix).
 #
 # Everything but Windows is plain logind, which lets the active local session
 # do it without a password: `systemctl reboot --firmware-setup`,
@@ -40,7 +41,8 @@ let
   powerMenu = pkgs.writeShellApplication {
     name = "power-menu";
     runtimeInputs = [
-      pkgs.fuzzel
+      (pkgs.callPackage ./pick { })
+      pkgs.gawk
       pkgs.systemd
       pkgs.libnotify
       pkgs.niri
@@ -64,7 +66,9 @@ let
         "Reboot → MemTest86+" \
         "Power off" \
         "Log out" |
-        fuzzel --dmenu --prompt "power › " --lines 9) || exit 0
+        # Each row's key is its one line.
+        awk '{ print $0 "\t" $0 }' |
+        pick --prompt "power ›") || exit 0
 
       run() {
         if ! "$@"; then

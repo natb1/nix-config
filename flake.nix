@@ -69,6 +69,9 @@
         pkg: builtins.elem (nixpkgs.lib.getName pkg) [
           "claude-code"
           "google-chrome"
+          # hosts/desk/gaming.nix
+          "steam"
+          "steam-unwrapped"
         ];
 
       # Home-manager wiring shared by every host. hostPlatform in-module is the
@@ -206,6 +209,29 @@
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           niri-config = pkgs.runCommand "niri-config-valid" { } ''
             ${pkgs.niri}/bin/niri validate -c ${./hosts/desk/home/niri.kdl}
+            touch "$out"
+          '';
+          # desk's Quickshell config (the panel and the notification daemon),
+          # loaded by the Quickshell that will run it. A QML error otherwise
+          # shows only after a switch, as no notifications at all. Quickshell
+          # has no validate mode and its windows need a layer-shell
+          # compositor, so it runs against a headless sway.
+          quickshell-config = pkgs.runCommand "quickshell-config-loads" { } ''
+            export HOME=$TMPDIR XDG_RUNTIME_DIR=$TMPDIR/run
+            mkdir -m 700 "$XDG_RUNTIME_DIR"
+            export WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
+            echo "" > sway.conf
+            ${pkgs.sway-unwrapped}/bin/sway -c sway.conf > sway.log 2>&1 &
+            for _ in $(seq 100); do
+              [ -S "$XDG_RUNTIME_DIR/wayland-1" ] && break
+              sleep 0.1
+            done
+            WAYLAND_DISPLAY=wayland-1 timeout 10 \
+              ${pkgs.quickshell}/bin/qs -p ${./hosts/desk/home/quickshell} > qs.log 2>&1 || true
+            kill %1 || true
+            cat qs.log
+            grep -q "Configuration Loaded" qs.log
+            ! grep -qE "Failed to load configuration|TypeError|ReferenceError" qs.log
             touch "$out"
           '';
         }

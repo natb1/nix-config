@@ -67,6 +67,9 @@ input {
 
 layout {
     gaps 8
+    // Workspaces are drawn over the backdrop, where the wallpaper lives (see
+    // the layer-rule below); a transparent workspace lets it show through.
+    background-color "transparent"
     center-focused-column "never"
 
     preset-column-widths {
@@ -91,16 +94,11 @@ window-rule {
     default-column-width { proportion 0.25; }
 }
 
-spawn-at-startup "waybar"
-
-// swaync is deliberately NOT spawned here. `services.swaync.enable` in
-// home/desktop.nix already generates a user unit that is WantedBy
-// graphical-session.target, which niri raises — so a spawn-at-startup line
-// makes two launchers race. On 2026-09-24 the spawned copy won and the unit
-// failed five restarts with "An instance of SwayNotificationCenter is already
-// running!", leaving notifications working but swaync.service red. The unit is
-// the better owner: Type=dbus, BusName, and Restart=on-failure. waybar has no
-// such unit (`programs.waybar` without `systemd.enable`), so it stays here.
+// No bar, and no spawn-at-startup for the shell. Quickshell (the panel,
+// notifications and pop-ups — home/quickshell/) is a user unit WantedBy
+// graphical-session.target, which niri raises. A spawn line here as well
+// would make two launchers race for org.freedesktop.Notifications, which is
+// what left swaync.service failed on 2026-09-24.
 
 // niri has no built-in Xwayland; this starts it on demand. Steam needs it.
 spawn-at-startup "xwayland-satellite"
@@ -110,6 +108,14 @@ environment {
 }
 
 prefer-no-csd
+
+// Quickshell's wallpaper (quickshell/Wallpaper.qml) goes in the backdrop, so
+// it also shows behind the workspaces in the overview. The backdrop is only
+// visible on the desktop because layout's background-color is transparent.
+layer-rule {
+    match namespace="^quickshell-wallpaper$"
+    place-within-backdrop true
+}
 
 screenshot-path "~/screenshots/%Y-%m-%d %H-%M-%S.png"
 
@@ -121,8 +127,8 @@ binds {
     Mod+Shift+Slash { show-hotkey-overlay; }
 
     Mod+Return hotkey-overlay-title="Terminal" { spawn "xdg-terminal-exec"; }
-    Mod+D hotkey-overlay-title="Launcher" { spawn "fuzzel"; }
-    Mod+Shift+N hotkey-overlay-title="Notifications" { spawn "swaync-client" "-t" "-sw"; }
+    Mod+D hotkey-overlay-title="Launcher" { spawn "qs" "-c" "desk" "ipc" "call" "launcher" "toggle"; }
+    Mod+Shift+N hotkey-overlay-title="Notifications and status" { spawn "qs" "-c" "desk" "ipc" "call" "panel" "toggle"; }
     // Pick a worktree of ~/natb1/nix-config (main first), then pull and
     // switch to it in a terminal — hosts/desk/rebuild-menu.nix.
     Mod+Shift+R hotkey-overlay-title="Rebuild (pick worktree, pull + switch)" { spawn "rebuild-menu"; }

@@ -131,10 +131,8 @@
   # Bit rot on a volume nobody reads for months is the failure you find out
   # about from a restore. Make it an alert instead.
   #
-  # Listed explicitly: the default is every btrfs mountpoint, and /srv/media
-  # and /srv/games are two subvolumes of one filesystem — the default would
-  # scrub the same device twice. Scrub works per filesystem, so this one entry
-  # covers the games subvolume too.
+  # Listed explicitly, so a subvolume added to this filesystem later does not
+  # make the default (every btrfs mountpoint) scrub the same device twice.
   services.btrfs.autoScrub = {
     enable = true;
     interval = "monthly";
