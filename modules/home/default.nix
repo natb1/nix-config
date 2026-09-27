@@ -26,6 +26,7 @@
   imports = [
     ./claude-code.nix
     ./claude-daemon.nix
+    ./claude-plugins.nix
     ./direnv.nix
     ./gh.nix
     ./git.nix
