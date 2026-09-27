@@ -243,7 +243,9 @@ class MediaFetchTest(unittest.TestCase):
         self.downloads = self.staging / "corpus"
         self.fake = FakeSlskd(self.downloads)
         self.itch = FakeItch()
+        self.library = root / "media"
         self.env = {"MEDIA_STAGING": str(self.staging), "MEDIA_FETCH_STATE": str(root / "state"),
+                    "MEDIA_LIBRARY": str(self.library),
                     "CORPUS_URL": self.fake.url, "CORPUS_API_KEY": KEY,
                     "CORPUS_DOWNLOADS": str(self.downloads),
                     "ITCH_API_URL": self.itch.url + "/api", "ITCH_WEB_URL": self.itch.url,
@@ -525,7 +527,7 @@ class MediaFetchTest(unittest.TestCase):
     def test_rpg_search_lists_itch_beside_corpus(self):
         self.unravel()
         t = self.tables(kind="rpg", query="unravel")
-        self.assertEqual(list(t), ["corpus fetch", "itch.io"])
+        self.assertEqual(list(t), ["corpus fetch", "media share", "itch.io"])
         self.assertEqual([c["id"].partition(".")[2] for c in t["corpus fetch"]["candidates"]], ["1"])
         itch = {c["title"]: c for c in t["itch.io"]["candidates"]}
         self.assertEqual(sorted(itch), ["Unravel Deluxe", "Unravel Zine", "Unravel: Second Edition"])
@@ -539,6 +541,7 @@ class MediaFetchTest(unittest.TestCase):
         code, out = self.cli("search", "unravel", "--kind", "rpg")
         self.assertEqual(code, 0, out)
         self.assertRegex(out, r"^corpus fetch\n")
+        self.assertIn("\nmedia share\n  nothing found", out)
         self.assertIn("\nitch.io\n", out)
         self.assertRegex(out, r"\$3 +  \? files.*Unravel Zine \(Kylmaenen\)")
 
@@ -559,7 +562,7 @@ class MediaFetchTest(unittest.TestCase):
     def test_other_kinds_do_not_search_itch(self):
         self.unravel()
         for kind in ("music", "book", "tv", "other"):
-            self.assertEqual(list(self.tables(kind=kind, query="unravel")), ["corpus fetch"])
+            self.assertEqual(list(self.tables(kind=kind, query="unravel")), ["corpus fetch", "media share"])
         self.assertEqual(self.itch.hits, [])
         self.assertIn("--kind", self.cli("search", "unravel")[1])  # required
 
@@ -631,6 +634,45 @@ class MediaFetchTest(unittest.TestCase):
         self.fake.hold = False
         code, out = self.cli("wait", "b", "--timeout", "5", "--interval", "0")
         self.assertEqual(code, 0, out)
+
+    # ---- the media share ---------------------------------------------------
+
+    def put(self, path, size=3):
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x" * size)
+
+    def test_media_share_lists_what_is_filed_and_staged(self):
+        lib, st = self.library, self.staging
+        self.put(lib / "music/Julian Bream/Guitarra (1985)/01 Fantasia.mp3")
+        self.put(lib / "music/Julian Bream/Guitarra (1985)/02 Pavan.mp3")
+        self.put(lib / "music/Julian Bream/Baroque Guitar (1966)/01 Prelude.flac")
+        self.put(lib / "music/Other/Bream Lake (2001)/01 Bream.mp3")
+        self.put(lib / "music/Other/Unrelated (2001)/01 x.mp3")
+        self.put(lib / "rpg/Julian Bream Quest/Core (A4).pdf")  # another kind's folder
+        self.put(st / "bream-2026-09-27/Julian Bream - Live/01.flac")
+        self.put(st / "corpus/job/Julian Bream 01.flac")  # a download, not a batch
+        self.put(st / "trash/Julian Bream/01.flac")
+        self.put(st / "README.md")
+        self.fake.responses = [response("peer", "M\\Julian Bream\\Guitarra", ["01"])]
+        t = self.tables(kind="music", query="julian bream", *["--ext", "flac"])
+        share = {c["title"]: c for c in t["media share"]["candidates"]}
+        self.assertEqual(sorted(share), [str(st / "bream-2026-09-27"),
+                                         "music/Julian Bream/Baroque Guitar (1966)",
+                                         "music/Julian Bream/Guitarra (1985)"])
+        g = share["music/Julian Bream/Guitarra (1985)"]
+        self.assertEqual((g["where"], g["formats"], len(g["files"])), ("filed", "2 mp3", 2))  # --ext aside
+        self.assertEqual(share[str(st / "bream-2026-09-27")]["where"], "staged")
+        self.assertEqual(g["path"], str(lib / "music/Julian Bream/Guitarra (1985)"))
+        # One word matching the file, the other its folder: still a match.
+        t = self.tables(kind="rpg", query="bream core")
+        self.assertEqual([c["title"] for c in t["media share"]["candidates"]], ["rpg/Julian Bream Quest"])
+        code, out = self.cli("search", "julian bream", "--kind", "music")
+        self.assertRegex(out, r"filed +2 files +6 B  2 mp3 +music/Julian Bream/Guitarra \(1985\)")
+        code, out = self.cli("get", g["id"], "--batch", "b")
+        self.assertEqual(code, 1)
+        self.assertIn("is already on the media share (filed)", out)
+        self.assertIn("filed, " + g["path"], self.cli("show", g["id"])[1])
 
 if __name__ == "__main__":
     unittest.main()

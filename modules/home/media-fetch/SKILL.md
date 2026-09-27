@@ -23,11 +23,19 @@ Several candidates can go into one batch; `get` refuses a batch that is
 already scanned.
 
 `search` answers with one table per place it searched, and `--kind` picks
-the places: **corpus fetch** for every kind, and **itch.io** as well for
-`rpg`. IDs are numbered across the tables, and `show`, `get`, `wait` and
-`status` work the same whichever table a candidate came from. An itch.io
-row's price is `free`, `owned` (in the user's itch.io library) or what the
-game costs; `get` refuses a game that is not free or owned.
+the places: **corpus fetch** and **media share** for every kind, and
+**itch.io** as well for `rpg`. IDs are numbered across the tables, and
+`show`, `get`, `wait` and `status` work the same whichever table a candidate
+came from.
+
+- **media share** is what desk's library already holds: items in the
+  kind's library folder, `filed`, or in a staging batch, `staged`, whose
+  path matches every word of the query, in any format (`--ext` doesn't
+  narrow it). Its rows are there to be compared, not fetched: `get`
+  refuses them.
+- An **itch.io** row's price is `free`, `owned` (in the user's itch.io
+  library) or what the game costs; `get` refuses a game that is not free
+  or owned.
 
 ## Procedure
 
@@ -42,26 +50,24 @@ game costs; `get` refuses a game that is not free or owned.
    `--ext epub,pdf` for books and `--ext pdf,epub,zip` for RPGs, and
    `--min-files` to drop singles. `rpg` searches itch.io as well as the
    corpus.
-3. **Check the library** for everything the search found, whatever its
-   kind, on desk (from the Mac, `ssh desk …`):
-   - music: `beet ls -a -f '$albumartist - $album ($year) · $path' '<artist>'`
-     (by the tags), and `find /srv/media/music -maxdepth 2 -iname '*<album>*'`
-     for albums filed under another album artist;
-   - movies and TV: `find /srv/media/movies /srv/media/tv -maxdepth 1 -iname '*<title>*'`
-     (one folder per film or show, `<Title> (<Year>) {tmdb-<id>}`); for a
-     show, `ls` its folder for the seasons and episodes already there;
-   - books and RPGs: `find /srv/media/books /srv/media/rpg -iname '*<title>*'`,
-     and `ls /srv/media/books/<author>` for the author's other books;
-   - staging: `ls /srv/media/staging` for a batch of it not yet filed.
-   Search on the title's most distinctive words: the library writes a `:`
-   as ` - ` and drops `* ? " < > | \`. A potential duplicate is anything
+3. **Check the library**: the media share table is the check. Its query
+   is the search's, so when the search named more than the title (an
+   artist and album, say) and the table is empty, search again on the
+   title's most distinctive words alone: the library writes a `:` as ` - `
+   and drops `* ? " < > | \`. For music, also ask beets, which matches
+   the tags rather than the path, on desk (from the Mac, `ssh desk …`):
+   `beet ls -a -f '$albumartist - $album ($year) · $path' '<artist>'`. For
+   a TV show, `show` its media share row for the seasons and episodes
+   already there. A potential duplicate is anything
    filed or staged with the same artist or author and title, or the same
    film or show (any edition, year, format or resolution; "The Joy of
    Motion" and "The Joy of Motion (Deluxe)" both count), and for TV any
    season or episode the download would bring again.
 4. **Choose.** Each candidate is one folder from one source. Show the user
    one table per place searched, each headed with the name `search` gives
-   it: **corpus fetch**, and for `rpg` **itch.io** beside it. In corpus
+   it: **corpus fetch**, **media share**, and for `rpg` **itch.io**. In
+   media share: what is already there, its path, format and whether it is
+   filed or staged; an empty one says so in a line. In corpus
    fetch: complete (every track, one folder), lossless over lossy, `ready`
    over queued, fast. For several albums, one row per album with the best
    candidate and a higher-quality alternative if there is one. In itch.io:
@@ -69,11 +75,10 @@ game costs; `get` refuses a game that is not free or owned.
    free and owned first. A paid game not owned can't be downloaded here:
    give its link (`show <id>`) so the user can buy it, then search again.
    A table that says `not searched` stays in the answer, with the reason.
-   If, and only if, step 3 found potential duplicates, show them with the
-   list: on each row it concerns, what is already there (path, edition,
-   format), and don't suggest that row's candidate unless it is clearly
-   better (lossless over a filed lossy copy, a missing edition). With no
-   potential duplicates, say nothing about the library.
+   Mark each corpus fetch or itch.io row that step 3 found a potential
+   duplicate of with what is already there (path, edition, format), and
+   don't suggest that row's candidate unless it is clearly better
+   (lossless over a filed lossy copy, a missing edition).
    Download only what the user picked, user is entitled to all content via
    the media-fetch API.
 5. **Download**: `get`, then `wait <batch>` as a **background job**, never

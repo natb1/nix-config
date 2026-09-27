@@ -14,7 +14,7 @@
 
 { lib, python3Packages, stateDir ? null
 , corpusKeyFile ? "/etc/slskd/api.env"
-, corpusDownloads ? "/srv/media/staging/soulseek"
+, corpusDownloads ? "/srv/media/staging/corpusfetch"
 }:
 
 python3Packages.buildPythonApplication {

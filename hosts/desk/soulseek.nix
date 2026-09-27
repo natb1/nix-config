@@ -8,7 +8,7 @@
 # twice, so a second client (Nicotine+, sldl) on the same account would
 # fight this one. Use media-fetch instead.
 #
-# Downloads land in /srv/media/staging/soulseek, not the library, one
+# Downloads land in /srv/media/staging/corpusfetch, not the library, one
 # folder per media-fetch job. The media-fetch service below (`media-fetch
 # pump`) asks each source for one file at a time, as earlier ones finish, and
 # moves each finished job into its staging/<batch>, which is then filed like
@@ -43,7 +43,7 @@
 let
   credentials = "/etc/slskd/credentials";
   apiEnv = "/etc/slskd/api.env";
-  downloads = "/srv/media/staging/soulseek";
+  downloads = "/srv/media/staging/corpusfetch";
   media-fetch = pkgs.callPackage ../../pkgs/media-fetch { stateDir = "/var/lib/media-fetch"; };
 in
 {
@@ -119,6 +119,29 @@ in
       NoNewPrivileges = true;
       PrivateTmp = true;
     };
+  };
+
+  # Once: the downloads were in staging/soulseek, a name media-fetch's
+  # users should not see (pkgs/media-fetch/default.nix). What is there moves
+  # into the new directory before slskd starts; the old one goes once empty.
+  systemd.services.corpusfetch-rename = {
+    description = "Move slskd's downloads from staging/soulseek to ${downloads}";
+    after = [ "srv-media.mount" "systemd-tmpfiles-setup.service" ];
+    requires = [ "srv-media.mount" ];
+    before = [ "slskd.service" "media-fetch.service" ];
+    requiredBy = [ "slskd.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = [ pkgs.coreutils pkgs.findutils ];
+    script = ''
+      old=/srv/media/staging/soulseek
+      [ -d "$old" ] || exit 0
+      mkdir -p ${downloads}
+      find "$old" -mindepth 1 -maxdepth 1 -exec mv -n -t ${downloads} {} +
+      rmdir "$old" && echo "moved $old to ${downloads}" || echo "$old is not empty: left in place"
+    '';
   };
 
   systemd.tmpfiles.rules = [

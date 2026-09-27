@@ -12,6 +12,9 @@
 KIND is what is sought: music, audiobook, book, rpg, comic, movie, tv,
 video or other. It picks the places searched, each a table of its own:
   corpus fetch   every kind
+  media share    every kind: what is already filed in the kind's library
+                 folder, or staged, whose path matches every word of the
+                 query, in any format; nothing to fetch
   itch.io        rpg too: tabletop games from itch.io's search and the
                  account's own library. Free games and the account's own
                  can be fetched; the rest are listed with their price.
@@ -42,6 +45,7 @@ source's own queue is not counted.
 
 Environment:
   MEDIA_STAGING        batch directories' parent (default /srv/media/staging)
+  MEDIA_LIBRARY        the media share (default: MEDIA_STAGING's parent)
   MEDIA_FETCH_STATE    results and jobs (default $XDG_STATE_HOME/media-fetch)
   MEDIA_FETCH_PER_SOURCE  files in flight per source (default 1)
   CORPUS_URL           corpus fetch's service (default http://localhost:5030)
@@ -597,23 +601,84 @@ def _alive(pid):
 
 
 # --------------------------------------------------------------------------
+# The media share: what is already filed (MEDIA_LIBRARY, docs/desktop-
+# migration.md, "Layout on the share") or staged, so a search shows what a
+# download would duplicate. Read-only: its candidates are not fetched. One
+# candidate per item, the folder at ITEM_DEPTH under the kind's library
+# folder (an album under its artist, a game or line, a show, a film, an
+# author, a channel) or a staging batch, with its files whose path matches
+# every word of the query.
+
+LIBRARY = {"music": ["music"], "audiobook": ["books"], "book": ["books"], "comic": ["books"],
+           "rpg": ["rpg"], "movie": ["movies"], "tv": ["tv"], "video": ["youtube", "movies", "tv"]}
+ITEM_DEPTH = {"music": 2}  # else 1
+
+
+def _words(text):
+    return " ".join(re.findall(r"\w+", text.casefold()))
+
+
+class Share(Backend):
+    download_root = None
+
+    def __init__(self, skip=()):
+        self.root = Path(os.environ.get("MEDIA_LIBRARY") or staging_dir().parent)
+        # The other backends' download directories, and staging's trash.
+        self.skip = {Path(x).resolve() for x in skip} | {(staging_dir() / "trash").resolve()}
+
+    def search(self, query, timeout, kind="other"):
+        words = _words(query).split()
+        folders = LIBRARY.get(kind) or sorted({f for fs in LIBRARY.values() for f in fs})
+        out = [self._items(self.root / f, ITEM_DEPTH.get(f, 1), words, "filed") for f in folders]
+        out.append(self._items(staging_dir(), 1, words, "staged"))
+        return [c for cs in out for c in cs]
+
+    def _items(self, top, depth, words, where):
+        items = {}
+        if not top.is_dir():
+            return []
+        for d, dirs, files in os.walk(top):
+            dirs[:] = sorted(x for x in dirs if not x.startswith(".")
+                             and (Path(d) / x).resolve() not in self.skip)
+            for name in files:
+                p = Path(d) / name
+                parts = p.relative_to(top).parts
+                if len(parts) <= depth or name.startswith("."):
+                    continue  # a loose file above the items: README.md, manifests
+                if all(w in _words(" ".join(parts)) for w in words):
+                    items.setdefault(parts[:depth], []).append(p)
+        out = []
+        for key, paths in sorted(items.items()):
+            item = top.joinpath(*key)
+            out.append({"title": str(item.relative_to(self.root)) if self.root in item.parents else str(item),
+                        "files": [{"name": str(p.relative_to(item)), "size": p.stat().st_size}
+                                  for p in sorted(paths)],
+                        "availability": {"ready": False, "queue": 0, "speed": 0},
+                        "path": str(item), "where": where, "source": {}})
+        return out
+
+
+# --------------------------------------------------------------------------
 # Every backend at once. A candidate and its job carry "backend", the key
 # here; each job's calls go to the backend it came from. A job from before
 # there was a choice is the corpus's.
 
-BACKENDS = {"corpus": Slskd, "itch": Itch}
-# What the CLI calls each, and which kinds search it (None: every kind).
-TABLES = {"corpus": ("corpus fetch", None), "itch": ("itch.io", {"rpg"})}
+BACKENDS = {"corpus": Slskd, "share": Share, "itch": Itch}
+# What the CLI calls each, and which kinds search it (None: every kind), in
+# the order the tables are shown.
+TABLES = {"corpus": ("corpus fetch", None), "share": ("media share", None), "itch": ("itch.io", {"rpg"})}
 KINDS = ("music", "audiobook", "book", "rpg", "comic", "movie", "tv", "video", "other")
 
 
 class Backends(Backend):
     def __init__(self):
-        self.all = {name: cls() for name, cls in BACKENDS.items()}
+        fetch = {name: cls() for name, cls in BACKENDS.items() if cls is not Share}
+        share = Share(skip=[b.download_root for b in fetch.values()])
+        self.all = {name: share if cls is Share else fetch[name] for name, cls in BACKENDS.items()}
 
     @property
     def download_roots(self):
-        return [b.download_root for b in self.all.values()]
+        return [b.download_root for b in self.all.values() if b.download_root]
 
     def of(self, job):
         return self.all[job.get("backend", "corpus")]
@@ -917,7 +982,9 @@ def cmd_search(a):
 
     def run(name):
         try:
-            found[name] = be.all[name].search(a.query, a.timeout)
+            b = be.all[name]
+            found[name] = b.search(a.query, a.timeout, a.kind) if isinstance(b, Share) \
+                else b.search(a.query, a.timeout)
         except FetchError as e:
             errors[name] = str(e)
     threads = [threading.Thread(target=run, args=(n,)) for n in names]
@@ -932,11 +999,15 @@ def cmd_search(a):
     for name in names:
         kept = []
         for c in found.get(name, []):
+            if "where" in c:  # the media share: whatever it holds, in any format
+                kept.append(summarize(c))
+                continue
             if exts:
                 c["files"] = [f for f in c["files"] if f["name"].rpartition(".")[2].lower() in exts]
             if c.get("buy") or len(c["files"]) >= a.min_files:
                 kept.append(summarize(c))
-        kept.sort(key=rank)
+        if name != "share":  # the media share: in path order
+            kept.sort(key=rank)
         for c in kept:
             every.append(c)
             c.update(id=f"{sid}.{len(every)}", backend=name, **{"from": TABLES[name][0]})
@@ -961,13 +1032,16 @@ def cmd_search(a):
             print(f"  nothing found for {a.query!r}")
         for c in t["shown"]:
             av = c["availability"]
-            if "price" in c:  # itch.io: what it costs, not how fast
+            if "where" in c:  # the media share: where it is, not how to get it
+                print(f"{c['id']:<10} {c['where']:<9} {len(c['files']):>3} files {_size(c['size']):>9}  "
+                      f"{c['formats']:<18} {c['title']}")
+            elif "price" in c:  # itch.io: what it costs, not how fast
                 files = f"{len(c['files']):>3} files" if not c.get("buy") else "  ? files"
-                print(f"{c['id']:<9} {c['price']:<9} {files} {_size(c['size']):>9}  "
+                print(f"{c['id']:<10} {c['price']:<9} {files} {_size(c['size']):>9}  "
                       f"{c['formats']:<18} {c['title']}" + (f" ({c['author']})" if c.get("author") else ""))
             else:
                 avail = "ready" if av["ready"] else f"queue {av['queue']}"
-                print(f"{c['id']:<9} {avail:<9} {av['speed'] / 1e6:5.1f} MB/s  {len(c['files']):>3} files "
+                print(f"{c['id']:<10} {avail:<9} {av['speed'] / 1e6:5.1f} MB/s  {len(c['files']):>3} files "
                       f"{_size(c['size']):>9}  {c['formats']:<18} {c['title']}")
         if len(t["shown"]) < t["total"]:
             print(f"({t['total'] - len(t['shown'])} more: --all)")
@@ -981,6 +1055,8 @@ def cmd_show(a):
     print(f"{c['id']}  {c['title']}  ({c['formats']}, {_size(c['size'])})  [{c.get('from', 'corpus fetch')}]")
     if c.get("url"):
         print(f"      {c['price']}, {c['url']}")
+    if c.get("path"):
+        print(f"      {c['where']}, {c['path']}")
     for i, f in enumerate(c["files"], 1):
         dur = _dur(f["duration"]) if f.get("duration") else ""
         print(f"{i:>4}  {dur:>6} {_size(f['size']):>9}  {f['name']}")
@@ -1035,6 +1111,8 @@ def cmd_get(a):
         raise FetchError("--batch is required for a new download")
     check_batch(a.batch, be)
     c = load_candidate(a.id)
+    if "where" in c:
+        raise FetchError(f"{c['title']} is already on the media share ({c['where']}): {c['path']}")
     if c.get("buy"):
         raise FetchError(f"{c['title']} is {c['price']} on {c['from']} and not owned: "
                          f"buy it at {c['url']}, then search again")
