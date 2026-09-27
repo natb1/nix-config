@@ -2,9 +2,9 @@
 # `focus-or-launch COLUMN APP_ID CMD…`. If a window with that Wayland app_id is
 # open, anywhere, it is focused — niri scrolls or switches workspace to it,
 # like alt-tab. If not, CMD is started and its window, once it appears, is
-# moved to column COLUMN (1 is leftmost) of the current workspace. Its width is
-# a window rule in niri.kdl, not set here, so it holds for the window however
-# it was opened.
+# moved to column COLUMN (1 is leftmost) of the current workspace. Its width
+# comes from niri.kdl (the default column width, or a window rule), not from
+# here, so it holds for the window however it was opened.
 #
 # Web apps need no "Install page as app": `google-chrome-stable --app=URL`
 # opens a bare app window with an app_id derived from the URL —

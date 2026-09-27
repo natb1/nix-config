@@ -73,12 +73,13 @@ layout {
     center-focused-column "never"
 
     preset-column-widths {
+        proportion 0.25
         proportion 0.33333
         proportion 0.5
         proportion 0.66667
     }
 
-    default-column-width { proportion 0.5; }
+    default-column-width { proportion 0.25; }
 
     focus-ring {
         width 2
@@ -87,13 +88,8 @@ layout {
     }
 }
 
-// App-key windows (Mod+1, … below): Cadence a quarter of the ultrawide wide,
-// Claude Code half. Mod+R still cycles the presets from there.
-window-rule {
-    match app-id=r#"^chrome-claude\.ai__artifact_54sxzR169AZiUx8QNJkngJ-Default$"#
-    default-column-width { proportion 0.25; }
-}
-
+// App-key windows (Mod+1, … below) open at the quarter-width default, except
+// Claude Code at half. Mod+R still cycles the presets from there.
 window-rule {
     match app-id=r#"^chrome-claude\.ai__code-Default$"#
     default-column-width { proportion 0.5; }
