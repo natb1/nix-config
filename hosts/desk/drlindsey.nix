@@ -63,9 +63,16 @@ in
           — yours; the shared one isn't visible to this account.
       '';
 
-      # A managed git config, with no identity: gh.nix's credential helper is
-      # written into it, so `gh auth login` also covers git over https.
-      programs.git.enable = true;
+      # A managed git config, with their own identity: gh.nix's credential
+      # helper is written into it, so `gh auth login` also covers git over
+      # https.
+      programs.git = {
+        enable = true;
+        settings.user = {
+          name = "Lindsey Webb";
+          email = "lindsey.rochelle.webb@gmail.com";
+        };
+      };
 
       # The system default shell is zsh; without a managed .zshrc the first
       # shell stops at zsh-newuser-install.
