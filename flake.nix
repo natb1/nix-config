@@ -72,6 +72,9 @@
           # hosts/desk/gaming.nix
           "steam"
           "steam-unwrapped"
+          # hosts/desk/home/desktop.nix — the cursor theme. GPL-3 code, but
+          # nixpkgs also lists the macOS artwork as unfree.
+          "apple_cursor"
         ];
 
       # Home-manager wiring shared by every host. hostPlatform in-module is the

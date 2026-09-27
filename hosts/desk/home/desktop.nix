@@ -96,6 +96,21 @@ in
     gtk4.theme = null;
   };
 
+  # A macOS-style cursor. With no theme installed, niri fell back to its
+  # built-in one — a single arrow, drawn large, for every context. A full
+  # xcursor theme gives the I-beam over text, the hand over links, resize
+  # arrows on edges, and so on. home.pointerCursor also points GTK, X11 apps
+  # (via xwayland-satellite) and the XCURSOR_* variables at it; niri reads
+  # its own copy of the name and size from niri.kdl's cursor block, so keep
+  # the two in step.
+  home.pointerCursor = {
+    package = pkgs.apple-cursor;
+    name = "macOS";
+    size = 24;
+    gtk.enable = true;
+    x11.enable = true;
+  };
+
   services.swayidle = {
     enable = true;
     timeouts = [

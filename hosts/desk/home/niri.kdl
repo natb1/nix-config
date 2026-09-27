@@ -102,6 +102,14 @@ environment {
 
 prefer-no-csd
 
+// The macOS cursor theme, installed by home/desktop.nix (home.pointerCursor).
+// niri draws the pointer itself and passes these on to apps it spawns as
+// XCURSOR_THEME/XCURSOR_SIZE. Keep them in step with home.pointerCursor.
+cursor {
+    xcursor-theme "macOS"
+    xcursor-size 24
+}
+
 // Quickshell's wallpaper (quickshell/Wallpaper.qml) goes in the backdrop, so
 // it also shows behind the workspaces in the overview. The backdrop is only
 // visible on the desktop because layout's background-color is transparent.
