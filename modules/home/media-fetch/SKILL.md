@@ -46,10 +46,11 @@ came from.
    the title; if it could be either (a novel and the game based on it, say)
    and the user didn't say, ask.
 2. **Search.** For an artist's albums, search the artist and then each
-   album the first results don't cover. Use `--ext flac,mp3` for music,
-   `--ext epub,pdf` for books and `--ext pdf,epub,zip` for RPGs, and
-   `--min-files` to drop singles. `rpg` searches itch.io as well as the
-   corpus.
+   album the first results don't cover. `--kind` already limits corpus
+   fetch to the kind's usual file types (audio for music, pdf/epub/zip/cbz
+   for rpg, …); narrow further with `--ext` (`--ext flac` for lossless
+   only), or `--ext all` for every type. `--min-files` drops singles.
+   `rpg` searches itch.io as well as the corpus.
 3. **Check the library**: the media share table is the check. Its query
    is the search's, so when the search named more than the title (an
    artist and album, say) and the table is empty, search again on the
@@ -74,7 +75,11 @@ came from.
    the games that match, each with its author, price, files and size;
    free and owned first. A paid game not owned can't be downloaded here:
    give its link (`show <id>`) so the user can buy it, then search again.
-   A table that says `not searched` stays in the answer, with the reason.
+   **Every table `search` returned goes in the answer, always, in its
+   order**, even when none of its rows is what the user asked for: then
+   the table is one line saying so ("corpus fetch: 10 results, none of
+   them Unravel the TTRPG"). A table that says `not searched` stays too,
+   with the reason.
    Mark each corpus fetch or itch.io row that step 3 found a potential
    duplicate of with what is already there (path, edition, format), and
    don't suggest that row's candidate unless it is clearly better

@@ -668,6 +668,12 @@ BACKENDS = {"corpus": Slskd, "share": Share, "itch": Itch}
 # the order the tables are shown.
 TABLES = {"corpus": ("corpus fetch", None), "share": ("media share", None), "itch": ("itch.io", {"rpg"})}
 KINDS = ("music", "audiobook", "book", "rpg", "comic", "movie", "tv", "video", "other")
+# The corpus's file types for each kind when --ext is not given: a search
+# for "unravel" as an rpg should not list the song. Subtitles go with video.
+_VIDEO = "mkv,mp4,m4v,avi,webm,mov,srt,ass,sub"
+KIND_EXT = {"music": "flac,mp3,m4a,ogg,opus,wav,aif,aiff,alac,ape,wv", "audiobook": "m4b,mp3,m4a,aac,ogg,opus,flac",
+            "book": "epub,pdf,mobi,azw3,djvu", "comic": "cbz,cbr,pdf,epub", "rpg": "pdf,epub,zip,cbz",
+            "movie": _VIDEO, "tv": _VIDEO, "video": _VIDEO}
 
 
 class Backends(Backend):
@@ -993,7 +999,8 @@ def cmd_search(a):
     for t in threads:
         t.join()
 
-    exts = {e.strip(".").lower() for e in a.ext.split(",")} if a.ext else None
+    ext_sets = lambda spec: {e.strip(".").lower() for e in spec.split(",")} if spec and spec != "all" else None
+    exts = ext_sets(a.ext)
     sid = uuid.uuid4().hex[:6]
     tables, every = [], []
     for name in names:
@@ -1002,8 +1009,9 @@ def cmd_search(a):
             if "where" in c:  # the media share: whatever it holds, in any format
                 kept.append(summarize(c))
                 continue
-            if exts:
-                c["files"] = [f for f in c["files"] if f["name"].rpartition(".")[2].lower() in exts]
+            keep = exts if a.ext else ext_sets(KIND_EXT.get(a.kind)) if name == "corpus" else None
+            if keep:
+                c["files"] = [f for f in c["files"] if f["name"].rpartition(".")[2].lower() in keep]
             if c.get("buy") or len(c["files"]) >= a.min_files:
                 kept.append(summarize(c))
         if name != "share":  # the media share: in path order
@@ -1258,7 +1266,8 @@ def main(argv=None):
     s.add_argument("query")
     s.add_argument("--kind", required=True, choices=KINDS,
                    help="what is sought; picks the places searched")
-    s.add_argument("--ext", help="only these file types, e.g. flac,mp3 or epub,pdf")
+    s.add_argument("--ext", help="only these file types, e.g. flac,mp3 or epub,pdf; `all` for "
+                   "every type. Default: corpus fetch keeps the kind's usual types, the rest all")
     s.add_argument("--min-files", type=int, default=1, help="drop smaller folders")
     s.add_argument("--timeout", type=float, default=20, help="seconds to collect results")
     s.add_argument("--limit", type=int, default=20, help="rows per table")

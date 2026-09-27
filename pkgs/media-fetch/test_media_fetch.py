@@ -674,5 +674,13 @@ class MediaFetchTest(unittest.TestCase):
         self.assertIn("is already on the media share (filed)", out)
         self.assertIn("filed, " + g["path"], self.cli("show", g["id"])[1])
 
+    def test_kind_picks_the_corpus_file_types(self):
+        self.fake.responses = [response("a", "Ado\\unravel", ["01 unravel"], ext="flac"),
+                               response("b", "RPG\\Unravel", ["Unravel"], ext="pdf")]
+        self.assertEqual([c["title"] for c in self.search(kind="rpg")["candidates"]], ["Unravel"])
+        self.assertEqual([c["title"] for c in self.search(kind="music")["candidates"]], ["unravel"])
+        self.assertEqual(len(self.search("--ext", "all", kind="rpg")["candidates"]), 2)
+        self.assertEqual(len(self.search(kind="other")["candidates"]), 2)
+
 if __name__ == "__main__":
     unittest.main()
