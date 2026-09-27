@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""media-fetch: find media on a download network and fetch it into staging.
+"""media-fetch: find media and fetch it into staging.
 
-  search QUERY               list candidates: one folder of files from one source
+  search QUERY --kind KIND   list candidates, one table per place searched
   show   ID                  a candidate's files, numbered
   get    ID --batch BATCH    download a candidate (or --files 1,3-5 of it)
   status [JOB|BATCH ...]     progress of each download
@@ -9,50 +9,64 @@
   cancel JOB|BATCH ...       stop downloads and forget them
   pump   [--every S]         ask for queued files, deliver finished jobs (the service)
 
-A candidate is what a source offers in one folder: an album, a book, a
-season. Its ID (`3fa2c1.4`: search, then rank) names it until the next
-`search` is long forgotten; results are kept in the state directory. `get`
-starts a job with the candidate's ID. `wait` delivers each job whose files
-have all arrived into STAGING/BATCH/<title>/, the same batch directory
-media-stage takes, and then `media-stage scan` (or, for music, `media-stage
-group` and `beet stage-review`) takes over. A job that failed is left
-undelivered; `get` with the same ID again retries the files that failed.
+KIND is what is sought: music, audiobook, book, rpg, comic, movie, tv,
+video or other. It picks the places searched, each a table of its own:
+  corpus fetch   every kind
+  itch.io        rpg too: tabletop games from itch.io's search and the
+                 account's own library. Free games and the account's own
+                 can be fetched; the rest are listed with their price.
 
-Nothing here names the network behind it. A Backend searches, downloads
-into a directory of its own, reports progress and says where each finished
-file is; the CLI, the IDs, the states (queued, downloading, done, failed)
-and the JSON (--json on every command) are the same whatever it is. The one
-backend today is slskd (Soulseek), chosen by MEDIA_FETCH_BACKEND.
+A candidate is what one place offers in one folder: an album, a book, a
+season, an itch.io game. Its ID (`3fa2c1.4`: search, then rank, numbered
+across the tables) names it until the next `search` is long forgotten;
+results are kept in the state directory. `get` starts a job with the
+candidate's ID. `wait` delivers each job whose files have all arrived into
+STAGING/BATCH/<title>/, the same batch directory media-stage takes, and
+then `media-stage scan` (or, for music, `media-stage group` and `beet
+stage-review`) takes over. A job that failed is left undelivered; `get`
+with the same ID again retries the files that failed.
+
+The CLI, the IDs, the states (queued, downloading, done, failed) and the
+JSON (--json on every command) are the same whichever place a candidate
+came from.
 
 A source is asked for at most MEDIA_FETCH_PER_SOURCE files at a time, across
 all jobs; the rest of a job waits here, queued. `pump` asks for the next ones
 as earlier ones finish and delivers finished jobs; on desk a service runs it
-all the time (hosts/desk/soulseek.nix), and `get` and `wait` do the same
-while they run, so nothing needs to be kept running. `wait` prints a line
-whenever a job moves. `status`, `wait` and `get` estimate the time
-left: what is left of the job and of the jobs ahead of it at its source,
-at the source's measured speed (before a file starts: the speed it offered
-in the search). Time spent in a source's own queue is not counted.
+all the time, and `get` and `wait` do the same while they run, so nothing
+needs to be kept running. `wait` prints a line whenever a job moves.
+`status`, `wait` and `get` estimate the time left: what is left of the job
+and of the jobs ahead of it at its source, at the source's measured speed
+(before a file starts: the speed it offered in the search). Time spent in a
+source's own queue is not counted.
 
 Environment:
   MEDIA_STAGING        batch directories' parent (default /srv/media/staging)
   MEDIA_FETCH_STATE    results and jobs (default $XDG_STATE_HOME/media-fetch)
-  MEDIA_FETCH_BACKEND  slskd (default)
   MEDIA_FETCH_PER_SOURCE  files in flight per source (default 1)
-  SLSKD_URL            default http://localhost:5030
-  SLSKD_API_KEY        default: read from /etc/slskd/api.env
-  SLSKD_DOWNLOADS      slskd's download directory (default
-                       /srv/media/staging/soulseek, hosts/desk/soulseek.nix)
+  CORPUS_URL           corpus fetch's service (default http://localhost:5030)
+  CORPUS_API_KEY       its key, else the API_KEY line of CORPUS_KEY_FILE
+  CORPUS_DOWNLOADS     where it downloads to
+  ITCH_API_KEY         itch.io's key, else the API_KEY line of ITCH_KEY_FILE
+                       (default /etc/itch/api.env)
+  ITCH_DOWNLOADS       where itch.io downloads go (default STAGING/.itch)
+  ITCH_API_URL, ITCH_WEB_URL   default https://api.itch.io, https://itch.io
 """
 
 import argparse
+import concurrent.futures
 import datetime
 import fcntl
+import hashlib
+import html
 import json
 import os
 import re
 import shutil
+import signal
+import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -69,6 +83,21 @@ STATES = ("queued", "downloading", "done", "failed")
 
 class FetchError(Exception):
     pass
+
+
+def key_from(path, what):
+    """The value of the NAME=value line whose NAME ends in API_KEY."""
+    if not path:
+        raise FetchError(f"no API key for {what}")
+    try:
+        text = Path(path).read_text()
+    except OSError as e:
+        raise FetchError(f"no API key for {what}: {e.strerror}")
+    for line in text.splitlines():
+        k, eq, v = line.partition("=")
+        if eq and k.strip().endswith("API_KEY") and v.strip():
+            return v.strip()
+    raise FetchError(f"no API key for {what}")
 
 
 # --------------------------------------------------------------------------
@@ -127,21 +156,19 @@ BUSY = re.compile(r"try again later|overwhelmed|too many (files|megabytes)", re.
 
 
 class Slskd(Backend):
+    # "corpus fetch" in everything the CLI prints. Its settings are CORPUS_*;
+    # the package's wrapper points them at slskd's key file and downloads.
     def __init__(self):
-        self.url = os.environ.get("SLSKD_URL", "http://localhost:5030").rstrip("/") + "/api/v0"
-        self.key = os.environ.get("SLSKD_API_KEY") or self._key_from("/etc/slskd/api.env")
-        self.download_root = Path(os.environ.get("SLSKD_DOWNLOADS", "/srv/media/staging/soulseek"))
+        self.url = os.environ.get("CORPUS_URL", "http://localhost:5030").rstrip("/") + "/api/v0"
+        self.download_root = Path(os.environ.get("CORPUS_DOWNLOADS") or staging_dir() / ".corpus")
+        self._key = None
 
-    @staticmethod
-    def _key_from(path):
-        try:
-            for line in Path(path).read_text().splitlines():
-                k, _, v = line.partition("=")
-                if k.strip() == "SLSKD_API_KEY":
-                    return v.strip()
-        except OSError as e:
-            raise FetchError(f"no API key: SLSKD_API_KEY unset and {path}: {e.strerror}")
-        raise FetchError(f"no SLSKD_API_KEY in {path}")
+    @property
+    def key(self):
+        if self._key is None:
+            self._key = os.environ.get("CORPUS_API_KEY") or \
+                key_from(os.environ.get("CORPUS_KEY_FILE"), "corpus fetch")
+        return self._key
 
     def _call(self, method, path, body=None, ok404=False):
         data = json.dumps(body).encode() if body is not None else None
@@ -318,14 +345,300 @@ def _file(f):
     return out
 
 
-BACKENDS = {"slskd": Slskd}
+# --------------------------------------------------------------------------
+# itch.io. The API's own search finds little, so games are found by the
+# site's search (tabletop games only) and in the account's library
+# (/profile/owned-keys). A candidate is one game and its hosted uploads: a
+# free game's without a key, an owned one's with its download key. A paid
+# game the account does not own shows no uploads; it is listed, with its
+# price, to be bought.
+#
+# A download is a redirect to a signed link that expires in a minute, so
+# each `download` starts a worker process (`media-fetch _itch-fetch`) that
+# fetches the files one by one into download_root/<job>/. It leaves beside
+# them what progress() reads: .<name>.req (its pid, when it was asked),
+# <name>.part while it downloads, then <name>, or .<name>.failed (why).
+
+GAME_CELL = re.compile(r'(?=<div[^>]*\bdata-game_id=")')
+_children = []  # workers this process started, reaped as they finish
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    # The signed link must not get the API key: the redirect is followed by
+    # hand, without it.
+    def redirect_request(self, *a, **kw):
+        return None
+
+
+class Itch(Backend):
+    games_searched = 15  # the site's first results, each an uploads call
+
+    def __init__(self):
+        self.api = os.environ.get("ITCH_API_URL", "https://api.itch.io").rstrip("/")
+        self.web = os.environ.get("ITCH_WEB_URL", "https://itch.io").rstrip("/")
+        self.download_root = Path(os.environ.get("ITCH_DOWNLOADS") or staging_dir() / ".itch")
+        self._key = None
+
+    @property
+    def key(self):
+        if self._key is None:
+            self._key = os.environ.get("ITCH_API_KEY") or \
+                key_from(os.environ.get("ITCH_KEY_FILE", "/etc/itch/api.env"), "itch.io")
+        return self._key
+
+    def _open(self, url, auth=True, opener=None):
+        req = urllib.request.Request(url, headers={"User-Agent": "media-fetch"})
+        if auth:
+            req.add_header("Authorization", f"Bearer {self.key}")
+        try:
+            return (opener or urllib.request.build_opener()).open(req, timeout=30)
+        except urllib.error.HTTPError as e:
+            if 300 <= e.code < 400:
+                raise
+            with e:
+                detail = e.read().decode(errors="replace").strip()[:300]
+            raise FetchError(f"itch.io: HTTP {e.code} {detail}")
+        except urllib.error.URLError as e:
+            raise FetchError(f"cannot reach itch.io: {e.reason}")
+
+    def _api(self, path):
+        with self._open(self.api + path) as r:
+            d = json.loads(r.read())
+        if d.get("errors"):
+            raise FetchError(f"itch.io: {'; '.join(d['errors'])}")
+        return d
+
+    def _owned(self):
+        """{game id: (download key id, game)} for the account's library."""
+        out = {}
+        for page in range(1, 101):
+            d = self._api(f"/profile/owned-keys?page={page}")
+            keys = d.get("owned_keys") or []
+            for k in keys:
+                g = k["game"]
+                out[g["id"]] = (k["id"], {"id": g["id"], "title": g["title"], "url": g.get("url", ""),
+                                          "author": (g.get("user") or {}).get("display_name")
+                                          or (g.get("user") or {}).get("username", ""),
+                                          "price": None})
+            if len(keys) < (d.get("per_page") or 50):
+                break
+        return out
+
+    def _found(self, query):
+        """The site's search, tabletop games: [{id, title, url, author, price}],
+        price None when free."""
+        q = urllib.parse.urlencode({"q": query, "classification": "physical_game"})
+        with self._open(f"{self.web}/search?{q}", auth=False) as r:
+            page = r.read().decode(errors="replace")
+        out = []
+        for cell in GAME_CELL.split(page)[1:]:
+            gid = re.search(r'data-game_id="(\d+)"', cell)
+            title = re.search(r'<a([^>]*class="title game_link"[^>]*)>([^<]*)</a>', cell)
+            if not gid or not title:
+                continue
+            href = re.search(r'href="([^"]+)"', title.group(1))
+            author = re.search(r'class="game_author"><a[^>]*>([^<]*)', cell)
+            price = re.search(r'class="price_value"[^>]*>([^<]*)', cell)
+            out.append({"id": int(gid.group(1)), "title": html.unescape(title.group(2)).strip(),
+                        "url": href.group(1) if href else "",
+                        "author": html.unescape(author.group(1)).strip() if author else "",
+                        "price": html.unescape(price.group(1)).strip() if price else None})
+        return out
+
+    def _candidate(self, game, key):
+        q = f"?download_key_id={key}" if key else ""
+        uploads = self._api(f"/games/{game['id']}/uploads{q}").get("uploads") or []
+        files, ids = [], {}
+        for u in uploads:  # [] or, when there are none, {}
+            if u.get("storage") != "hosted" or not u.get("filename"):
+                continue  # an external link: nothing to fetch
+            name = _safe(u["filename"])
+            if name in ids:
+                name = f"{u['id']} {name}"
+            files.append({"name": name, "size": u.get("size") or 0,
+                          **({"md5": u["md5_hash"]} if u.get("md5_hash") else {})})
+            ids[name] = u["id"]
+        c = {"title": game["title"], "files": files,
+             "availability": {"ready": bool(files) and (key is not None or game["price"] is None),
+                              "queue": 0, "speed": 0},
+             "author": game["author"], "url": game["url"],
+             "price": "owned" if key else game["price"] or "free",
+             "source": {"game": game["id"], "key": key, "uploads": ids}}
+        if not files and key is None and game["price"]:
+            c["buy"] = True  # its files show once it is owned
+        return c
+
+    def search(self, query, timeout):
+        owned = self._owned()
+        found = self._found(query)[:self.games_searched]
+        seen = {g["id"] for g in found}
+        words = query.casefold().split()
+        mine = [g for _, g in owned.values()
+                if g["id"] not in seen and all(w in g["title"].casefold() for w in words)]
+
+        def one(g):
+            try:
+                return self._candidate(g, owned.get(g["id"], (None,))[0])
+            except FetchError:
+                return None
+        with concurrent.futures.ThreadPoolExecutor(8) as ex:
+            return [c for c in ex.map(one, mine + found) if c]
+
+    def source_key(self, job):
+        return "itch.io"
+
+    def _paths(self, job, name):
+        d = self.download_root / job["id"]
+        return d / name, d / f"{name}.part", d / f".{name}.req", d / f".{name}.failed"
+
+    def download(self, job, files):
+        src = job["source"]
+        d = self.download_root / job["id"]
+        d.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            _, part, _, failed = self._paths(job, f["name"])
+            part.unlink(missing_ok=True)
+            failed.unlink(missing_ok=True)
+        spec = {"dir": str(d), "key": src["key"],
+                "files": [{"name": f["name"], "upload": src["uploads"][f["name"]],
+                           "size": f["size"], "md5": f.get("md5")} for f in files]}
+        p = subprocess.Popen([sys.executable, os.path.abspath(__file__), "_itch-fetch", json.dumps(spec)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        _children.append(p)
+        for f in files:
+            self._paths(job, f["name"])[2].write_text(json.dumps({"pid": p.pid, "at": time.time()}))
+
+    def progress(self, job):
+        _children[:] = [c for c in _children if c.poll() is None]
+        out = {}
+        for f in job["files"]:
+            done, part, req, failed = self._paths(job, f["name"])
+            if done.is_file():
+                p = {"state": "done", "bytes": f["size"]}
+            elif failed.is_file():
+                p = {"state": "failed", "bytes": 0, "reason": failed.read_text().strip()}
+            elif not req.is_file():
+                p = {"state": "failed", "bytes": 0, "reason": "never started"}
+            else:
+                r = json.loads(req.read_text())
+                if not _alive(r["pid"]):
+                    p = {"state": "done", "bytes": f["size"]} if done.is_file() else \
+                        {"state": "failed", "bytes": 0, "reason": "interrupted"}
+                elif part.is_file():
+                    got = part.stat().st_size
+                    p = {"state": "downloading", "bytes": got,
+                         "speed": round(got / max(time.time() - r["at"], 1))}
+                else:
+                    p = {"state": "queued", "bytes": 0}
+            out[f["name"]] = p
+        return out
+
+    def locate(self, job, file):
+        p = self._paths(job, file["name"])[0]
+        return p if p.is_file() else None
+
+    def cancel(self, job):
+        for f in job["files"]:
+            req = self._paths(job, f["name"])[2]
+            try:
+                os.killpg(json.loads(req.read_text())["pid"], signal.SIGTERM)
+            except (OSError, ValueError, KeyError):
+                pass
+        shutil.rmtree(self.download_root / job["id"], ignore_errors=True)
+
+    def forget(self, job):
+        shutil.rmtree(self.download_root / job["id"], ignore_errors=True)
+
+    def fetch(self, upload, key, to, size, md5):
+        q = f"?download_key_id={key}" if key else ""
+        try:
+            r = self._open(f"{self.api}/uploads/{upload}/download{q}",
+                           opener=urllib.request.build_opener(NoRedirect))
+        except urllib.error.HTTPError as e:
+            with e:
+                where = e.headers.get("Location")
+            if not where:
+                raise FetchError(f"itch.io: HTTP {e.code} with nowhere to go")
+            r = self._open(urllib.parse.urljoin(e.filename, where), auth=False)
+        h, got = hashlib.md5(), 0
+        with r, open(to, "wb") as out:
+            while chunk := r.read(1 << 20):
+                out.write(chunk)
+                h.update(chunk)
+                got += len(chunk)
+        if size and got != size:
+            raise FetchError(f"got {got} bytes of {size}")
+        if md5 and h.hexdigest() != md5:
+            raise FetchError("the file's checksum does not match itch.io's")
+
+
+def itch_fetch(spec):
+    """The worker behind Itch.download."""
+    be, d = Itch(), Path(spec["dir"])
+    for f in spec["files"]:
+        part = d / f"{f['name']}.part"
+        try:
+            be.fetch(f["upload"], spec["key"], part, f["size"], f.get("md5"))
+            part.replace(d / f["name"])
+        except Exception as e:  # anything: the file fails, with why
+            (d / f".{f['name']}.failed").write_text(f"{e}\n")
+            part.unlink(missing_ok=True)
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # another member of the group's worker
+        return True
+    return True
+
+
+# --------------------------------------------------------------------------
+# Every backend at once. A candidate and its job carry "backend", the key
+# here; each job's calls go to the backend it came from. A job from before
+# there was a choice is the corpus's.
+
+BACKENDS = {"corpus": Slskd, "itch": Itch}
+# What the CLI calls each, and which kinds search it (None: every kind).
+TABLES = {"corpus": ("corpus fetch", None), "itch": ("itch.io", {"rpg"})}
+KINDS = ("music", "audiobook", "book", "rpg", "comic", "movie", "tv", "video", "other")
+
+
+class Backends(Backend):
+    def __init__(self):
+        self.all = {name: cls() for name, cls in BACKENDS.items()}
+
+    @property
+    def download_roots(self):
+        return [b.download_root for b in self.all.values()]
+
+    def of(self, job):
+        return self.all[job.get("backend", "corpus")]
+
+    def source_key(self, job):
+        return f"{job.get('backend', 'corpus')}:{self.of(job).source_key(job)}"
+
+    def download(self, job, files):
+        return self.of(job).download(job, files)
+
+    def progress(self, job):
+        return self.of(job).progress(job)
+
+    def locate(self, job, file):
+        return self.of(job).locate(job, file)
+
+    def cancel(self, job):
+        return self.of(job).cancel(job)
+
+    def forget(self, job):
+        return self.of(job).forget(job)
 
 
 def backend():
-    name = os.environ.get("MEDIA_FETCH_BACKEND", "slskd")
-    if name not in BACKENDS:
-        raise FetchError(f"unknown MEDIA_FETCH_BACKEND {name!r}; one of {', '.join(BACKENDS)}")
-    return BACKENDS[name]()
+    return Backends()
 
 
 # --------------------------------------------------------------------------
@@ -481,7 +794,7 @@ def _submit(be, raise_for):
 
 
 def public(obj):
-    return {k: v for k, v in obj.items() if k != "source"}
+    return {k: v for k, v in obj.items() if k not in ("source", "backend")}
 
 
 def _size(n):
@@ -598,35 +911,66 @@ def print_job(s, brief=False):
 
 
 def cmd_search(a):
-    cands = backend().search(a.query, a.timeout)
+    be = backend()
+    names = [n for n, (_, kinds) in TABLES.items() if kinds is None or a.kind in kinds]
+    found, errors = {}, {}
+
+    def run(name):
+        try:
+            found[name] = be.all[name].search(a.query, a.timeout)
+        except FetchError as e:
+            errors[name] = str(e)
+    threads = [threading.Thread(target=run, args=(n,)) for n in names]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
     exts = {e.strip(".").lower() for e in a.ext.split(",")} if a.ext else None
-    kept = []
-    for c in cands:
-        if exts:
-            c["files"] = [f for f in c["files"] if f["name"].rpartition(".")[2].lower() in exts]
-        if len(c["files"]) >= a.min_files:
-            kept.append(summarize(c))
-    kept.sort(key=rank)
     sid = uuid.uuid4().hex[:6]
-    for i, c in enumerate(kept, 1):
-        c["id"] = f"{sid}.{i}"
+    tables, every = [], []
+    for name in names:
+        kept = []
+        for c in found.get(name, []):
+            if exts:
+                c["files"] = [f for f in c["files"] if f["name"].rpartition(".")[2].lower() in exts]
+            if c.get("buy") or len(c["files"]) >= a.min_files:
+                kept.append(summarize(c))
+        kept.sort(key=rank)
+        for c in kept:
+            every.append(c)
+            c.update(id=f"{sid}.{len(every)}", backend=name, **{"from": TABLES[name][0]})
+        tables.append({"name": TABLES[name][0], "total": len(kept), "candidates": kept,
+                       **({"error": errors[name]} if name in errors else {})})
+    if not every and len(errors) == len(names):
+        raise FetchError("; ".join(f"{TABLES[n][0]}: {e}" for n, e in errors.items()))
     _write(state_dir() / "results" / f"{sid}.json",
-           {"query": a.query, "at": _now(), "candidates": kept})
-    shown = kept if a.all else kept[:a.limit]
+           {"query": a.query, "kind": a.kind, "at": _now(), "candidates": every})
+    for t in tables:
+        t["shown"] = t["candidates"] if a.all else t["candidates"][:a.limit]
     if a.json:
-        print(json.dumps({"search": sid, "query": a.query, "total": len(kept),
-                          "candidates": [public(c) for c in shown]}, indent=1))
+        print(json.dumps({"search": sid, "query": a.query, "kind": a.kind, "tables": [
+            {**{k: v for k, v in t.items() if k not in ("candidates", "shown")},
+             "candidates": [public(c) for c in t["shown"]]} for t in tables]}, indent=1))
         return
-    if not kept:
-        print(f"nothing found for {a.query!r}")
-        return
-    for c in shown:
-        av = c["availability"]
-        avail = "ready" if av["ready"] else f"queue {av['queue']}"
-        print(f"{c['id']:<9} {avail:<9} {av['speed'] / 1e6:5.1f} MB/s  {len(c['files']):>3} files "
-              f"{_size(c['size']):>9}  {c['formats']:<18} {c['title']}")
-    if len(shown) < len(kept):
-        print(f"({len(kept) - len(shown)} more: --all)")
+    for i, t in enumerate(tables):
+        print(("\n" if i else "") + t["name"])
+        if "error" in t:
+            print(f"  not searched: {t['error']}")
+        elif not t["candidates"]:
+            print(f"  nothing found for {a.query!r}")
+        for c in t["shown"]:
+            av = c["availability"]
+            if "price" in c:  # itch.io: what it costs, not how fast
+                files = f"{len(c['files']):>3} files" if not c.get("buy") else "  ? files"
+                print(f"{c['id']:<9} {c['price']:<9} {files} {_size(c['size']):>9}  "
+                      f"{c['formats']:<18} {c['title']}" + (f" ({c['author']})" if c.get("author") else ""))
+            else:
+                avail = "ready" if av["ready"] else f"queue {av['queue']}"
+                print(f"{c['id']:<9} {avail:<9} {av['speed'] / 1e6:5.1f} MB/s  {len(c['files']):>3} files "
+                      f"{_size(c['size']):>9}  {c['formats']:<18} {c['title']}")
+        if len(t["shown"]) < t["total"]:
+            print(f"({t['total'] - len(t['shown'])} more: --all)")
 
 
 def cmd_show(a):
@@ -634,7 +978,9 @@ def cmd_show(a):
     if a.json:
         print(json.dumps(public(c), indent=1))
         return
-    print(f"{c['id']}  {c['title']}  ({c['formats']}, {_size(c['size'])})")
+    print(f"{c['id']}  {c['title']}  ({c['formats']}, {_size(c['size'])})  [{c.get('from', 'corpus fetch')}]")
+    if c.get("url"):
+        print(f"      {c['price']}, {c['url']}")
     for i, f in enumerate(c["files"], 1):
         dur = _dur(f["duration"]) if f.get("duration") else ""
         print(f"{i:>4}  {dur:>6} {_size(f['size']):>9}  {f['name']}")
@@ -657,9 +1003,10 @@ def check_batch(batch, be):
     if not batch or "/" in batch or batch.startswith(".") or batch != batch.strip():
         raise FetchError(f"--batch {batch!r}: one plain directory name")
     dest = (staging_dir() / batch).resolve()
-    root = be.download_root.resolve()
-    if dest == root or root in dest.parents:
-        raise FetchError(f"--batch {batch}: that is the download directory, not a batch")
+    for root in be.download_roots:
+        root = root.resolve()
+        if dest == root or root in dest.parents:
+            raise FetchError(f"--batch {batch}: that is a download directory, not a batch")
     if (staging_dir() / f"{batch}.manifest.jsonl").exists():
         raise FetchError(f"batch {batch} is already scanned; fetch into a new batch")
 
@@ -688,11 +1035,14 @@ def cmd_get(a):
         raise FetchError("--batch is required for a new download")
     check_batch(a.batch, be)
     c = load_candidate(a.id)
+    if c.get("buy"):
+        raise FetchError(f"{c['title']} is {c['price']} on {c['from']} and not owned: "
+                         f"buy it at {c['url']}, then search again")
     files = c["files"]
     if a.files:
         files = [files[i - 1] for i in parse_picks(a.files, len(files))]
     job = {"id": c["id"], "batch": a.batch, "title": _safe(c["title"]), "files": files,
-           "source": c["source"], "at": _now(), "pending": [f["name"] for f in files],
+           "backend": c.get("backend", "corpus"), "source": c["source"], "at": _now(), "pending": [f["name"] for f in files],
            "speed": c["availability"]["speed"]}
     save_job(job)
     try:
@@ -730,7 +1080,7 @@ def deliver(be, job):
     for f in job["files"]:
         src = be.locate(job, f)
         if src is None:
-            raise FetchError(f"{job['id']}: {f['name']} is done but not in {be.download_root}")
+            raise FetchError(f"{job['id']}: {f['name']} is done but cannot be found")
         to = dest / f["name"]
         if to.exists():
             raise FetchError(f"{job['id']}: {to} already exists")
@@ -819,16 +1169,21 @@ def _now():
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["_itch-fetch"]:  # Itch.download's worker
+        return itch_fetch(json.loads(argv[1]))
     p = argparse.ArgumentParser(prog="media-fetch", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("search", help="find candidates")
     s.add_argument("query")
+    s.add_argument("--kind", required=True, choices=KINDS,
+                   help="what is sought; picks the places searched")
     s.add_argument("--ext", help="only these file types, e.g. flac,mp3 or epub,pdf")
     s.add_argument("--min-files", type=int, default=1, help="drop smaller folders")
     s.add_argument("--timeout", type=float, default=20, help="seconds to collect results")
-    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--limit", type=int, default=20, help="rows per table")
     s.add_argument("--all", action="store_true")
     s.set_defaults(fn=cmd_search)
 

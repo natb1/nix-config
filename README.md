@@ -93,7 +93,12 @@ short name `desk` works everywhere through MagicDNS.
    `SLSKD_PASSWORD`, one `NAME=value` per line. There is no port to forward:
    T-Mobile Home Internet is behind carrier-grade NAT. Check:
    `http://desk:5030` shows *Connected*, and Shares lists `music`, and
-   `media-fetch search '<an album>'` lists candidates.
+   `media-fetch search '<an album>' --kind music` lists candidates.
+   **itch.io** (tabletop games, `media-fetch search … --kind rpg`): create an
+   API key at itch.io → Settings → API keys and write it as
+   `ITCH_API_KEY=<key>` to `/etc/itch/api.env` (a switch makes it 0440
+   n8:media, [`hosts/desk/media-group.nix`](hosts/desk/media-group.nix)).
+   Check: `media-fetch search unravel --kind rpg` lists an `itch.io` table.
 6. **iPhone over Bluetooth** (notifications and texts,
    [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):
    `tether --bt-status` should report MAP + PBAP + ANCS. Pair from
@@ -359,6 +364,9 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   Soulseek account and the slskd web UI's login (`hosts/desk/soulseek.nix`).
   The API key beside it, `/etc/slskd/api.env`, is generated on first start.
   `/var/lib/slskd` holds search and transfer history, disposable.
+- `desk`'s itch.io API key, `/etc/itch/api.env` (0440 n8:media, one line
+  `ITCH_API_KEY=…`), for media-fetch's tabletop-game searches and
+  downloads. Replaced by making a new key at itch.io → Settings → API keys.
 - `desk`'s iCloud Photos backup state, for `hosts/desk/icloud.nix`: one env
   file per instance in `~/.config/icloudpd/` (Apple ID and library name), each
   Apple ID's password in gnome-keyring under `service=pyicloud://icloud-password`,
