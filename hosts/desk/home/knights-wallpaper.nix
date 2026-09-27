@@ -17,9 +17,9 @@ writeShellApplication {
     cbz="/srv/media/rpg/Mythic Bastionland/Mythic Bastionland - Knight Art.cbz"
     knights=(
       1-6_Knight_-_War_Knight
-      3-12_Knight_-_Forge_Knight
-      5-5_Knight_-_Cosmic_Knight
       3-4_Knight_-_Moat_Knight
+      5-5_Knight_-_Cosmic_Knight
+      3-12_Knight_-_Forge_Knight
       2-1_Knight_-_Trail_Knight
     )
     bg="#18262E" # the Moat Knight's background
