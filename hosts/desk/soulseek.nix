@@ -44,6 +44,7 @@ let
   credentials = "/etc/slskd/credentials";
   apiEnv = "/etc/slskd/api.env";
   downloads = "/srv/media/staging/corpusfetch";
+  incomplete = "/srv/media/staging/.corpusfetch-incomplete";
   media-fetch = pkgs.callPackage ../../pkgs/media-fetch { stateDir = "/var/lib/media-fetch"; };
 in
 {
@@ -57,7 +58,7 @@ in
         inherit downloads;
         # On the bulk SSD beside the downloads, so finishing a file is a
         # rename, and a stalled album cannot fill the root disk.
-        incomplete = "/srv/media/staging/.soulseek-incomplete";
+        inherit incomplete;
       };
       shares = {
         directories = [ "/srv/media/music" ];
@@ -121,11 +122,12 @@ in
     };
   };
 
-  # Once: the downloads were in staging/soulseek, a name media-fetch's
-  # users should not see (pkgs/media-fetch/default.nix). What is there moves
-  # into the new directory before slskd starts; the old one goes once empty.
+  # Once: the downloads were in staging/soulseek and the unfinished ones in
+  # staging/.soulseek-incomplete, names media-fetch's users should not see
+  # (pkgs/media-fetch/default.nix). What is there moves into the new
+  # directories before slskd starts; each old one goes once empty.
   systemd.services.corpusfetch-rename = {
-    description = "Move slskd's downloads from staging/soulseek to ${downloads}";
+    description = "Move slskd's directories from staging/soulseek* to staging/*corpusfetch*";
     after = [ "srv-media.mount" "systemd-tmpfiles-setup.service" ];
     requires = [ "srv-media.mount" ];
     before = [ "slskd.service" "media-fetch.service" ];
@@ -136,11 +138,15 @@ in
     };
     path = [ pkgs.coreutils pkgs.findutils ];
     script = ''
-      old=/srv/media/staging/soulseek
-      [ -d "$old" ] || exit 0
-      mkdir -p ${downloads}
-      find "$old" -mindepth 1 -maxdepth 1 -exec mv -n -t ${downloads} {} +
-      rmdir "$old" && echo "moved $old to ${downloads}" || echo "$old is not empty: left in place"
+      move() {  # move OLD NEW: OLD's contents into NEW, then OLD if empty
+        old=$1 new=$2
+        [ -d "$old" ] || return 0
+        mkdir -p "$new"
+        find "$old" -mindepth 1 -maxdepth 1 -exec mv -n -t "$new" {} +
+        rmdir "$old" && echo "moved $old to $new" || echo "$old is not empty: left in place"
+      }
+      move /srv/media/staging/soulseek ${downloads}
+      move /srv/media/staging/.soulseek-incomplete ${incomplete}
     '';
   };
 
@@ -150,7 +156,7 @@ in
     # it keeps the media group's ACL mask (hosts/desk/media-group.nix).
     "d /etc/slskd 0755 root root -"
     "d ${downloads} 0775 n8 users -"
-    "d /srv/media/staging/.soulseek-incomplete 0775 n8 users -"
+    "d ${incomplete} 0775 n8 users -"
     # A key generated before the media group was n8's alone.
     "z ${apiEnv} 0440 n8 media -"
   ];
