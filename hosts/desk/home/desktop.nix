@@ -104,6 +104,7 @@ in
   # its own copy of the name and size from niri.kdl's cursor block, so keep
   # the two in step.
   home.pointerCursor = {
+    enable = true;
     package = pkgs.apple-cursor;
     name = "macOS";
     size = 24;
