@@ -157,7 +157,8 @@ binds {
     // the window's app_id; keep it in step with the window rules above.
     Mod+1 hotkey-overlay-title="Cadence" { spawn "focus-or-launch" "1" "chrome-claude.ai__artifact_54sxzR169AZiUx8QNJkngJ-Default" "google-chrome-stable" "--app=https://claude.ai/artifact/54sxzR169AZiUx8QNJkngJ"; }
     Mod+2 hotkey-overlay-title="Claude Code" { spawn "focus-or-launch" "2" "chrome-claude.ai__code-Default" "google-chrome-stable" "--app=https://claude.ai/code"; }
-    Mod+3 hotkey-overlay-title="Google Chrome" { spawn "focus-or-launch" "3" "google-chrome" "google-chrome-stable"; }
+    // Default is the nathan@natb1.com profile; naming it skips the profile picker.
+    Mod+3 hotkey-overlay-title="Google Chrome" { spawn "focus-or-launch" "3" "google-chrome" "google-chrome-stable" "--profile-directory=Default"; }
 
     // Workspaces moved off Mod+N to make room for the app keys.
     Mod+Alt+1 { focus-workspace 1; }
