@@ -87,11 +87,16 @@ layout {
     }
 }
 
-// App-key windows (Mod+1, … below) open a quarter of the ultrawide wide.
-// Mod+R still cycles the presets from there.
+// App-key windows (Mod+1, … below): Cadence a quarter of the ultrawide wide,
+// Claude Code half. Mod+R still cycles the presets from there.
 window-rule {
     match app-id=r#"^chrome-claude\.ai__artifact_54sxzR169AZiUx8QNJkngJ-Default$"#
     default-column-width { proportion 0.25; }
+}
+
+window-rule {
+    match app-id=r#"^chrome-claude\.ai__code-Default$"#
+    default-column-width { proportion 0.5; }
 }
 
 // No bar, and no spawn-at-startup for the shell. Quickshell (the panel,
@@ -152,10 +157,11 @@ binds {
     Mod+Page_Down { focus-workspace-down; }
     Mod+Page_Up   { focus-workspace-up; }
 
-    // App keys: focus the app's window wherever it is, or open it as the
-    // leftmost column — hosts/desk/focus-or-launch.nix. The first argument is
-    // the window's app_id; keep it in step with the window rule above.
-    Mod+1 hotkey-overlay-title="Cadence" { spawn "focus-or-launch" "chrome-claude.ai__artifact_54sxzR169AZiUx8QNJkngJ-Default" "google-chrome-stable" "--app=https://claude.ai/artifact/54sxzR169AZiUx8QNJkngJ"; }
+    // App keys: focus the app's window wherever it is, or open it at the
+    // given column — hosts/desk/focus-or-launch.nix. The second argument is
+    // the window's app_id; keep it in step with the window rules above.
+    Mod+1 hotkey-overlay-title="Cadence" { spawn "focus-or-launch" "1" "chrome-claude.ai__artifact_54sxzR169AZiUx8QNJkngJ-Default" "google-chrome-stable" "--app=https://claude.ai/artifact/54sxzR169AZiUx8QNJkngJ"; }
+    Mod+2 hotkey-overlay-title="Claude Code" { spawn "focus-or-launch" "2" "chrome-claude.ai__code-Default" "google-chrome-stable" "--app=https://claude.ai/code"; }
 
     // Workspaces moved off Mod+N to make room for the app keys.
     Mod+Alt+1 { focus-workspace 1; }
