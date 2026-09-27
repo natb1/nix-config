@@ -510,7 +510,11 @@ fonts, browser") but no desktop in it. Settled here, in full in
 [The desktop session](#the-desktop-session):
 
 - **niri**, assembled à la carte: waybar, **swaync** for notifications,
-  fuzzel, swayidle. No prebuilt shell.
+  fuzzel, swayidle. No prebuilt shell. *Changed 2026-09-26:* waybar and
+  swaync are replaced by one hand-written **Quickshell** config — no bar,
+  notifications and status in one panel — and fuzzel by that config's
+  launcher and menus. See
+  [The desktop session](#the-desktop-session).
 - **getty autologin straight into niri, and no screen lock.** Anything
   sensitive sits behind its own encryption — **gnome-keyring** holds Chrome's
   and other apps' secrets under a password of its own.
@@ -1171,7 +1175,7 @@ the cooler, not the curves, is the limit. The options, and why:
 | Question | Answer | What it rules out |
 | --- | --- | --- |
 | GPU topology | AMD iGPU → the NixOS desktop, always. dGPU → guest, **lent to the host on demand** for native/Proton games | Single-GPU teardown hooks; the host never goes headless; the compositor ever holding the dGPU |
-| Desktop session | niri, à la carte (waybar, swaync, fuzzel, swayidle); getty autologin, no lock; suspend on idle only if Wake-on-WLAN proves reliable | A display manager; a screen locker; a prebuilt shell |
+| Desktop session | niri, à la carte (Quickshell panel and launcher — no bar — swayidle; waybar, swaync and fuzzel until 2026-09-26); getty autologin, no lock; suspend on idle only if Wake-on-WLAN proves reliable | A display manager; a screen locker; a prebuilt shell (Noctalia, DankMaterialShell) |
 | How many Windows installs | **One.** The existing one, booted bare metal *or* as a guest | A separate VM image; an unactivated second copy; two config profiles |
 | How the guest gets its disk | **VFIO the whole fast NVMe controller** | Repartitioning Windows; a `qcow2`; virtio storage drivers |
 | Where NixOS lives | Entirely on the bulk drive, which disko owns outright | Disko ever meeting a Windows partition |
@@ -1830,8 +1834,9 @@ hosts/desk/
   media.nix                   # Samba, btrfs scrub, restic (Media storage)
   windows/                    # the DSC profile Windows pulls and applies (§6)
   home/                       # host-only home modules
-    desktop.nix               # waybar, swaync, fuzzel, swayidle, the niri-session exec
+    desktop.nix               # Quickshell, swayidle, the niri-session exec
     niri.kdl                  # niri's config; `niri validate` runs as a flake check
+    quickshell/               # the panel and notification daemon; loaded by a flake check
 ```
 
 Promote a file to `modules/nixos/` the day a *second* machine wants it — not
@@ -2121,6 +2126,12 @@ brings it near a formatting tool.
 ```
 
 #### Where the Steam library lives
+
+> *Changed 2026-09-26:* the host-side library is Steam's default,
+> `~/.local/share/Steam` on the root. There is room there for now (155 GB
+> free), and `/srv/games` was removed from `disko.nix` before anything was
+> installed in it. Revisit if the root runs short. The reasoning below is
+> kept for that day.
 
 **Decided: on the 2 TB drive, with Windows, where it is today**
 (`C:\Program Files (x86)\Steam`). Windows owns that whole disk and the guest gets
@@ -2598,9 +2609,9 @@ never touches the others.
 | niri config | `hosts/desk/home/niri.kdl`, **validated at build** | A flake check runs `niri validate -c` on it, so a typo fails `nix flake check`, not the next login |
 | Login | **getty autologin** on tty1, `exec niri-session -l` from the login shell | No display manager to configure or break. The cost, accepted: a niri crash drops tty1 to a shell |
 | Screen lock | **None** | Decided: nothing sensitive is protected by the session. It sits behind its own encryption |
-| Bar | **waybar** | niri workspaces, tray (Steam, Tailscale, blueman), clock, a swaync button |
-| Notifications | **swaync** | Pop-ups, plus a history panel and do-not-disturb. The panel matters once a phone is forwarding everything ([ANCS](#iphone-notifications-over-ancs)). Action buttons are drawn, so a notification's actions are clickable |
-| Launcher | **fuzzel** | Wayland-native. niri's default config already binds it |
+| Bar | **None** | Replaced 2026-09-26 (it was waybar). The clock and status moved into the panel below |
+| Notifications and status | **Quickshell**, a hand-written config in `hosts/desk/home/quickshell/` | One panel on `Mod+Shift+N`: clock; tiles for Tailscale (up/down, exit node), Bluetooth, Wi-Fi and CPU/memory; volume; now playing; tray icons for apps that insist (Steam); then the notification history with do-not-disturb. It is also the notification daemon: pop-ups, action buttons, and critical alerts that stay until dismissed. The history matters once a phone is forwarding everything ([ANCS](#iphone-notifications-over-ancs)). Chosen over swaync (widgets too fixed: a toggle's label cannot change) and over Noctalia/DMS (their panels show notifications on a separate tab from status) |
+| Launcher and menus | **Quickshell** (`Launcher.qml`, `Picker.qml`) | Replaced 2026-09-26 (it was fuzzel, whose entries are one line). `Mod+D` launches apps, most-used first; the rebuild and power menus use the same list through `pick` (`hosts/desk/pick`). Rows can be several lines with an icon, and the first ten are numbered for one-key picks |
 | Idle | **swayidle** | Screens off, then the guarded suspend ([Idle](#idle-screens-off-then-suspend--if-the-wi-fi-can-wake-it)). It honours Wayland idle inhibitors, so a playing video holds it off |
 | Secrets | **gnome-keyring** (Secret Service) | What Chrome and most apps expect. Locked at boot (autologin has no password to unlock it with), and it asks for its own password on first use |
 | X11 apps | **xwayland-satellite** on `PATH` | niri has no built-in Xwayland and starts this on demand. Steam needs it |
@@ -2966,11 +2977,24 @@ What to expect:
       and a saved password survives a reboot after one keyring prompt —
       *2026-09-24, flag confirmed at the console*
 - [x] fuzzel launches (`Mod+D`), and `Mod+Return` gives WezTerm — *2026-09-24*
-- [ ] waybar tray shows Steam, Tailscale and blueman — *2026-09-25 reboot:
+- [x] ~~waybar tray shows Steam, Tailscale and blueman~~ — *superseded
+      2026-09-26: no bar; Tailscale and Bluetooth are panel tiles and
+      `tailscale systray` is gone. Kept for the record: 2026-09-25 reboot:
       blueman yes, the other two no, because nothing started them.
       Tailscale's own `tailscale systray` is now a user unit
       (`hosts/desk/desktop.nix`, operator=n8); Steam shows only while it
       runs. One gnome-keyring prompt at login, as intended*
+- [ ] Quickshell panel, after the switch that lands it: `Mod+Shift+N` opens
+      and closes it, Esc and a click outside close it; the tiles show live
+      state; a Tether text pops up with a working **Reply**; the
+      `tether-ancs-watch` critical alert stays up until dismissed and is
+      withdrawn by its sender; Steam's tray menu opens from the panel —
+      *2026-09-26, before the switch: all but the keyboard and mouse parts
+      and the tray menu were checked in a nested niri on a private D-Bus
+      (pop-ups, critical staying, do-not-disturb letting only critical
+      through, an action's id reaching `notify-send -A`, CloseNotification
+      removing an alert, live tiles). The flake check `quickshell-config`
+      loads the config in a headless sway and fails on any QML error*
 - [x] `notify-send test` pops up in swaync and lands in its history —
       *2026-09-24, with two fixes on the way. swaync was started twice, by
       niri's `spawn-at-startup` and by the unit `services.swaync.enable`

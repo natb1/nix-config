@@ -52,19 +52,6 @@
                 mountpoint = "/srv/media";
                 mountOptions = [ "noatime" ];
               };
-
-              # The HOST-side Steam library (native + Proton titles). Not on the
-              # 200 GB root — that was sized before this library was counted.
-              # Its own subvolume so snapshots and the restic paths stay
-              # media-only.
-              #
-              # No nodatacow: btrfs mount options are filesystem-wide, so it
-              # would silently switch off checksums for /srv/media too, and game
-              # files are write-once anyway.
-              "/games" = {
-                mountpoint = "/srv/games";
-                mountOptions = [ "noatime" ];
-              };
             };
           };
         };
