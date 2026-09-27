@@ -15,7 +15,7 @@
 #   Music         /srv/media/music
 # The layout (docs/desktop-migration.md, "Layout on the share") is the
 # naming Jellyfin parses without per-file hints. Jellyfin cannot write to the
-# library (n8's, 0755), which is right: artwork and metadata stay in its own
+# library (n8's and the media group's), which is right: artwork and metadata stay in its own
 # state, never beside the files beets and media-stage own.
 #
 # Tailnet-only, like Navidrome: the firewall opens nothing for it, and
@@ -70,8 +70,12 @@
   # media-stage creates them on the first video batch; the libraries should
   # not wait for one.
   systemd.tmpfiles.rules = [
-    "d /srv/media/movies 0755 n8 users -"
-    "d /srv/media/tv 0755 n8 users -"
-    "d /srv/media/youtube 0755 n8 users -"
+    # 0775, not 0755: the group bits are the media group's ACL mask
+    # (hosts/desk/media-group.nix), and `d` reapplies the mode on every
+    # switch, so 0755 took the group's write away. Only the ACL's media
+    # entry gains it; the owning group's own entry stays r-x.
+    "d /srv/media/movies 0775 n8 users -"
+    "d /srv/media/tv 0775 n8 users -"
+    "d /srv/media/youtube 0775 n8 users -"
   ];
 }

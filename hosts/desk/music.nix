@@ -46,5 +46,11 @@
   };
 
   # beets creates it on the first import; the server should not wait for one.
-  systemd.tmpfiles.rules = [ "d /srv/media/music 0755 n8 users -" ];
+  systemd.tmpfiles.rules = [
+    # 0775, not 0755: the group bits are the media group's ACL mask
+    # (hosts/desk/media-group.nix), and `d` reapplies the mode on every
+    # switch, so 0755 took the group's write away. Only the ACL's media
+    # entry gains it; the owning group's own entry stays r-x.
+    "d /srv/media/music 0775 n8 users -"
+  ];
 }
