@@ -72,19 +72,26 @@ layout {
     background-color "transparent"
     center-focused-column "never"
 
+    // Just the two, so Mod+W's switch-preset-column-width toggles between them.
     preset-column-widths {
-        proportion 0.33333
+        proportion 0.25
         proportion 0.5
-        proportion 0.66667
     }
 
-    default-column-width { proportion 0.5; }
+    default-column-width { proportion 0.25; }
 
     focus-ring {
         width 2
         active-color "#7fc8ff"
         inactive-color "#505050"
     }
+}
+
+// App-key windows (Mod+1, … below) open at the quarter-width default, except
+// Claude Code at half. Mod+W still toggles the width from there.
+window-rule {
+    match app-id=r#"^chrome-claude\.ai__code-Default$"#
+    default-column-width { proportion 0.5; }
 }
 
 // No bar, and no spawn-at-startup for the shell. Quickshell (the panel,
@@ -145,13 +152,22 @@ binds {
     Mod+Page_Down { focus-workspace-down; }
     Mod+Page_Up   { focus-workspace-up; }
 
-    Mod+1 { focus-workspace 1; }
-    Mod+2 { focus-workspace 2; }
-    Mod+3 { focus-workspace 3; }
-    Mod+4 { focus-workspace 4; }
-    Mod+5 { focus-workspace 5; }
+    // App keys: focus the app's window wherever it is, or open it at the
+    // given column — hosts/desk/focus-or-launch.nix. The second argument is
+    // the window's app_id; keep it in step with the window rules above.
+    Mod+1 hotkey-overlay-title="Cadence" { spawn "focus-or-launch" "1" "chrome-claude.ai__artifact_54sxzR169AZiUx8QNJkngJ-Default" "google-chrome-stable" "--app=https://claude.ai/artifact/54sxzR169AZiUx8QNJkngJ"; }
+    Mod+2 hotkey-overlay-title="Claude Code" { spawn "focus-or-launch" "2" "chrome-claude.ai__code-Default" "google-chrome-stable" "--app=https://claude.ai/code"; }
+    // Default is the nathan@natb1.com profile; naming it skips the profile picker.
+    Mod+3 hotkey-overlay-title="Google Chrome" { spawn "focus-or-launch" "3" "google-chrome" "google-chrome-stable" "--profile-directory=Default"; }
 
-    Mod+R { switch-preset-column-width; }
+    // Workspaces moved off Mod+N to make room for the app keys.
+    Mod+Alt+1 { focus-workspace 1; }
+    Mod+Alt+2 { focus-workspace 2; }
+    Mod+Alt+3 { focus-workspace 3; }
+    Mod+Alt+4 { focus-workspace 4; }
+    Mod+Alt+5 { focus-workspace 5; }
+
+    Mod+W hotkey-overlay-title="Toggle width ½ / ¼" { switch-preset-column-width; }
     Mod+F { maximize-column; }
     Mod+Shift+F { fullscreen-window; }
 

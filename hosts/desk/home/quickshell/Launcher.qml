@@ -36,10 +36,14 @@ Scope {
             entry.execute();
     }
 
+    // Apps with their own key in niri.kdl — Ghostty on Mod+Return, Chrome on
+    // Mod+3 — are left out of the list.
+    readonly property var hotkeyed: ["com.mitchellh.ghostty", "google-chrome", "com.google.Chrome"]
+
     // Read here, not when the launcher opens: Quickshell scans for desktop
     // entries on first use, and the first list would be empty.
     readonly property var entries: DesktopEntries.applications.values
-        .filter(e => !e.noDisplay)
+        .filter(e => !e.noDisplay && !hotkeyed.includes(e.id))
         .sort((a, b) => (counts[b.id] ?? 0) - (counts[a.id] ?? 0) || a.name.localeCompare(b.name))
     readonly property var rows: entries.map(e => ({
         key: e.id,

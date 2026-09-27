@@ -34,6 +34,7 @@
     ./sensors.nix
     ./power-menu.nix
     ./rebuild-menu.nix
+    ./focus-or-launch.nix
     ./drlindsey.nix
   ];
 
