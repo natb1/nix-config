@@ -13,9 +13,15 @@
 # does not get it. desk's second user, drlindsey, imports it too — see
 # hosts/desk/drlindsey.nix.
 #
-# --no-create-session-in-dir: by default rc pre-creates a session in the repo on
-# every start. For a service that restarts with the machine, that is an empty
-# session per boot; sessions are started on demand from claude.ai instead.
+# The pre-created session is left on (no --no-create-session-in-dir): rc only
+# records its environment in ~/.claude/projects/<dir>/bridge-pointer.json, and
+# only asks to reuse it on the next start, when that session is on. With it
+# off, every restart registers a new environment and the sessions from the last
+# run never reconnect. With it on, a restart within the pointer's 4-hour window
+# reuses the environment, re-adopts the same in-repo session rather than
+# creating another, and existing claude.ai sessions reconnect. Only
+# `--continue`/`--session-id` are named as resume flags, and both are
+# single-session only (rejected alongside --spawn).
 #
 # --permission-mode auto: sessions spawned from claude.ai start in auto mode
 # rather than asking for each tool call; switch per session from the mode picker.
@@ -69,7 +75,6 @@ let
     "remote-control"
     "--spawn"
     "worktree"
-    "--no-create-session-in-dir"
     "--permission-mode"
     "auto"
   ];
