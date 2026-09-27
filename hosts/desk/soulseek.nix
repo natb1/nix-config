@@ -8,7 +8,7 @@
 # twice, so a second client (Nicotine+, sldl) on the same account would
 # fight this one. Use media-fetch instead.
 #
-# Downloads land in /srv/media/staging/soulseek, not the library, one
+# Downloads land in /srv/media/staging/corpusfetch, not the library, one
 # folder per media-fetch job. The media-fetch service below (`media-fetch
 # pump`) asks each source for one file at a time, as earlier ones finish, and
 # moves each finished job into its staging/<batch>, which is then filed like
@@ -43,7 +43,8 @@
 let
   credentials = "/etc/slskd/credentials";
   apiEnv = "/etc/slskd/api.env";
-  downloads = "/srv/media/staging/soulseek";
+  downloads = "/srv/media/staging/corpusfetch";
+  incomplete = "/srv/media/staging/.corpusfetch-incomplete";
   media-fetch = pkgs.callPackage ../../pkgs/media-fetch { stateDir = "/var/lib/media-fetch"; };
 in
 {
@@ -57,7 +58,7 @@ in
         inherit downloads;
         # On the bulk SSD beside the downloads, so finishing a file is a
         # rename, and a stalled album cannot fill the root disk.
-        incomplete = "/srv/media/staging/.soulseek-incomplete";
+        inherit incomplete;
       };
       shares = {
         directories = [ "/srv/media/music" ];
@@ -121,13 +122,41 @@ in
     };
   };
 
+  # Once: the downloads were in staging/soulseek and the unfinished ones in
+  # staging/.soulseek-incomplete, names media-fetch's users should not see
+  # (pkgs/media-fetch/default.nix). What is there moves into the new
+  # directories before slskd starts; each old one goes once empty.
+  systemd.services.corpusfetch-rename = {
+    description = "Move slskd's directories from staging/soulseek* to staging/*corpusfetch*";
+    after = [ "srv-media.mount" "systemd-tmpfiles-setup.service" ];
+    requires = [ "srv-media.mount" ];
+    before = [ "slskd.service" "media-fetch.service" ];
+    requiredBy = [ "slskd.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = [ pkgs.coreutils pkgs.findutils ];
+    script = ''
+      move() {  # move OLD NEW: OLD's contents into NEW, then OLD if empty
+        old=$1 new=$2
+        [ -d "$old" ] || return 0
+        mkdir -p "$new"
+        find "$old" -mindepth 1 -maxdepth 1 -exec mv -n -t "$new" {} +
+        rmdir "$old" && echo "moved $old to $new" || echo "$old is not empty: left in place"
+      }
+      move /srv/media/staging/soulseek ${downloads}
+      move /srv/media/staging/.soulseek-incomplete ${incomplete}
+    '';
+  };
+
   systemd.tmpfiles.rules = [
     # Traversable, so n8 can reach api.env; credentials stays 0600 root.
     # `d` also fixes the mode of a directory that already exists; 0775 so
     # it keeps the media group's ACL mask (hosts/desk/media-group.nix).
     "d /etc/slskd 0755 root root -"
     "d ${downloads} 0775 n8 users -"
-    "d /srv/media/staging/.soulseek-incomplete 0775 n8 users -"
+    "d ${incomplete} 0775 n8 users -"
     # A key generated before the media group was n8's alone.
     "z ${apiEnv} 0440 n8 media -"
   ];

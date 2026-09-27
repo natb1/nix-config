@@ -8,7 +8,9 @@
 #                         service (hosts/desk/soulseek.nix) serves
 #   /var/lib/beets        beets' library database and import log
 #                         (hosts/desk/home/beets.nix)
-# and, read-only, slskd's API key (/etc/slskd/api.env, 0440 n8:media).
+# and, read-only, the API keys media-fetch uses: slskd's (/etc/slskd/api.env)
+# and itch.io's (/etc/itch/api.env, written by hand: README.md), each 0440
+# n8:media.
 #
 # Owners stay what they were — each file is its creator's — and POSIX ACLs
 # give the group the rest: `g:media:rwX` on what is there, and a default ACL
@@ -38,6 +40,11 @@ in
   systemd.tmpfiles.rules = [
     "d /var/lib/media-fetch 0770 n8 media -"
     "d /var/lib/beets 0770 n8 media -"
+    "d /etc/itch 0755 root root -"
+    "z /etc/itch/api.env 0440 n8 media -"
+    # media-fetch's itch.io downloads, before delivery into a batch; a dot
+    # directory, so no batch can be named for it.
+    "d /srv/media/staging/.itch 0775 n8 users -"
   ];
 
   # Once: before these were shared they were n8's, in n8's home. Copied only

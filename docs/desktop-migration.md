@@ -3809,7 +3809,8 @@ that `media-fetch` ([`pkgs/media-fetch`](../pkgs/media-fetch)) drives, so a
 Claude session can search, show the choices and download what the user
 picks. media-fetch's commands, IDs and JSON name no network: slskd is its
 one backend, and another could replace it without changing the `media-share`
-skill. Downloads land in `staging/soulseek/`, never the library. The
+skill. Downloads land in `staging/corpusfetch/` (`staging/soulseek/` until
+2026-09-27), never the library. The
 `media-fetch` service on desk (`media-fetch pump`) asks each peer for one
 file at a time and moves a finished download into its `staging/<batch>`,
 filed like any other batch ([Filing a batch](#filing-a-batch)). Six albums

@@ -210,7 +210,34 @@
         # expensive: niri.service dies, and tty1 is the session. Linux only —
         # niri does not build for darwin.
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          niri-config = pkgs.runCommand "niri-config-valid" { } ''
+          # Every directory tmpfiles makes under /srv/media keeps group write.
+          # On them the group bits are the media group's ACL mask
+          # (hosts/desk/media-group.nix), and `d` reapplies the mode on every
+          # switch: a 0755 there left the group read-only in rpg/ and the
+          # other library folders until someone reset the mask by hand.
+          media-acl-mask =
+            let
+              lib = nixpkgs.lib;
+              rules = self.nixosConfigurations.desk.config.systemd.tmpfiles.rules;
+              parse = r: lib.splitString " " r;
+              under = r: let f = parse r; in builtins.length f > 2
+                && builtins.elem (builtins.elemAt f 0) [ "d" "z" "Z" ]
+                && lib.hasPrefix "/srv/media" (builtins.elemAt f 1);
+              groupWrite = r:
+                let m = builtins.elemAt (parse r) 2; in
+                m == "-" || builtins.elem
+                  (builtins.substring (builtins.stringLength m - 2) 1 m) [ "7" "6" "3" "2" ];
+              bad = builtins.filter (r: under r && !(groupWrite r)) rules;
+            in
+            pkgs.runCommand "media-acl-mask" { } ''
+              ${lib.optionalString (bad != [ ]) ''
+                echo "tmpfiles rules under /srv/media without group write:" >&2
+                printf '  %s\n' ${lib.escapeShellArgs bad} >&2
+                exit 1
+              ''}
+              touch "$out"
+            '';
+          niri-config =pkgs.runCommand "niri-config-valid" { } ''
             ${pkgs.niri}/bin/niri validate -c ${./hosts/desk/home/niri.kdl}
             touch "$out"
           '';

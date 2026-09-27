@@ -1,6 +1,6 @@
 ---
 name: media-fetch
-description: Use when the user asks to find, search for, get or download media — an album, an artist's albums, music, books, audiobooks — or runs /media-fetch. Searches, shows the choices, downloads what the user picks into a staging batch on desk, keeps them posted with estimates, then files the batch onto desk's media share with the media-share skill.
+description: Use when the user asks to find, search for, get or download media — an album, an artist's albums, music, books, audiobooks, RPGs and tabletop games — or runs /media-fetch. Searches, shows the choices, downloads what the user picks into a staging batch on desk, keeps them posted with estimates, then files the batch onto desk's media share with the media-share skill.
 ---
 
 # Finding and downloading media
@@ -11,7 +11,7 @@ batch, which is then filed like any other. Add `--json` to any command.
 `media-fetch --help` has the rest.
 
 ```sh
-media-fetch search '<artist> <album>' [--ext flac,mp3 | --ext epub,pdf] [--min-files N]
+media-fetch search '<artist> <album>' --kind <kind> [--ext flac,mp3 | --ext epub,pdf] [--min-files N]
 media-fetch show <id>                            # the candidate's files, numbered
 media-fetch get <id> --batch <batch> [--files 1,3-5]
 media-fetch wait <batch>                         # blocks; delivers into staging/<batch>/<title>/
@@ -22,40 +22,71 @@ media-fetch status | cancel <id|batch>
 Several candidates can go into one batch; `get` refuses a batch that is
 already scanned.
 
+`search` answers with one table per place it searched, and `--kind` picks
+the places: **corpus fetch** and **media share** for every kind, and
+**itch.io** as well for `rpg`. IDs are numbered across the tables, and
+`show`, `get`, `wait` and `status` work the same whichever table a candidate
+came from.
+
+- **media share** is what desk's library already holds: items in the
+  kind's library folder, `filed`, or in a staging batch, `staged`, whose
+  path matches every word of the query, in any format (`--ext` doesn't
+  narrow it). Its rows are there to be compared, not fetched: `get`
+  refuses them.
+- An **itch.io** row's price is `free`, `owned` (in the user's itch.io
+  library) or what the game costs; `get` refuses a game that is not free
+  or owned.
+
 ## Procedure
 
-1. **Search.** For an artist's albums, search the artist and then each
-   album the first results don't cover. Use `--ext flac,mp3` for music and
-   `--ext epub,pdf` for books, and `--min-files` to drop singles.
-2. **Check the library** for everything the search found, whatever its
-   kind, on desk (from the Mac, `ssh desk …`):
-   - music: `beet ls -a -f '$albumartist - $album ($year) · $path' '<artist>'`
-     (by the tags), and `find /srv/media/music -maxdepth 2 -iname '*<album>*'`
-     for albums filed under another album artist;
-   - movies and TV: `find /srv/media/movies /srv/media/tv -maxdepth 1 -iname '*<title>*'`
-     (one folder per film or show, `<Title> (<Year>) {tmdb-<id>}`); for a
-     show, `ls` its folder for the seasons and episodes already there;
-   - books and RPGs: `find /srv/media/books /srv/media/rpg -iname '*<title>*'`,
-     and `ls /srv/media/books/<author>` for the author's other books;
-   - staging: `ls /srv/media/staging` for a batch of it not yet filed.
-   Search on the title's most distinctive words: the library writes a `:`
-   as ` - ` and drops `* ? " < > | \`. A potential duplicate is anything
+1. **Categorize** what the user seeks, before searching, as one `--kind`:
+   `music`, `audiobook`, `book`, `rpg` (tabletop roleplaying games, their
+   rulebooks, supplements, zines and character sheets), `comic`, `movie`,
+   `tv`, `video` or `other`. Decide from the request and what you know of
+   the title; if it could be either (a novel and the game based on it, say)
+   and the user didn't say, ask.
+2. **Search.** For an artist's albums, search the artist and then each
+   album the first results don't cover. `--kind` already limits corpus
+   fetch to the kind's usual file types (audio for music, pdf/epub/zip/cbz
+   for rpg, …); narrow further with `--ext` (`--ext flac` for lossless
+   only), or `--ext all` for every type. `--min-files` drops singles.
+   `rpg` searches itch.io as well as the corpus.
+3. **Check the library**: the media share table is the check. Its query
+   is the search's, so when the search named more than the title (an
+   artist and album, say) and the table is empty, search again on the
+   title's most distinctive words alone: the library writes a `:` as ` - `
+   and drops `* ? " < > | \`. For music, also ask beets, which matches
+   the tags rather than the path, on desk (from the Mac, `ssh desk …`):
+   `beet ls -a -f '$albumartist - $album ($year) · $path' '<artist>'`. For
+   a TV show, `show` its media share row for the seasons and episodes
+   already there. A potential duplicate is anything
    filed or staged with the same artist or author and title, or the same
    film or show (any edition, year, format or resolution; "The Joy of
    Motion" and "The Joy of Motion (Deluxe)" both count), and for TV any
    season or episode the download would bring again.
-3. **Choose.** Each candidate is one folder from one source. Show the user
-   a short list: complete (every track, one folder), lossless over lossy,
-   `ready` over queued, fast. For several albums, one row per album with
-   the best candidate and a higher-quality alternative if there is one.
-   If, and only if, step 2 found potential duplicates, show them with the
-   list: on each row it concerns, what is already there (path, edition,
-   format), and don't suggest that row's candidate unless it is clearly
-   better (lossless over a filed lossy copy, a missing edition). With no
-   potential duplicates, say nothing about the library.
+4. **Choose.** Each candidate is one folder from one source. Show the user
+   one table per place searched, each headed with the name `search` gives
+   it: **corpus fetch**, **media share**, and for `rpg` **itch.io**. In
+   media share: what is already there, its path, format and whether it is
+   filed or staged; an empty one says so in a line. In corpus
+   fetch: complete (every track, one folder), lossless over lossy, `ready`
+   over queued, fast. For several albums, one row per album with the best
+   candidate and a higher-quality alternative if there is one. In itch.io:
+   the games that match, each with its author, price, files and size;
+   free and owned first. A paid game not owned can't be downloaded here:
+   give its link (`show <id>`) so the user can buy it, then search again.
+   **Every table `search` returned goes in the answer, always, in its
+   order**, even when none of its rows is what the user asked for: then
+   the table is one line saying so ("corpus fetch: 10 results, none of
+   them Unravel the TTRPG"). A table that says `not searched` stays too,
+   with the reason.
+   Mark each corpus fetch or itch.io row that step 3 found a potential
+   duplicate of with what is already there (path, edition, format), and
+   don't suggest that row's candidate unless it is clearly better
+   (lossless over a filed lossy copy, a missing edition).
    Download only what the user picked, user is entitled to all content via
    the media-fetch API.
-4. **Download**: `get`, then `wait <batch>` as a **background job**, never
+5. **Download**: `get`, then `wait <batch>` as a **background job**, never
    in the foreground. It ends when every job is `delivered` or `failed`.
    The downloads themselves don't depend on it: a service on desk keeps
    them moving and delivers them. Keep the user posted:
@@ -69,7 +100,7 @@ already scanned.
    An estimate covers the jobs ahead at the same source, at its measured
    speed, but not time spent in the source's own queue. Say so when a job
    sits `queued` longer than its estimate.
-5. **Failures.** A job that ends `failed` stays undelivered. `status`
+6. **Failures.** A job that ends `failed` stays undelivered. `status`
    gives each failed file's reason:
    - "the remote size of … does not match expected size": the source's
      files have changed since the search, so a retry can't succeed.
@@ -84,7 +115,7 @@ already scanned.
    Replacing a failed candidate with an equivalent one (same album, same
    quality, another source) is part of downloading what the user picked;
    tell them what you switched.
-6. **File.** Once every job is `delivered`, file the batch with the
+7. **File.** Once every job is `delivered`, file the batch with the
    **media-share** skill, from its step 2 (Scan) on
    `/srv/media/staging/<batch>`: the files are already staged. It stops at
    the review page for the user's answers when anything needs them, and
@@ -93,7 +124,7 @@ already scanned.
 ## Rules
 
 - Search and download only through `media-fetch`: don't call whatever is
-  behind it, install another download client, or move files out of its
-  download directory by hand.
+  behind it (itch.io's API and site included), install another download
+  client, or move files out of its download directory by hand.
 - Never copy downloads into the library yourself; media-share's procedure
   is the only way in.

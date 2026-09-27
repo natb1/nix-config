@@ -15,7 +15,7 @@
       `/Volumes/media-staging`, `smb://desk/…`, `/srv/media`) go through
       `media-stage` — follow the `media-share` skill. Never cp, mv or rsync
       straight into the library (`music/ books/ rpg/ movies/ tv/ youtube/`).
-    - Finding or downloading media (an album, books, …): follow the
+    - Finding or downloading media (an album, books, RPGs, …): follow the
       `media-fetch` skill.
   '';
 }

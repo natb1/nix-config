@@ -3,18 +3,22 @@
 
 A fake slskd (the endpoints media-fetch calls, with the shapes slskd 0.26
 returns) runs in a thread; "downloading" a file writes it where slskd would.
-The CLI is driven the way an agent drives it: search, show, get, wait."""
+A fake itch.io (its site's search page, the API, and a file host behind a
+redirect) runs beside it. The CLI is driven the way an agent drives it:
+search, show, get, wait."""
 
+import hashlib
+import html
 import io
 import json
 import os
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import media_fetch as mf
 
@@ -135,22 +139,124 @@ def response(user, folder, names, free=True, queue=0, speed=1_000_000, ext="flac
             "lockedFiles": [{"filename": f"{folder}\\secret.flac", "size": 5}]}
 
 
+ITCH_KEY = "itch-key"
+
+
+class FakeItch:
+    """itch.io: the site's search page, the API (/api/...), and the file
+    host its download links redirect to (/cdn/...), which must never see
+    the API key."""
+
+    def __init__(self):
+        self.games = {}     # id -> {title, url, author, price, key, uploads: [{id, filename, data}], listed}
+        self.hits = []      # paths asked for
+        self.leaks = []     # file host requests that carried the key
+        self.corrupt = set()  # upload ids whose bytes come back wrong
+        fake = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                u = urlparse(self.path)
+                fake.hits.append(u.path)
+                code, ctype, body, extra = fake.handle(u.path, parse_qs(u.query), self.headers)
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                for k, v in extra.items():
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def game(self, gid, title, price=None, key=None, uploads=(), listed=True, author="Kylmaenen"):
+        self.games[gid] = {"title": title, "url": f"https://{author.lower()}.itch.io/g{gid}",
+                           "author": author, "price": price, "key": key, "listed": listed,
+                           "uploads": [{"id": gid * 10 + i, "filename": n, "data": d}
+                                       for i, (n, d) in enumerate(uploads)]}
+
+    def _can(self, g, q):
+        return g["price"] is None or (g["key"] is not None and q.get("download_key_id") == [str(g["key"])])
+
+    def handle(self, path, q, headers):
+        js = lambda obj, code=200: (code, "application/json", json.dumps(obj).encode(), {})
+        parts = path.strip("/").split("/")
+        if parts == ["search"]:
+            words = q["q"][0].lower().split()
+            cells = "".join(
+                f'<div class="game_cell" data-game_id="{gid}"><a class="thumb_link game_link" href="{g["url"]}">'
+                f'</a><div class="game_title"><a data-label="game:{gid}:title" href="{g["url"]}" '
+                f'class="title game_link">{html.escape(g["title"])}</a>'
+                + (f'<div class="price_value">{g["price"]}</div>' if g["price"] else "")
+                + f'</div><div class="game_author"><a href="x">{g["author"]}</a></div></div>'
+                for gid, g in self.games.items()
+                if g["listed"] and all(w in g["title"].lower() for w in words))
+            return 200, "text/html", f"<html><body>{cells}</body></html>".encode(), {}
+        if parts[0] == "cdn":
+            if headers.get("Authorization"):
+                self.leaks.append(path)
+                return js({"error": "two auth mechanisms"}, 400)
+            uid = int(parts[1])
+            for g in self.games.values():
+                for up in g["uploads"]:
+                    if up["id"] == uid:  # corrupt: the right size, the wrong bytes
+                        data = b"?" * len(up["data"]) if uid in self.corrupt else up["data"]
+                        return 200, "application/octet-stream", data, {}
+            return js({}, 404)
+        if parts[0] != "api":
+            return js({}, 404)
+        if headers.get("Authorization") != f"Bearer {ITCH_KEY}":
+            return js({"errors": ["invalid key"]}, 401)
+        parts = parts[1:]
+        if parts == ["profile", "owned-keys"]:
+            keys = [{"id": g["key"], "game_id": gid,
+                     "game": {"id": gid, "title": g["title"], "url": g["url"],
+                              "user": {"display_name": g["author"]}}}
+                    for gid, g in self.games.items() if g["key"] is not None]
+            return js({"owned_keys": keys if q["page"] == ["1"] else [], "per_page": 50, "page": 1})
+        if parts[0] == "games" and parts[2] == "uploads":
+            g = self.games[int(parts[1])]
+            if not self._can(g, q):
+                return js({"uploads": {}})
+            return js({"uploads": [{"id": up["id"], "filename": up["filename"], "size": len(up["data"]),
+                                    "storage": "hosted", "md5_hash": hashlib.md5(up["data"]).hexdigest()}
+                                   for up in g["uploads"]]})
+        if parts[0] == "uploads" and parts[2] == "download":
+            uid = int(parts[1])
+            g = next(g for g in self.games.values() if any(up["id"] == uid for up in g["uploads"]))
+            if not self._can(g, q):
+                return js({"errors": ["invalid download key"]}, 400)
+            return 302, "text/html", b"", {"Location": f"/cdn/{uid}?sig=x"}
+        return js({}, 404)
+
+
 class MediaFetchTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.staging = root / "staging"
-        self.downloads = self.staging / "soulseek"
+        self.downloads = self.staging / "corpus"
         self.fake = FakeSlskd(self.downloads)
+        self.itch = FakeItch()
+        self.library = root / "media"
         self.env = {"MEDIA_STAGING": str(self.staging), "MEDIA_FETCH_STATE": str(root / "state"),
-                    "SLSKD_URL": self.fake.url, "SLSKD_API_KEY": KEY,
-                    "SLSKD_DOWNLOADS": str(self.downloads)}
+                    "MEDIA_LIBRARY": str(self.library),
+                    "CORPUS_URL": self.fake.url, "CORPUS_API_KEY": KEY,
+                    "CORPUS_DOWNLOADS": str(self.downloads),
+                    "ITCH_API_URL": self.itch.url + "/api", "ITCH_WEB_URL": self.itch.url,
+                    "ITCH_API_KEY": ITCH_KEY}
         self.saved = {k: os.environ.get(k) for k in self.env}
         os.environ.update(self.env)
 
     def tearDown(self):
-        self.fake.server.shutdown()
-        self.fake.server.server_close()
+        for f in (self.fake, self.itch):
+            f.server.shutdown()
+            f.server.server_close()
         for k, v in self.saved.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -161,7 +267,7 @@ class MediaFetchTest(unittest.TestCase):
     def cli(self, *args):
         out = io.StringIO()
         code = 0
-        with redirect_stdout(out):
+        with redirect_stdout(out), redirect_stderr(out):
             try:
                 mf.main(list(args))
             except SystemExit as e:
@@ -170,10 +276,15 @@ class MediaFetchTest(unittest.TestCase):
                     out.write(e.code)
         return code, out.getvalue()
 
-    def search(self, *extra):
-        code, out = self.cli("search", "artist album", "--json", *extra)
+    def search(self, *extra, kind="music"):
+        """The corpus fetch table."""
+        return self.tables(*extra, kind=kind)["corpus fetch"]
+
+    def tables(self, *extra, kind="music", query="artist album"):
+        code, out = self.cli("search", query, "--kind", kind, "--json", *extra)
         self.assertEqual(code, 0, out)
-        return json.loads(out)
+        r = json.loads(out)
+        return {t["name"]: t for t in r["tables"]}
 
     def test_search_ranks_and_hides_the_network(self):
         self.fake.responses = [
@@ -381,7 +492,7 @@ class MediaFetchTest(unittest.TestCase):
         self.fake.responses = [response("peer", "M\\Album", ["01"])]
         cid = self.search()["candidates"][0]["id"]
         self.assertIn("--batch is required", self.cli("get", cid)[1])
-        self.assertIn("download directory", self.cli("get", cid, "--batch", "soulseek")[1])
+        self.assertIn("a download directory", self.cli("get", cid, "--batch", "corpus")[1])
         self.assertIn("one plain directory", self.cli("get", cid, "--batch", "a/b")[1])
         self.staging.mkdir(parents=True, exist_ok=True)
         (self.staging / "old.manifest.jsonl").touch()
@@ -401,6 +512,175 @@ class MediaFetchTest(unittest.TestCase):
         self.assertEqual(be.locate(job, {"name": "01.flac", "size": 10}), p)
         self.assertIsNone(be.locate(job, {"name": "01.flac", "size": 11}))
 
+
+    # ---- itch.io, for rpg --------------------------------------------------
+
+    def unravel(self):
+        self.fake.responses = [response("peer", "RPG\\Unravel", ["Unravel"], ext="pdf")]
+        self.itch.game(1, "Unravel: Second Edition", uploads=[("Unravel 2e_ENG.pdf", b"u" * 30),
+                                                              ("Dreamwalker sheets.pdf", b"d" * 7)])
+        self.itch.game(2, "Unravel Deluxe", price="$9", key=77, listed=False,
+                       uploads=[("Unravel Deluxe.pdf", b"x" * 12)])
+        self.itch.game(3, "Unravel Zine", price="$3", uploads=[("zine.pdf", b"z")])
+        self.itch.game(4, "Unravel Online", uploads=[])  # a web game: nothing to fetch
+
+    def test_rpg_search_lists_itch_beside_corpus(self):
+        self.unravel()
+        t = self.tables(kind="rpg", query="unravel")
+        self.assertEqual(list(t), ["corpus fetch", "media share", "itch.io"])
+        self.assertEqual([c["id"].partition(".")[2] for c in t["corpus fetch"]["candidates"]], ["1"])
+        itch = {c["title"]: c for c in t["itch.io"]["candidates"]}
+        self.assertEqual(sorted(itch), ["Unravel Deluxe", "Unravel Zine", "Unravel: Second Edition"])
+        free, mine, zine = itch["Unravel: Second Edition"], itch["Unravel Deluxe"], itch["Unravel Zine"]
+        self.assertEqual((free["price"], free["ready"], len(free["files"]), free["size"]), ("free", True, 2, 37))
+        self.assertEqual((mine["price"], mine["ready"]), ("owned", True))  # from the library, not the site
+        self.assertEqual((zine["price"], zine["ready"], zine["files"], zine["buy"]), ("$3", False, [], True))
+        self.assertEqual(free["from"], "itch.io")
+        self.assertEqual(t["corpus fetch"]["candidates"][0]["from"], "corpus fetch")
+        self.assertEqual([c["id"].partition(".")[2] for c in t["itch.io"]["candidates"]], ["2", "3", "4"])
+        code, out = self.cli("search", "unravel", "--kind", "rpg")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"^corpus fetch\n")
+        self.assertIn("\nmedia share\n  nothing found", out)
+        self.assertIn("\nitch.io\n", out)
+        self.assertRegex(out, r"\$3 +  \? files.*Unravel Zine \(Kylmaenen\)")
+
+    def test_nothing_printed_names_the_corpus_network(self):
+        self.unravel()
+        outs = [self.cli("--help")[1], self.cli("search", "--help")[1],
+                self.cli("search", "unravel", "--kind", "rpg")[1],
+                self.cli("search", "unravel", "--kind", "rpg", "--json")[1]]
+        cid = json.loads(outs[-1])["tables"][0]["candidates"][0]["id"]
+        outs += [self.cli("show", cid)[1], self.cli("show", cid, "--json")[1],
+                 self.cli("get", cid, "--batch", "b", "--json")[1],
+                 self.cli("wait", "b", "--timeout", "5", "--interval", "0", "--json")[1],
+                 self.cli("status")[1]]
+        for out in outs:
+            for word in ("slsk", "soulseek", "peer"):
+                self.assertNotIn(word, out.lower())
+
+    def test_other_kinds_do_not_search_itch(self):
+        self.unravel()
+        for kind in ("music", "book", "tv", "other"):
+            self.assertEqual(list(self.tables(kind=kind, query="unravel")), ["corpus fetch", "media share"])
+        self.assertEqual(self.itch.hits, [])
+        self.assertIn("--kind", self.cli("search", "unravel")[1])  # required
+
+    def wait(self, *sel):
+        return self.cli("wait", *sel, "--timeout", "10", "--interval", "0.05")
+
+    def test_itch_get_wait_delivers_without_leaking_the_key(self):
+        self.unravel()
+        itch = {c["title"]: c for c in self.tables(kind="rpg", query="unravel")["itch.io"]["candidates"]}
+        cid = itch["Unravel: Second Edition"]["id"]
+        code, out = self.cli("get", cid, "--batch", "rpg-b")
+        self.assertEqual(code, 0, out)
+        code, out = self.wait("rpg-b")
+        self.assertEqual(code, 0, out)
+        d = self.staging / "rpg-b" / "Unravel_ Second Edition"
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["Dreamwalker sheets.pdf", "Unravel 2e_ENG.pdf"])
+        self.assertEqual((d / "Unravel 2e_ENG.pdf").read_bytes(), b"u" * 30)
+        self.assertEqual(self.itch.leaks, [])
+        self.assertFalse((self.staging / ".itch" / cid).exists())
+
+    def test_itch_owned_game_uses_its_download_key(self):
+        self.unravel()
+        itch = {c["title"]: c for c in self.tables(kind="rpg", query="unravel")["itch.io"]["candidates"]}
+        self.cli("get", itch["Unravel Deluxe"]["id"], "--batch", "b")
+        code, out = self.wait()
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.staging / "b" / "Unravel Deluxe" / "Unravel Deluxe.pdf").is_file())
+
+    def test_itch_game_not_owned_is_refused(self):
+        self.unravel()
+        itch = {c["title"]: c for c in self.tables(kind="rpg", query="unravel")["itch.io"]["candidates"]}
+        code, out = self.cli("get", itch["Unravel Zine"]["id"], "--batch", "b")
+        self.assertEqual(code, 1)
+        self.assertIn("is $3 on itch.io and not owned: buy it at https://kylmaenen.itch.io/g3", out)
+        self.assertEqual(self.cli("status")[1].strip(), "no downloads")
+
+    def test_itch_checksum_mismatch_fails_then_retries(self):
+        self.unravel()
+        itch = {c["title"]: c for c in self.tables(kind="rpg", query="unravel")["itch.io"]["candidates"]}
+        cid = itch["Unravel: Second Edition"]["id"]
+        self.itch.corrupt.add(11)  # Dreamwalker sheets.pdf
+        self.cli("get", cid, "--batch", "b")
+        code, out = self.wait(cid)
+        self.assertEqual(code, 1, out)
+        self.assertIn("failed: Dreamwalker sheets.pdf (the file's checksum does not match itch.io's)", out)
+        self.itch.corrupt.clear()
+        self.assertIn("retrying 1", self.cli("get", cid)[1])
+        code, out = self.wait(cid)
+        self.assertEqual(code, 0, out)
+
+    def test_itch_down_still_lists_the_corpus(self):
+        self.unravel()
+        os.environ["ITCH_WEB_URL"] = os.environ["ITCH_API_URL"] = "http://127.0.0.1:9"
+        t = self.tables(kind="rpg", query="unravel")
+        self.assertEqual(len(t["corpus fetch"]["candidates"]), 1)
+        self.assertIn("cannot reach itch.io", t["itch.io"]["error"])
+        self.assertIn("  not searched: cannot reach itch.io", self.cli("search", "unravel", "--kind", "rpg")[1])
+
+    def test_old_jobs_are_the_corpus(self):
+        # A job saved before candidates carried a backend.
+        self.fake.responses = [response("peer", "M\\Album", ["01"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.fake.hold = True
+        self.cli("get", cid, "--batch", "b")
+        p = Path(self.env["MEDIA_FETCH_STATE"]) / "jobs" / f"{cid}.json"
+        job = json.loads(p.read_text())
+        del job["backend"]
+        p.write_text(json.dumps(job))
+        self.fake.hold = False
+        code, out = self.cli("wait", "b", "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 0, out)
+
+    # ---- the media share ---------------------------------------------------
+
+    def put(self, path, size=3):
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x" * size)
+
+    def test_media_share_lists_what_is_filed_and_staged(self):
+        lib, st = self.library, self.staging
+        self.put(lib / "music/Julian Bream/Guitarra (1985)/01 Fantasia.mp3")
+        self.put(lib / "music/Julian Bream/Guitarra (1985)/02 Pavan.mp3")
+        self.put(lib / "music/Julian Bream/Baroque Guitar (1966)/01 Prelude.flac")
+        self.put(lib / "music/Other/Bream Lake (2001)/01 Bream.mp3")
+        self.put(lib / "music/Other/Unrelated (2001)/01 x.mp3")
+        self.put(lib / "rpg/Julian Bream Quest/Core (A4).pdf")  # another kind's folder
+        self.put(st / "bream-2026-09-27/Julian Bream - Live/01.flac")
+        self.put(st / "corpus/job/Julian Bream 01.flac")  # a download, not a batch
+        self.put(st / "trash/Julian Bream/01.flac")
+        self.put(st / "README.md")
+        self.fake.responses = [response("peer", "M\\Julian Bream\\Guitarra", ["01"])]
+        t = self.tables(kind="music", query="julian bream", *["--ext", "flac"])
+        share = {c["title"]: c for c in t["media share"]["candidates"]}
+        self.assertEqual(sorted(share), [str(st / "bream-2026-09-27"),
+                                         "music/Julian Bream/Baroque Guitar (1966)",
+                                         "music/Julian Bream/Guitarra (1985)"])
+        g = share["music/Julian Bream/Guitarra (1985)"]
+        self.assertEqual((g["where"], g["formats"], len(g["files"])), ("filed", "2 mp3", 2))  # --ext aside
+        self.assertEqual(share[str(st / "bream-2026-09-27")]["where"], "staged")
+        self.assertEqual(g["path"], str(lib / "music/Julian Bream/Guitarra (1985)"))
+        # One word matching the file, the other its folder: still a match.
+        t = self.tables(kind="rpg", query="bream core")
+        self.assertEqual([c["title"] for c in t["media share"]["candidates"]], ["rpg/Julian Bream Quest"])
+        code, out = self.cli("search", "julian bream", "--kind", "music")
+        self.assertRegex(out, r"filed +2 files +6 B  2 mp3 +music/Julian Bream/Guitarra \(1985\)")
+        code, out = self.cli("get", g["id"], "--batch", "b")
+        self.assertEqual(code, 1)
+        self.assertIn("is already on the media share (filed)", out)
+        self.assertIn("filed, " + g["path"], self.cli("show", g["id"])[1])
+
+    def test_kind_picks_the_corpus_file_types(self):
+        self.fake.responses = [response("a", "Ado\\unravel", ["01 unravel"], ext="flac"),
+                               response("b", "RPG\\Unravel", ["Unravel"], ext="pdf")]
+        self.assertEqual([c["title"] for c in self.search(kind="rpg")["candidates"]], ["Unravel"])
+        self.assertEqual([c["title"] for c in self.search(kind="music")["candidates"]], ["unravel"])
+        self.assertEqual(len(self.search("--ext", "all", kind="rpg")["candidates"]), 2)
+        self.assertEqual(len(self.search(kind="other")["candidates"]), 2)
 
 if __name__ == "__main__":
     unittest.main()
