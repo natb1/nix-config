@@ -154,8 +154,12 @@ agent or person per batch.
    - Audio: `beet stage-review --answers /srv/media/staging/<batch>.answers
      /srv/media/staging/<batch>`. A chosen release is applied by its id,
      hand-entered tags as-is, "Leave it in staging" leaves the album where it
-     is. A chosen release takes only the files that match its tracks, and an
-     album already filed under the same name is not filed twice. Whatever is
+     is. A chosen release takes only the files that match its tracks. An
+     album already filed under the same name is filed again only as the
+     answer says: the page offers such a release as replacing that album or
+     keeping both (`mb:<id>+remove`, `mb:<id>+keep`), and an answer you
+     write that tags it by hand needs `"on_duplicate": "remove"` or `"keep"`;
+     otherwise it stays in staging, and the run says so. Whatever is
      left (a suite's extra movements, a second copy) goes round again: `beet
      stage-review --batch <batch>-2 …` (answers to the same `<batch>.answers`
      folder), a new tab on the page, where each
@@ -165,11 +169,15 @@ agent or person per batch.
    imported: `beet stage-audit /srv/media/staging/<batch>`. It compares each
    filed track with its original in the manifest: a length that doesn't fit
    its slot on the release, or a title that now names another number
-   ("No. 3" filed as "No. 5"). Flags go to `<batch>.audit.review.json`: load
-   it as review doc `<batch>-audit`, and after the user's answers (same
+   ("No. 3" filed as "No. 5"). It also flags two tracks in one slot, and a
+   track whose original the manifest no longer has (rescanned since it was
+   filed), which it could not check. Flags go to `<batch>.audit.review.json`:
+   load it as review doc `<batch>-audit`, and after the user's answers (same
    `answers` query, `batch == <batch>-audit`, same `out_dir`) run
    `beet stage-audit --answers /srv/media/staging/<batch>.answers
    /srv/media/staging/<batch>`, which re-slots or retitles and audits again.
+   Whatever it still flags (a track moved onto a slot another holds flags
+   that one) is in the new `<batch>.audit.review.json`: load it again.
    Don't fix a flagged track any other way. Skip this step for a batch with
    no music.
 9. **Apply**, without asking, once nothing is left for the user to review:
