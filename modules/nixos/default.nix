@@ -1,5 +1,4 @@
-# NixOS configuration shared by every Linux host (currently the WSL box; a
-# native machine will import this unchanged).
+# NixOS configuration shared by every Linux host (wsl and desk).
 #
 # WSL-specific system config does NOT belong here — it lives in hosts/wsl/
 # (wsl.* options, the Windows drive mounts, the hostname). What is here is

@@ -1,10 +1,13 @@
 # hosts/desk/disko.nix — the BULK DRIVE ONLY.
 #
 # The fast NVMe (the 2 TB SHPP41-2000GM, serial ADC8N56931060986L) is
-# deliberately absent. It belongs to Windows, and this host never mounts it:
-# its controller sits at 0000:11:00.0 and is bound to vfio-pci at boot, then
-# handed to the guest whole (Phase 4). Adding it here for "completeness" would
-# destroy the Windows install — there is no second copy.
+# deliberately absent. It belongs to Windows, and this host never mounts it.
+# Its controller sits at 0000:11:00.0; Phase 4 will bind it to vfio-pci by
+# address and hand it to the guest whole. Until then it is live under the
+# ordinary nvme driver and fully visible to Linux, under whichever kernel name
+# it gets that boot (it has been both nvme0n1 and nvme1n1) — never aim a
+# destructive tool at /dev/nvmeXnY, only at a by-id path. Adding it here for
+# "completeness" would destroy the Windows install — there is no second copy.
 #
 # Both drives are the same SK hynix P41 family and both controllers report
 # 1c5c:1959, so the by-id name below is the only thing distinguishing them in
