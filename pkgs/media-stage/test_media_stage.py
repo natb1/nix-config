@@ -262,6 +262,8 @@ class Helpers(unittest.TestCase):
                          {"series": "Discworld", "volume": "3", "title": "Equal Rites (tr. X)", "author": "Terry Pratchett"})
         self.assertEqual(ms.standard("rpg/Cairn/The Drops of St Jerome (pages).pdf"),
                          {"series": "Cairn", "volume": "", "title": "The Drops of St Jerome (pages)"})
+        self.assertEqual(ms.standard("rpg/Game/Game Vol. 2 (spreads).pdf"),
+                         {"series": "Game", "volume": "2", "title": "Game Vol. 2 (spreads)"})
         self.assertEqual(ms.standard("movies/Heat (1995)/Heat (1995).mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("tv/The Wire (2002) {tmdb-1438}/Season 01/The Wire (2002) - S01E01.mkv"),

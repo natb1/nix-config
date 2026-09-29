@@ -1969,7 +1969,7 @@ def shelf_meta(rel):
     base, variant = split_variant(stem)
     m = VOL_NAME.match(base)
     want = {"series": series, "volume": num(m["n"]) if m else "",
-            "title": (m["title"] or stem) + variant if m else stem}
+            "title": (m["title"] or base) + variant if m else stem}
     if not m and ext_of(rel) == "epub":
         want["title"] = series
     if p.parts[0] == "books":
