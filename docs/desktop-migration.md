@@ -4190,7 +4190,9 @@ which keeps the Apple IDs out of this public repo:
 
 ```sh
 APPLE_ID=someone@example.com
-LIBRARY=PrimarySync            # or SharedSync-<UUID>, as icloudpd-login prints it
+# PrimarySync, or SharedSync-<UUID> as icloudpd-login prints it. Comments go
+# on their own line: systemd's EnvironmentFile keeps one after a value.
+LIBRARY=PrimarySync
 ```
 
 | Instance | Apple ID | `LIBRARY` | Lands in | Runs |

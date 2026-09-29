@@ -6,7 +6,11 @@
 # public repo):
 #
 #   APPLE_ID=someone@example.com
-#   LIBRARY=PrimarySync          # or SharedSync-<UUID>, from `icloudpd-login`
+#   LIBRARY=PrimarySync
+#
+# LIBRARY is PrimarySync or SharedSync-<UUID>, as `icloudpd-login` prints it.
+# No comment after a value: the unit's EnvironmentFile keeps it as part of
+# the value (a comment on a line of its own is fine).
 #
 # Three instances, two shapes:
 #   shared     n8's Apple ID, the Shared Library. Daily timer, forever.
