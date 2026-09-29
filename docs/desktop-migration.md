@@ -2056,8 +2056,10 @@ creates a new WinRE loader, and points `{current}`'s `recoverysequence` at it.
 **Disko gets a whole drive again, and the awkwardness of the previous draft
 disappears with it.** No hand-partitioning, no hand-written `fileSystems`, no
 100 MB ESP shared with Windows, no `configurationLimit = 3`. NixOS gets a 1 GiB
-ESP of its own and as many generations as it likes, because nothing else is
-competing for the space.
+ESP of its own, big enough for a generous limit (15) rather than a tight one.
+Not an unlimited one: nothing else competes for the space, but the generations
+do — each new kernel and initrd is ~43 MB, and systemd-boot frees none while
+it keeps every generation.
 
 The fast drive is absent from `disko.nix` for the same reason it was before —
 disko would recreate its table — but the danger is much lower now: there is no

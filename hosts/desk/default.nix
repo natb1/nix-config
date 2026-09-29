@@ -53,9 +53,17 @@
   # canTouchEfiVariables is what writes the NVRAM entry that Phase 2 then
   # reorders with `efibootmgr -o` to put NixOS ahead of Windows.
   #
-  # No configurationLimit: this ESP is 1 GiB and nothing competes for it.
-  # Secure Boot stays off until Phase 2b swaps this for lanzaboote.
+  # configurationLimit: this ESP is 1 GiB and Windows has its own, but the
+  # generations compete with each other. A generation with a new kernel copies
+  # ~43 MB (13.6 MB bzImage + 29.4 MB initrd) onto it, and with every
+  # generation kept nothing is ever freed, so daily flake bumps fill it in
+  # months and every switch then fails at install-bootloader. 15 is ~650 MB
+  # at worst; older generations stay in the profile for
+  # `nixos-rebuild --rollback`, and bootCounting only needs the previous entry.
+  # Secure Boot stays off until Phase 2b swaps this for lanzaboote — carry the
+  # limit over to boot.lanzaboote.configurationLimit then.
   boot.loader.systemd-boot.enable = true;
+  boot.loader.systemd-boot.configurationLimit = 15;
   boot.loader.efi.canTouchEfiVariables = true;
   # MemTest86+ as a boot menu entry, for BIOS tuning's validation set
   # (docs/desktop-migration.md): no USB stick needed for it.
