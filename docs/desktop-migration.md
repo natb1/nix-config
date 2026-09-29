@@ -2873,8 +2873,11 @@ Two surprises from the first switch, both fixed in `iphone.nix`:
   publishes `_tether._tcp` over mDNS. It was reachable from the whole tailnet
   (tailscale0 is trusted) and advertised on Wi-Fi. Now fenced from outside:
   avahi's `publish.userServices` is off on `desk` (only Tether used it —
-  `desk.local` still resolves), and 5134 is dropped on `tailscale0` ahead of
-  the trusted-interface accept.
+  `desk.local` still resolves), and 5134 is dropped on `tailscale0` in the
+  raw table. (First it was refused in `nixos-fw`, ahead of the
+  trusted-interface accept, which never matched: tailscaled's own `ts-input`
+  chain, at the top of INPUT, accepts all `tailscale0` traffic before
+  `nixos-fw` sees it.)
 
 **Pairing, once, after the switch:** `tether --bt-status` should report full
 mode (MAP + PBAP + ANCS). Then pair from the GTK app (`tether-gtk`, Devices) or

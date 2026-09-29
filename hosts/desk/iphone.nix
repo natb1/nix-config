@@ -186,17 +186,21 @@ in
   # - No mDNS announcement: stop avahi publishing *application* services on
   #   desk. That is only Tether here — CUPS browsing is off and Samba has no
   #   mDNS — and desk.local itself (publish.addresses) is unaffected.
-  # - No port 5134 on the tailnet, which is otherwise open because
-  #   tailscale0 is trusted. Inserted at the top of nixos-fw, ahead of the
-  #   trusted-interface accept. Wi-Fi never had it.
+  # - No port 5134 on the tailnet, which is otherwise open. Dropped in the
+  #   raw table, not refused in nixos-fw: tailscaled hooks its own ts-input
+  #   chain in at the top of INPUT, and it accepts everything on tailscale0
+  #   before nixos-fw is consulted — a nixos-fw rule here never matched. raw
+  #   comes before INPUT, and tailscaled leaves it alone; DROP, because
+  #   REJECT is not allowed there. Deleted before it is inserted, since
+  #   firewall-start rebuilds nixos-fw but leaves raw as it finds it. Wi-Fi
+  #   never had the port.
   services.avahi.publish.userServices = lib.mkForce false;
   networking.firewall.extraCommands = ''
-    iptables -I nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse
-    ip6tables -I nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse
+    ip46tables -t raw -D PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP 2>/dev/null || true
+    ip46tables -t raw -I PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP
   '';
   networking.firewall.extraStopCommands = ''
-    iptables -D nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse 2>/dev/null || true
-    ip6tables -D nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse 2>/dev/null || true
+    ip46tables -t raw -D PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP 2>/dev/null || true
   '';
 
   # Keep the phone's audio on the phone. Stock WirePlumber advertises desk as
