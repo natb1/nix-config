@@ -30,6 +30,15 @@
 # `claude` there interactively and accept the workspace trust dialog. Until then
 # rc exits with "Workspace not trusted" and the service keeps retrying.
 #
+# Logs: rc's errors ("Workspace not trusted", "already served") go to stderr,
+# kept in `journalctl --user -u claude-remote-control` on Linux and in
+# ~/Library/Logs/claude-remote-control.log on macOS. Its stdout is discarded: rc
+# redraws its status screen there about once a second even without a terminal,
+# some 2 MB an hour, which would crowd out the rest of the journal and grow the
+# Mac's log file, which nothing rotates, without bound. The lines rc prints
+# through that screen go with it: a session completed or failed, a worktree
+# removed.
+#
 # ── Why ExecStart names the profile symlink, unlike claude-daemon.nix ─────────
 #
 # claude-daemon.nix pins the concrete store path so every claude-code bump
@@ -99,6 +108,10 @@ in
       WorkingDirectory = directory;
       ExecStart = lib.escapeShellArgs args;
       Environment = [ "PATH=${path}" ];
+      # The status screen is dropped, errors kept — see the header. stderr is
+      # named because the user manager's default for it is to follow stdout.
+      StandardOutput = "null";
+      StandardError = "journal";
       Restart = "always";
       # rc exits after ~a minute on errors it reports (untrusted folder, folder
       # already served); don't hammer it beyond that.
@@ -116,7 +129,7 @@ in
       RunAtLoad = true;
       KeepAlive = true;
       ThrottleInterval = 10;
-      StandardOutPath = "${config.home.homeDirectory}/Library/Logs/claude-remote-control.log";
+      # No StandardOutPath, so launchd sends stdout to /dev/null — see the header.
       StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/claude-remote-control.log";
     };
   };
