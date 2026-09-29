@@ -18,10 +18,10 @@
 #              `systemctl --user start --no-block icloudpd@n8`.
 #
 # Every run ends with `icloudpd-verify <instance>` (icloudpd-verify.py): each
-# original iCloud has must be on disk, byte-exact against Apple's own
-# checksum, or the run fails and alerts. That is what lets a download be
-# trusted without first proving desk's RAM — the reference was computed on
-# Apple's side.
+# original iCloud had when the run began must be on disk, byte-exact against
+# Apple's own checksum, or the run fails and alerts. That is what lets a
+# download be trusted without first proving desk's RAM — the reference was
+# computed on Apple's side.
 #
 # Until an instance's env file exists it is skipped by its condition rather
 # than failed, as in gdrive.nix — "never set up" is not a runtime fault.
@@ -153,6 +153,9 @@ in
         "--log-level info"
         "--no-progress-bar"
       ];
+      # When this run began, for the verifier: what reached iCloud after
+      # that is the next run's to fetch and check.
+      ExecStartPre = "${pkgs.coreutils}/bin/touch %S/icloudpd/started-%i";
       # Only after a clean download; a failure here fails the unit, so the
       # same OnFailure pop-up fires.
       ExecStartPost = "${verifyScript}/bin/icloudpd-verify %i";

@@ -15,11 +15,17 @@ icloudpd would download (its defaults, as the unit runs it) must have a
 byte-identical file somewhere under /srv/media/icloud/<instance>/. Local
 files iCloud no longer has are fine — the backup is add-only.
 
+Assets added to iCloud after the unit's last run began (its ExecStartPre
+stamps the time) are counted, not checked: icloudpd pages through the
+library by offset, so one that arrives mid-run can land among the pages it
+has already read, and is missed. The next run fetches it, and checks it.
+
 Exit 0: everything verified. 1: something missing or corrupt. 2: cannot log
 in without a 2FA code (run icloudpd-login <instance>).
 """
 
 import base64
+import datetime
 import hashlib
 import json
 import os
@@ -44,6 +50,27 @@ def read_env(instance):
                 key, value = line.split("=", 1)
                 env[key.strip()] = value.strip().strip("'\"")
     return env["APPLE_ID"], env["LIBRARY"]
+
+
+def run_start(stamp):
+    """When the unit's last run began, less a minute for the two clocks
+    (desk's stamp, Apple's addedDate); None if it never ran."""
+    try:
+        mtime = os.stat(stamp).st_mtime
+    except OSError:
+        return None
+    return datetime.datetime.fromtimestamp(mtime - 60, tz=datetime.timezone.utc)
+
+
+def added_since(asset, cutoff):
+    """Whether iCloud got the asset after cutoff. Unknown counts as before,
+    so the asset is checked."""
+    if cutoff is None:
+        return False
+    try:
+        return asset.added_date > cutoff
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
 
 
 def file_digest(path):
@@ -122,10 +149,14 @@ def main():
     lib = photos.private_libraries.get(library) or photos.shared_libraries[library]
 
     index, hashed = local_index(root, os.path.join(state, f"verify-{instance}.json"))
+    cutoff = run_start(os.path.join(state, f"started-{instance}"))
 
-    assets = versions = 0
+    assets = versions = newer = 0
     missing = []
     for asset in lib.all:
+        if added_since(asset, cutoff):
+            newer += 1
+            continue
         assets += 1
         for size, version in asset.versions.items():
             if size not in WANTED:
@@ -138,7 +169,8 @@ def main():
                 missing.append((asset, size, version, "no byte-exact copy on desk"))
 
     print(
-        f"{instance}: {assets} assets, {versions} files in iCloud; "
+        f"{instance}: {assets} assets, {versions} files in iCloud "
+        f"({newer} more added since the run began, left for the next); "
         f"{len(index)} files on desk ({hashed} newly hashed); {len(missing)} missing"
     )
     for asset, size, version, why in missing:
