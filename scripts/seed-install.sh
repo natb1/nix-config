@@ -17,7 +17,7 @@
 # from RAM to the new disk without ever passing through git.
 #
 # Idempotent: safe to re-run. Existing files at the destination are left alone
-# unless FORCE=1.
+# unless FORCE=1, which replaces them.
 
 set -euo pipefail
 
@@ -90,6 +90,10 @@ seed_home() {
     [ -d "$d" ] || install -d -o "$UID_N" -g "$GID_N" "$d"
   done
   unset IFS
+  # FORCE=1 replaces, so remove what is there first: `cp -a dir existing-dir`
+  # copies INTO it, which left the repo and ~/.claude stale with a nested
+  # nix-config/nix-config and .claude/.claude beside them.
+  [ -e "$dst" ] && rm -rf -- "$dst"
   cp -a "$src" "$dst"
   chown -R "$UID_N:$GID_N" "$dst"
   [ -n "$mode" ] && chmod "$mode" "$dst"
@@ -127,8 +131,13 @@ say "This repo"
 seed_home "$SRC_REPO" "natb1/nix-config"
 
 # ------------------------------------------------------------------ Claude
-# Not managed by home-manager (checked: ~/.claude appears nowhere in
-# home.file), so these are ours to place and nothing will contest them.
+# The session (credentials, projects, history) is not managed by
+# home-manager, so it is ours to place. home-manager does own
+# ~/.claude/CLAUDE.md and ~/.claude/skills/media-{share,fetch}/SKILL.md
+# (modules/home/media-skills.nix): if this live session has any of those, the
+# first switch moves them aside to *.backup, which is harmless.
+# modules/home/claude-plugins.nix merges its keys into ~/.claude/settings.json
+# and keeps the rest of the file.
 say "Claude Code session"
 seed_home "$SRC_HOME/.claude"      ".claude"      700
 seed_home "$SRC_HOME/.claude.json" ".claude.json" 600

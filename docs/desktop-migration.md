@@ -329,7 +329,6 @@ Everything lives in RAM, so all of this repeats on every boot.
    ```sh
    nix-shell -p git gh
    git clone https://github.com/natb1/nix-config.git && cd nix-config   # public: no auth
-   git switch claude/sweet-hypatia-03wf7f
    git config user.name 'Nathan Buesgens'; git config user.email nathan@natb1.com
    gh auth login                        # only if you intend to push over HTTPS
    NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features 'nix-command flakes' \
@@ -2250,7 +2249,7 @@ target the four things a public repo cannot carry:
 | --- | --- | --- |
 | The Wi-Fi profile | `/etc/NetworkManager/system-connections/` (600, root) | Contains the PSK. NetworkManager keeps profiles as mutable state, so copying the file *is* the whole job, and it already pins `interface-name=wlp14s0` — the same NIC |
 | This repo | `~/natb1/nix-config` | `nixos-install` copies the store closure, not the working tree. Seeding the tree rather than cloning means the branch and anything unpushed come along, and first boot needs no network to start work |
-| `~/.claude`, `~/.claude.json` | `~` | A session token. **Not** managed by home-manager — checked, it appears nowhere in `home.file` — so nothing contests it |
+| `~/.claude`, `~/.claude.json` | `~` | A session token. The session is not managed by home-manager, so nothing contests it. Only `CLAUDE.md` and `skills/media-{share,fetch}/SKILL.md` are (`modules/home/media-skills.nix`): seeded copies of those are backed up to `.backup` on the first switch. `modules/home/claude-plugins.nix` merges its keys into `settings.json` and keeps the rest |
 | `~/.config/gh/hosts.yml` | `~/.config/gh/` | The gh token. **Only `hosts.yml`:** `config.yml` *is* managed by `modules/home/gh.nix`, so copying that one would just be backed up and replaced on the first switch |
 
 **No secret is in the script.** It is a list of copy operations; the values are
