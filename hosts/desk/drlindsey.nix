@@ -5,7 +5,8 @@
 #
 # Deliberately not given n8's home config (modules/home): that carries n8's git
 # identity and n8's SSH authorized_keys. Of it they get only what is generic —
-# claude-code, gh, jq and python3. Not in wheel, no password: nobody logs in
+# claude-code, the Claude plugins (claude-plugins.nix: CanonDB's principal),
+# gh, jq and python3. Not in wheel, no password: nobody logs in
 # as drlindsey directly. n8 reaches the account with
 #
 #   sudo machinectl shell drlindsey@
@@ -48,6 +49,7 @@ in
     {
       imports = [
         ../../modules/home/claude-code.nix
+        ../../modules/home/claude-plugins.nix
         ../../modules/home/claude-remote-control.nix
         ../../modules/home/gh.nix
         ./home/media-tools.nix
