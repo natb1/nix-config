@@ -35,7 +35,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # iPhone notifications and messages on `desk` over Bluetooth — see
-    # hosts/desk/iphone.nix. Pinned to a rev in the URL, so the weekly
+    # hosts/desk/iphone.nix. Pinned to a rev in the URL, so the daily
     # `nix flake update` leaves it alone: it is a fast-moving beta that
     # changes how bluetoothd runs, so a bump is a deliberate edit here.
     tether = {
@@ -61,10 +61,13 @@
       ];
 
       # Unfree packages, allowed by name rather than blanket-allowing.
-      # google-chrome is desk's browser (hosts/desk/desktop.nix). Naming it
-      # here rather than in that host is not a choice: nixpkgs.config is set
-      # once by the `home` helper below, so a second definition in a host
-      # module conflicts with it instead of extending it.
+      # google-chrome is desk's browser (hosts/desk/desktop.nix). Add names
+      # here, not as a second allowUnfreePredicate in a host module: that
+      # raises no error. nixpkgs.config definitions merge with recursiveUpdate,
+      # so one predicate silently replaces the other, by module order, and the
+      # losing side's packages fail with "has an unfree license". (A host that
+      # wants its own names can set nixpkgs.config.allowUnfreePackages, a list
+      # that does merge across modules and is ORed with this predicate.)
       unfreePredicate =
         pkg: builtins.elem (nixpkgs.lib.getName pkg) [
           "claude-code"
@@ -108,8 +111,9 @@
         };
       };
 
-      # The platforms this repo actually targets: the WSL box and a future native
-      # NixOS machine (x86_64-linux), and the Apple Silicon Mac (aarch64-darwin).
+      # The platforms this repo actually targets: the WSL box and desk, the
+      # native NixOS desktop (x86_64-linux), and the Apple Silicon Mac
+      # (aarch64-darwin).
       # x86_64-darwin is deliberately absent — nixpkgs 26.11 dropped support for
       # it, so listing it breaks `nix flake check --all-systems`.
       systems = [ "x86_64-linux" "aarch64-darwin" ];

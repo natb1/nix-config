@@ -169,8 +169,10 @@ shows `brother` enabled and default.
 ### Kobo (once)
 
 The Kobo cannot run Tailscale, so it reaches Kavita over the home Wi-Fi,
-where desk opens port 5000 and nothing else
-([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)). It works only at home.
+where desk opens port 5000 for it
+([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)). Beyond that, only SSH
+(22, keys only), mDNS (5353/udp) and Tailscale's own port (41641/udp) are
+open there, as on every interface. It works only at home.
 
 1. **Fix desk's LAN address.** The Kobo cannot resolve `desk`, so it needs
    an address that does not move. If the gateway offers a DHCP reservation,
@@ -214,11 +216,12 @@ where desk opens port 5000 and nothing else
 
 `flake.lock` is shared by every host, and its routine writer is
 [`.github/workflows/update-flake-lock.yml`](.github/workflows/update-flake-lock.yml).
-Every Monday it runs `nix flake update --commit-lock-file`, evaluates both hosts
-and runs the Linux module tests against the new lock, and pushes the lock commit
-straight to `main` if they pass. There is no PR to merge; if they fail, nothing
-is pushed and the run shows up red in Actions. Trigger it by hand from the
-Actions tab when you want a bump sooner.
+Every day at 09:00 UTC it runs `nix flake update --commit-lock-file`, evaluates
+every host (wsl, desk, mba) and runs the Linux module tests against the new
+lock, and pushes the lock commit straight to `main` if they pass. There is no
+PR to merge; if they fail, nothing is pushed and the run shows up red in
+Actions. Trigger it by hand from the Actions tab when you want a bump sooner,
+from `main` (the default): run from any other branch, the job is skipped.
 
 Picking a bump up is then just the host commands above, on each machine, when
 you choose. The gate proves the lock *evaluates*; it does not build or activate
@@ -230,7 +233,7 @@ outside that workflow. Discard it (`git checkout flake.lock`) rather than
 committing it, or the two machines end up on locks nobody else has.
 
 Bumping by hand is still fine when you need one input now. Do it on one
-machine, switch and check it, and only then push — the other host should never
+machine, switch and check it, and only then push — the other hosts should never
 pull a hand-made lock that has not been through a switch:
 
 ```sh
@@ -248,7 +251,7 @@ modules/nixos/     shared by every Linux host
 modules/darwin/    shared by every macOS host
 modules/home/      shared by every host, every platform
 tests/             module regression tests, exposed as flake checks
-.github/workflows/ the weekly flake.lock bump
+.github/workflows/ the daily flake.lock bump
 scripts/           maintenance scripts (wezterm pin refresh)
 docs/              migration plans and design notes
 ```
@@ -257,8 +260,8 @@ docs/              migration plans and design notes
 correctly on every host. Config that is specific to *one machine* lives under
 `hosts/<host>/` — including its home-manager modules (`hosts/wsl/home/`).
 A `pkgs.stdenv.hostPlatform.isLinux` guard is for behavior that genuinely differs by
-*platform*; it is not a substitute for host scoping, because a future native
-NixOS box is also Linux and would wrongly pick up WSL-only modules.
+*platform*; it is not a substitute for host scoping, because desk is also
+Linux and would wrongly pick up WSL-only modules.
 
 ## Before and after a switch
 
@@ -288,25 +291,32 @@ Both tools default to `<configurations>.$(hostname)`. The WSL host *is* named
 After a lock bump, review the closure diff on one machine before switching the
 rest.
 
-### A future native NixOS host
+### Adding a NixOS host
 
-Add `hosts/<name>/` (with the `nixos-generate-config`-produced
-`hardware-configuration.nix`) plus a `nixosConfigurations.<name>` block in
-`flake.nix` importing `./modules/nixos`, then use the `wsl` commands with the new
-attribute.
+`desk` is the worked example. A new host needs:
 
-The concrete case — the desktop gaining a native NixOS install on its second
-SSD, with its existing Windows kept intact on the first and startable as a
-GPU-passthrough guest — is planned in
-[docs/desktop-migration.md](docs/desktop-migration.md). That plan supersedes this
-paragraph once it starts. The WSL host stays alongside it, for Linux on
-bare-metal Windows.
+- `hosts/<name>/default.nix`, importing `../../modules/nixos` and the
+  `hardware-configuration.nix` that `nixos-generate-config` writes;
+- a `nixosConfigurations.<name>` block in `flake.nix`, modelled on `desk`'s:
+  `./hosts/<name>`, `home-manager.nixosModules.home-manager`, and the `home`
+  helper with the host's `hostPlatform`, `homeDirectory` and any
+  `./hosts/<name>/home` modules. Without the `home` helper the host evaluates
+  but gets none of `modules/home`, nor the overlay and the unfree list.
 
-Note that it brings **Windows configuration into this repo** under
-`hosts/desk/windows/`: a Nix-rendered WinGet DSC profile that Windows pulls and
-applies to itself. There is one Windows install, booted either bare metal or
-virtualized, so one profile covers both. The name `nix-config` is about the tool
-that generates the configuration, not a restriction on what it configures.
+Then use the `desk` commands with the new attribute.
+
+`desk` itself was built from
+[docs/desktop-migration.md](docs/desktop-migration.md): native NixOS on the
+desktop's 1 TB NVMe, with its existing Windows install kept intact on the
+2 TB one and, from Phase 4 of that plan, startable as a GPU-passthrough
+guest. The WSL host stays alongside it, for Linux on bare-metal Windows.
+
+Phase 6 of the plan will bring **Windows configuration into this repo** under
+`hosts/desk/windows/` (not built yet): a Nix-rendered WinGet DSC profile that
+Windows pulls and applies to itself. There is one Windows install, booted
+either bare metal or virtualized, so one profile covers both. The name
+`nix-config` is about the tool that generates the configuration, not a
+restriction on what it configures.
 
 ## State this repo does not manage
 

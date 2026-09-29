@@ -24,8 +24,10 @@
 # "desk", so it uses a fixed address. The T-Mobile gateway has no DHCP
 # reservations, so that is a second address, 192.168.12.250, added by hand to
 # the Wi-Fi's NetworkManager profile beside the DHCP one (README, "Kobo
-# (once)"). Anyone on the Wi-Fi reaches Kavita's login page; nothing else on
-# desk is opened to the LAN.
+# (once)"). Anyone on the Wi-Fi reaches Kavita's login page. Beyond it, the
+# LAN reaches only what is open on every interface: SSH (22, keys only;
+# openssh's openFirewall default), mDNS (5353/udp, avahi's) and Tailscale's
+# WireGuard port (41641/udp).
 #
 # Not managed by this repo: Kavita's accounts and libraries. The first visit
 # to http://desk:5000 creates the admin. State is in /var/lib/kavita

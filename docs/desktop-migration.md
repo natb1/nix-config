@@ -5537,7 +5537,8 @@ which nothing in Phase 4 sets up for it — do not plan on it there.
 
 Still to do, after Phase 8:
 
-- [ ] README: replace the "A future native NixOS host" section with the real one
+- [x] README: replace the "A future native NixOS host" section with the real one
+      — *2026-09-29: now "Adding a NixOS host", with desk as the example*
 - [ ] Update the "State this repo does not manage" list. The Windows-side
       WezTerm install and the `G:` volume **stay** (WSL still uses them). New
       entries are the Microsoft
