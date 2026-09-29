@@ -460,7 +460,7 @@ class Itch(Backend):
                 continue  # an external link: nothing to fetch
             name = _safe(u["filename"])
             if name in ids:
-                name = f"{u['id']} {name}"
+                name = _safe(f"{u['id']} {u['filename']}")
             files.append({"name": name, "size": u.get("size") or 0,
                           **({"md5": u["md5_hash"]} if u.get("md5_hash") else {})})
             ids[name] = u["id"]
@@ -1273,9 +1273,13 @@ def cmd_pump(a):
 def _safe(name):
     # A name holds at most 255 bytes (desk's btrfs, and most others); 240
     # leaves room for what the itch.io worker puts around a file's name
-    # (.<name>.failed).
+    # (.<name>.failed). The cut comes out of the stem, so a file keeps its
+    # extension.
     name = re.sub(r'[/\\:*?"<>|]', "_", name)
-    return name.encode()[:240].decode(errors="ignore").strip(" .") or "untitled"
+    ext = re.search(r"\.[A-Za-z0-9]{1,10}$", name)
+    ext = ext.group(0) if ext and len(name.encode()) > 240 else ""
+    stem = name[:len(name) - len(ext)].encode()[:240 - len(ext)]
+    return (stem.decode(errors="ignore").strip(" .") + ext) or "untitled"
 
 
 def _now():

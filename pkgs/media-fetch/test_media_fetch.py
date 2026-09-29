@@ -543,6 +543,18 @@ class MediaFetchTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertTrue((self.staging / "b" / ("完" * 80) / "01.flac").is_file())
 
+    def test_long_itch_file_names_keep_their_extension(self):
+        # Two uploads of one 274-byte name: both cut to fit, the second after
+        # its id is put in front, and neither loses its .pdf.
+        long = "完" * 90 + ".pdf"
+        self.itch.game(1, "Long", uploads=[(long, b"a"), (long, b"b")])
+        (c,) = self.tables(kind="rpg", query="long")["itch.io"]["candidates"]
+        names = [f["name"] for f in c["files"]]
+        self.assertEqual(len(set(names)), 2)
+        for n in names:
+            self.assertTrue(n.endswith(".pdf"), n)
+            self.assertLessEqual(len(n.encode()), 240)
+
     def test_locate_falls_back_to_name_and_size(self):
         # An slskd that ignored the destination option: the remote folder's name.
         be = mf.Slskd()
