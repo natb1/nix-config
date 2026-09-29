@@ -162,7 +162,8 @@ input.path { font-family: var(--mono); font-size: 13px; }
   var state = {
     db: null, live: false,
     reviews: SAMPLE.slice(), answers: {}, current: null, filter: "todo",
-    drafts: {}, saving: {}, savedAt: {}, readOnly: false,
+    drafts: {}, notes: {},   // what was typed, shown through a re-render until Undo
+    saving: {}, savedAt: {}, readOnly: false,
     touched: {}   // decided during this visit: stays in "To decide" until the filter changes
   };
   var chains = {};   // one write at a time per answer document
@@ -232,8 +233,11 @@ input.path { font-family: var(--mono); font-size: 13px; }
 
   function clear(batch, item) {
     var id = answerId(batch.batch, item.id);
+    clearTimeout(timers[id]);
+    clearTimeout(timers[id + ":note"]);
     delete state.answers[id];
     delete state.drafts[id];
+    delete state.notes[id];
     if (state.db && state.live) {
       chains[id] = (chains[id] || Promise.resolve()).then(function () { return state.db.collection("answers").doc(id).delete().catch(function () {}); });
     }
@@ -249,8 +253,8 @@ input.path { font-family: var(--mono); font-size: 13px; }
 
   function choose(batch, item, choice, extra) {
     var id = answerId(batch.batch, item.id);
-    var prev = state.answers[id] || {};
-    var body = { choice: choice, note: prev.note || "" };
+    clearTimeout(timers[id]);   // typing's pending save would land after this, as custom
+    var body = { choice: choice, note: noteFor(id) };
     if (choice === "option") body.value = extra;
     if (choice === "custom") body.fields = customValues(batch, item);
     save(batch, item, body).then(render);
@@ -273,13 +277,18 @@ input.path { font-family: var(--mono); font-size: 13px; }
     state.drafts[id] = Object.assign({}, state.drafts[id], (function () { var o = {}; o[key] = value; return o; })());
     clearTimeout(timers[id]);
     timers[id] = setTimeout(function () {
-      var prev = state.answers[id] || {};
-      save(batch, item, { choice: "custom", fields: customValues(batch, item), note: prev.note || "" });
+      save(batch, item, { choice: "custom", fields: customValues(batch, item), note: noteFor(id) });
     }, 700);
+  }
+
+  function noteFor(id) {
+    var a = state.answers[id];
+    return state.notes[id] !== undefined ? state.notes[id] : (a && a.note) || "";
   }
 
   function noted(batch, item, value) {
     var id = answerId(batch.batch, item.id);
+    state.notes[id] = value;
     clearTimeout(timers[id + ":note"]);
     timers[id + ":note"] = setTimeout(function () {
       var prev = state.answers[id];
@@ -448,8 +457,12 @@ input.path { font-family: var(--mono); font-size: 13px; }
         var input = el("input", {
           type: "text", id: group + "-f-" + f.key, value: vals[f.key] || "", class: isPath ? "path" : "",
           disabled: dis, spellcheck: "false", autocomplete: "off",
-          onfocus: function () { if (choice !== "custom") { var r = document.getElementById(group + "-custom"); if (r && !r.checked) { r.checked = true; choose(b, it, "custom"); } } },
+          // A click into a field picks it, and typing does (after typed()'s
+          // pause); tabbing through on the way to the note doesn't.
+          onclick: function () { if (choice !== "custom") { var r = document.getElementById(group + "-custom"); if (r && !r.checked) { r.checked = true; choose(b, it, "custom"); } } },
           oninput: function (ev) {
+            var r = document.getElementById(group + "-custom");
+            if (r) r.checked = true;
             typed(b, it, f.key, ev.target.value);
             if (isPath) { var h = document.getElementById(group + "-hint"); var p = pathProblem(it.key, ev.target.value.trim()); h.textContent = p || "Looks like the layout."; h.className = "hint" + (p ? " bad" : ""); }
           }
@@ -476,7 +489,7 @@ input.path { font-family: var(--mono); font-size: 13px; }
 
     var foot = el("div", { class: "item-foot" }, [
       el("label", { for: group + "-note" }, ["Note for Claude (optional)",
-        el("input", { type: "text", id: group + "-note", value: (a && a.note) || "", disabled: dis || !choice,
+        el("input", { type: "text", id: group + "-note", value: noteFor(id), disabled: dis || !choice,
           placeholder: choice ? "e.g. this is the second printing" : "Decide first, then add a note",
           oninput: function (ev) { noted(b, it, ev.target.value); } })]),
       el("span", { style: "display:flex;gap:12px;align-items:center" }, [
