@@ -27,7 +27,9 @@ candidate's ID. `wait` delivers each job whose files have all arrived into
 STAGING/BATCH/<title>/, the same batch directory media-stage takes, and
 then `media-stage scan` (or, for music, `media-stage group` and `beet
 stage-review`) takes over. A job that failed is left undelivered; `get`
-with the same ID again retries the files that failed.
+with the same ID again retries the files that failed. A job whose files all
+arrived but can't be moved into the batch (a file of that name is there
+already, say) fails too, on its own; `get` with its ID tries the move again.
 
 The CLI, the IDs, the states (queued, downloading, done, failed) and the
 JSON (--json on every command) are the same whichever place a candidate
@@ -802,13 +804,19 @@ def progress(be):
 
 def advance(be, raise_for=None):
     """One round of the scheduler: ask for pending files, then deliver the
-    jobs whose files have all arrived. {job id: progress} of the jobs still
-    undelivered."""
+    jobs whose files have all arrived. A job that can't be delivered keeps
+    why in "undeliverable", which fails it until `get` clears it, and holds
+    up no other job. {job id: progress} of the jobs still undelivered."""
     with locked():
         progs = _submit(be, raise_for)
         for j in load_jobs():
             if j["id"] in progs and job_summary(j, progs[j["id"]])["state"] == "done":
-                deliver(be, j)
+                try:
+                    deliver(be, j)
+                except (FetchError, OSError) as e:
+                    j["undeliverable"] = str(e)
+                    save_job(j)
+                    continue
                 del progs[j["id"]]
         return progs
 
@@ -917,6 +925,8 @@ def job_summary(job, prog):
     n = len(job["files"])
     if job.get("delivered"):
         state = "delivered"
+    elif job.get("undeliverable"):
+        state = "failed"
     elif counts["done"] == n:
         state = "done"
     elif counts["failed"] and not counts["queued"] and not counts["downloading"]:
@@ -926,10 +936,12 @@ def job_summary(job, prog):
     else:
         state = "queued"
     total = sum(f["size"] for f in job["files"])
-    got = sum(p["bytes"] for p in prog.values())
+    # A delivered job's files have all arrived; the backend has forgotten them.
+    got = total if job.get("delivered") else sum(p["bytes"] for p in prog.values())
     return {"id": job["id"], "batch": job["batch"], "title": job["title"], "state": state,
             "files": n, **{k: v for k, v in counts.items() if v}, "bytes": got, "size": total,
             **({"delivered": job["delivered"]} if job.get("delivered") else {}),
+            **({"undeliverable": job["undeliverable"]} if job.get("undeliverable") else {}),
             "failed_files": [k for k, p in prog.items() if p["state"] == "failed"],
             "failures": {k: p.get("reason", "") for k, p in prog.items() if p["state"] == "failed"}}
 
@@ -973,6 +985,8 @@ def print_job(s, brief=False):
     if s["state"] == "failed":
         for name, why in s["failures"].items():
             print(f"{'':12}failed: {name}" + (f" ({why})" if why else ""))
+        if s.get("undeliverable"):
+            print(f"{'':12}not delivered: {s['undeliverable']}")
     if s.get("delivered"):
         print(f"{'':12}in {s['delivered']}")
 
@@ -1106,14 +1120,19 @@ def cmd_get(a):
             [job] = load_jobs([a.id])
             prog = _merged(job, be.progress(job))
             retry = [f["name"] for f in job["files"] if prog[f["name"]]["state"] == "failed"]
-            if not retry:
+            redeliver = job.pop("undeliverable", None)
+            if not retry and not redeliver:
                 print(f"{a.id}: nothing to retry")
                 return
             job["pending"] = job.get("pending", []) + retry
             job["refused"] = {n: r for n, r in job.get("refused", {}).items() if n not in retry}
             save_job(job)
         advance(be)
-        print(f"{a.id}: retrying {len(retry)} file(s)")
+        [job] = load_jobs([a.id])
+        if job.get("undeliverable"):
+            raise FetchError(f"{a.id}: not delivered: {job['undeliverable']}")
+        print(f"{a.id}: delivered to {job['delivered']}" if job.get("delivered")
+              else f"{a.id}: retrying {len(retry)} file(s)")
         return
     if not a.batch:
         raise FetchError("--batch is required for a new download")
@@ -1134,7 +1153,11 @@ def cmd_get(a):
     try:
         progs = advance(be, raise_for=job["id"])
     except FetchError:
-        (state_dir() / "jobs" / f"{job['id']}.json").unlink()
+        # Forgotten only if none of it was asked for (its own refusal, or an
+        # error before its turn): once asked for, its files are on their way.
+        [saved] = load_jobs([job["id"]])
+        if len(saved["pending"]) == len(files):
+            (state_dir() / "jobs" / f"{job['id']}.json").unlink()
         raise
     [job] = load_jobs([job["id"]])
     [s] = with_eta(be, progs, [job["id"]])
@@ -1166,10 +1189,10 @@ def deliver(be, job):
     for f in job["files"]:
         src = be.locate(job, f)
         if src is None:
-            raise FetchError(f"{job['id']}: {f['name']} is done but cannot be found")
+            raise FetchError(f"{f['name']} is done but cannot be found")
         to = dest / f["name"]
         if to.exists():
-            raise FetchError(f"{job['id']}: {to} already exists")
+            raise FetchError(f"{to} already exists")
         moves.append((src, to))
     dest.mkdir(parents=True, exist_ok=True)
     for src, to in moves:
@@ -1232,7 +1255,7 @@ def cmd_cancel(a):
 def cmd_pump(a):
     be = backend()
     while True:
-        before = {j["id"] for j in load_jobs() if not j.get("delivered")}
+        before = {j["id"] for j in load_jobs() if not j.get("delivered") and not j.get("undeliverable")}
         try:
             advance(be)
         except FetchError as e:
@@ -1240,14 +1263,19 @@ def cmd_pump(a):
         for j in load_jobs():
             if j["id"] in before and j.get("delivered"):
                 print(f"{j['id']}: delivered to {j['delivered']}", flush=True)
+            elif j["id"] in before and j.get("undeliverable"):
+                print(f"media-fetch: {j['id']}: not delivered: {j['undeliverable']}", file=sys.stderr, flush=True)
         if a.every is None:
             return
         time.sleep(a.every)
 
 
 def _safe(name):
-    name = re.sub(r'[/\\:*?"<>|]', "_", name).strip(" .")
-    return name or "untitled"
+    # A name holds at most 255 bytes (desk's btrfs, and most others); 240
+    # leaves room for what the itch.io worker puts around a file's name
+    # (.<name>.failed).
+    name = re.sub(r'[/\\:*?"<>|]', "_", name)
+    return name.encode()[:240].decode(errors="ignore").strip(" .") or "untitled"
 
 
 def _now():

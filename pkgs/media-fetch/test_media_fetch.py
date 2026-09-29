@@ -331,6 +331,8 @@ class MediaFetchTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         [s] = json.loads(out)
         self.assertEqual(s["state"], "delivered")
+        self.assertEqual((s["bytes"], s["size"]), (22, 22))  # all of it, though the backend forgot it
+        self.assertRegex(self.cli("status", cid)[1], r"delivered +100%")
         album = self.staging / "slsk-test" / "Album (2001)"
         self.assertEqual(sorted(p.name for p in album.iterdir()), ["01 One.flac", "03 Three.flac"])
         self.assertFalse((self.downloads / cid).exists())
@@ -501,6 +503,45 @@ class MediaFetchTest(unittest.TestCase):
         self.assertIn("no candidate", self.cli("show", "ffffff.1")[1])
         self.fake.offline.add("peer")
         self.assertIn("source is offline", self.cli("get", cid, "--batch", "b")[1])
+        self.assertEqual(self.cli("status")[1].strip(), "no downloads")  # nothing asked for: forgotten
+
+    def test_job_that_cannot_be_delivered_fails_alone(self):
+        # Two sources' folders of one name, into one batch: the second can't
+        # be moved in. It fails by itself; other jobs go on.
+        self.fake.responses = [response("u1", "X\\Album", ["01", "02"]),
+                               response("u2", "Y\\Album", ["01", "02"]),
+                               response("u3", "Z\\Other", ["01"])]
+        ids = [c["id"] for c in self.search()["candidates"]]
+        for cid in ids[:2]:
+            self.cli("get", cid, "--batch", "b")
+        code, out = self.cli("wait", "b", "--timeout", "5", "--interval", "0", "--json")
+        self.assertEqual(code, 1, out)
+        by = {s["state"]: s for s in json.loads(out)}
+        self.assertEqual(sorted(by), ["delivered", "failed"])
+        stuck = by["failed"]
+        self.assertIn(f"{self.staging}/b/Album/01.flac already exists", stuck["undeliverable"])
+        self.assertIn("not delivered:", self.cli("status", stuck["id"])[1])
+        self.assertEqual(self.cli("pump"), (0, ""))  # not tried again every round
+        code, out = self.cli("get", ids[2], "--batch", "c")
+        self.assertEqual(code, 0, out)
+        code, out = self.cli("wait", "c", "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.staging / "c" / "Other" / "01.flac").is_file())
+        # Once the folder in the way is gone, get moves it in.
+        (self.staging / "b" / "Album").rename(self.staging / "b" / "Album (the other)")
+        code, out = self.cli("get", stuck["id"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("delivered to", out)
+        self.assertEqual(sorted(p.name for p in (self.staging / "b" / "Album").iterdir()), ["01.flac", "02.flac"])
+
+    def test_long_title_is_cut_to_fit_a_file_name(self):
+        # 90 characters, 270 bytes: more than a file name may hold.
+        self.fake.responses = [response("peer", "M\\" + "完" * 90, ["01"])]
+        cid = self.search()["candidates"][0]["id"]
+        self.cli("get", cid, "--batch", "b")
+        code, out = self.cli("wait", "b", "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.staging / "b" / ("完" * 80) / "01.flac").is_file())
 
     def test_locate_falls_back_to_name_and_size(self):
         # An slskd that ignored the destination option: the remote folder's name.
