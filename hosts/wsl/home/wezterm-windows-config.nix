@@ -183,10 +183,20 @@
         exit $ERR_SOURCE_EMPTY
       fi
 
+      # The source is a read-only store file, and on /mnt/c a missing write bit
+      # is enforced (DrvFs also turns it into the Windows read-only attribute;
+      # see wezterm-windows.nix). A plain cp gives a new target the source's
+      # 0444, and the next switch's cp then fails on it. So copy without the
+      # source's mode, and first repair a copy an older generation left
+      # read-only. A chmod failure is left to the cp below to report.
+      if [ -e "$TARGET_FILE" ] && [ ! -w "$TARGET_FILE" ]; then
+        $DRY_RUN_CMD chmod u+w "$TARGET_FILE" 2>/dev/null || true
+      fi
+
       # Copy config file with error checking and stderr capture
       if [ -z "$DRY_RUN_CMD" ]; then
         # Normal mode: capture stderr for better diagnostics
-        if ! copy_error=$(cp ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE" 2>&1); then
+        if ! copy_error=$(cp --no-preserve=mode ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE" 2>&1); then
           echo "ERROR: Failed to copy WezTerm config to $TARGET_FILE" >&2
           echo "  Copy error: $copy_error" >&2
           echo "  Common causes: permissions, disk space, file locked by running WezTerm" >&2
@@ -194,7 +204,7 @@
         fi
       else
         # Dry run mode: execute but don't fail on dry run
-        $DRY_RUN_CMD cp ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE"
+        $DRY_RUN_CMD cp --no-preserve=mode ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE"
       fi
       echo "Copied WezTerm config to Windows location: $TARGET_FILE"
     else

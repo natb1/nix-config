@@ -112,8 +112,14 @@ in
           #
           # rsync without -p/-o/-g: /mnt/c is a Windows filesystem where unix
           # permissions/ownership are not meaningful and attempting to set them
-          # produces spurious errors. -rlt preserves recursion, symlinks, and
-          # mtimes — enough to keep --delete idempotent across runs.
+          # produces spurious errors. -rlt recurses and keeps symlinks and
+          # mtimes, but every store file's mtime is 1, so rsync's default
+          # size+mtime check cannot tell two builds apart: a file a pin bump
+          # changed without changing its size (PE files grow in 512-byte
+          # steps, so this happens) would stay at the old build. --checksum
+          # compares contents instead, at the cost of reading both trees on
+          # every switch. Unchanged files are still skipped, so a switch that
+          # does not move the pin still succeeds with WezTerm open on Windows.
           # Capture the exit code without tripping the activation script's `set
           # -e`: a bare `var=$(cmd)` assignment aborts the whole switch on rsync
           # failure BEFORE the handler below runs, turning the common
@@ -128,7 +134,7 @@ in
           # (rsync without -p never touches the mode of an unchanged file).
           ${pkgs.coreutils}/bin/chmod -R u+w "$TARGET_DIR"
           rsync_exit=0
-          rsync_error=$(${pkgs.rsync}/bin/rsync -rlt --chmod=u+w --delete \
+          rsync_error=$(${pkgs.rsync}/bin/rsync -rlt --checksum --chmod=u+w --delete \
             "${weztermWindowsDir}/" "$TARGET_DIR/" 2>&1) || rsync_exit=$?
           if [ $rsync_exit -ne 0 ]; then
             if echo "$rsync_error" | grep -qi "permission denied"; then
