@@ -134,13 +134,19 @@ in
   };
 
   # WS-Discovery, so the Windows guest finds the share on virbr0. Multicast
-  # discovery does not cross the tailnet, so this is for the guest only.
+  # discovery does not cross the tailnet, so this is for the guest only —
+  # and held to virbr0: with no interface named, wsdd announces desk on every
+  # one, Wi-Fi included. It follows interfaces as they come and go, so it
+  # starts serving the bridge whenever libvirt creates it.
   #
   # No mDNS advertisement, deliberately: it would announce on Wi-Fi a share
   # Wi-Fi cannot reach. (If the LAN ever comes back, note that nixpkgs builds
   # samba with enableMDNS = false, so smbd's `multicast dns register` is a
   # silent no-op — it needs a static services.avahi.extraServiceFiles entry.)
-  services.samba-wsdd.enable = true;
+  services.samba-wsdd = {
+    enable = true;
+    interface = "virbr0";
+  };
 
   # tailscale0 is a trusted interface in modules/nixos/tailscale.nix, so the
   # tailnet needs no rule here. No rule for wlp14s0 either: that is what keeps
