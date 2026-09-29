@@ -119,12 +119,21 @@ in
   # hardware.enableRedistributableFirmware in default.nix.
   hardware.bluetooth.powerOnBoot = true;
   # Pairing UI for everything that is not the phone. The applet is started by
-  # home-manager's user unit, not XDG autostart, which niri does not run. It
-  # stays for its pairing agent (the prompts when a device pairs); its tray
-  # icon is hidden, because the panel's Bluetooth tile shows the same and
-  # opens blueman-manager.
+  # home-manager's user unit, which a switch restarts. services.blueman also
+  # installs an XDG autostart entry, and niri.service pulls in
+  # xdg-desktop-autostart.target, so that entry is hidden: two applets race,
+  # and the one that exits can take an agent with it (the file-transfer one,
+  # 2026-09-28). The applet stays for its pairing agent (the prompts when a
+  # device pairs); its tray icon is hidden, because the panel's Bluetooth
+  # tile shows the same and opens blueman-manager.
   services.blueman.enable = true;
   home-manager.users.n8.services.blueman-applet.enable = true;
+  home-manager.users.n8.xdg.configFile."autostart/blueman.desktop".text = ''
+    [Desktop Entry]
+    Type=Application
+    Name=Blueman Applet
+    Hidden=true
+  '';
 
   # tetherd, the daemon. The package ships the user unit; this starts it with
   # the graphical session. Upstream deliberately leaves it untied (it runs
