@@ -34,6 +34,7 @@ let
   # notifications down. Genuinely away, Classic is down too, and it stays
   # quiet. The alert withdraws itself once notifications flow again (after
   # the Bluetooth cycle), and only then: leaving while wedged keeps it up.
+  # (The tetherd-is-down alert goes once tetherd is back.)
   ancsWatch = pkgs.writeShellApplication {
     name = "tether-ancs-watch";
     runtimeInputs = [
@@ -46,6 +47,7 @@ let
     text = ''
       down=0
       alert=""
+      shown=""
       while true; do
         # `tether` spawns a tetherd of its own when none is running. Doing that
         # while tetherd.service restarts (a switch, 2026-09-25) left a stray
@@ -71,8 +73,13 @@ let
         if [ "$down" -ge 5 ] && [ -z "$alert" ]; then
           alert=$(notify-send -p -u critical -a Tether -i phone \
             "iPhone notifications are stuck" "$body")
+          shown=$body
         fi
-        if [ -n "$alert" ] && [ "$down" -eq 0 ]; then
+        # Not on down=0 alone: that is also the phone leaving, or one query
+        # timing out. A changed cause (tetherd gone, or back) withdraws it
+        # too, and the new cause posts its own.
+        if [ -n "$alert" ] && { grep -q '^Notifications: *yes' <<<"$status" ||
+          [ "$body" != "$shown" ]; }; then
           busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
             org.freedesktop.Notifications CloseNotification u "$alert" || true
           alert=""
