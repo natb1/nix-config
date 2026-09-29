@@ -17,9 +17,12 @@
     enable = true;
     enableDefaultConfig = false;
 
+    # No KexAlgorithms: OpenSSH's own default puts the post-quantum hybrids it
+    # has (mlkem768x25519-sha256, sntrup761x25519-sha512) first, and a list
+    # here would either leave them out or name one the Mac's system ssh may
+    # not know, which it rejects as a fatal config error.
     extraConfig = ''
       Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
-      KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
       MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com
       HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
     '';
