@@ -34,7 +34,8 @@
 # run from inside a background session kills its own shell. Switch from a plain
 # interactive shell (`cat /proc/self/cgroup` should not name this unit).
 #
-# Invariants above are locked by tests/claude-daemon.test.nix.
+# tests/claude-daemon.test.nix locks the ExecStart and PATH invariants above;
+# the KillMode note describes a consequence and is not tested.
 
 {
   config,

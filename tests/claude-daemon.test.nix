@@ -6,14 +6,16 @@
 # store path (not the profile symlink) so home-manager's sd-switch restarts the
 # daemon onto the new binary on every version bump, while Environment must use
 # only stable anchors so unrelated activations do NOT restart it. These tests
-# guard the "symlink-only" and "no Environment" regressions, and a PATH that
-# puts the plain sudo ahead of the setuid wrapper.
+# guard the "symlink-only" and "no Environment" regressions, a store path in
+# PATH, and a PATH that puts the plain sudo ahead of the setuid wrapper.
 #
 # Follows tests/wezterm.test.nix's mock-eval convention: the module is called as
 # a plain function against a mock config + mock pkgs. flake.nix builds `checks`
-# against a plain nixpkgs WITHOUT the claude-code-nix overlay, so pkgs.claude-code
-# is absent there — the test injects a trivial offline stub, keeping the whole
-# test network-free.
+# from plain nixpkgs.legacyPackages: no claude-code-nix overlay and no unfree
+# allowance. That nixpkgs does ship claude-code, but forcing pkgs.claude-code
+# there is refused as unfree, and building it would mean fetching it — so the
+# test injects a trivial offline stub, keeping the whole test network-free and
+# free of unfree packages.
 
 { pkgs, lib, ... }:
 
@@ -103,7 +105,7 @@ let
 
   # Assertion 2: Environment is a non-empty PATH list built from the stable
   # profile/system anchors (guards the "no Environment" / symlink-only regression),
-  # with the setuid wrappers first.
+  # with no per-generation store path, and with the setuid wrappers first.
   test-environment-stable-anchors =
     let
       env = linuxSvc.Service.Environment;
@@ -133,6 +135,12 @@ let
           "echo 'PASS: PATH references the current-system anchor'"
         else
           "echo 'FAIL: PATH missing current-system anchor' && exit 1"
+      }
+      ${
+        if !(lib.hasInfix "/nix/store/" pathEntry) then
+          "echo 'PASS: PATH contains no per-generation /nix/store/ entries'"
+        else
+          "echo 'FAIL: PATH contains a /nix/store/ path — unrelated activations would restart the daemon (got: ${pathEntry})' && exit 1"
       }
       ${
         if lib.hasPrefix "PATH=/run/wrappers/bin:" pathEntry then
