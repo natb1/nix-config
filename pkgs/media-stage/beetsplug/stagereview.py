@@ -37,8 +37,10 @@ before beets renamed it, from STAGING/audio.manifest.jsonl (media-stage
 scan): a real length that doesn't fit its slot on the release, or a new title
 that names another number than the old one ("No. 3" filed as "No. 5"), goes
 to STAGING/audio.audit.review.json for the same page, as batch
-"<batch>-audit". It writes STAGING/audio.audit.json; `media-stage close`
-removes the batch's records only once that says passed.
+"<batch>-audit". So do two files filed in one slot, and a file whose
+original the manifest no longer has (rescanned since), which could not be
+compared. It writes STAGING/audio.audit.json; `media-stage close` removes
+the batch's records only once that says passed.
 
 The review file's shape is shared with `media-stage review export`, so one
 page reviews both.
@@ -504,8 +506,10 @@ def audit_items(lib, staging):
 
 def audit(lib, staging):
     """Flag every track filed from the batch whose original doesn't fit
-    where it was filed. Returns the review items, the originals still in
-    staging, and those neither filed nor in staging."""
+    where it was filed, that shares its slot with another track, or whose
+    original the manifest no longer has (a rescan since it was filed drops
+    it), so it could not be compared. Returns the review items, the
+    originals still in staging, and those neither filed nor in staging."""
     recs = {}
     manifest = sidecar(staging, ".manifest.jsonl")
     if not manifest.exists():
@@ -515,47 +519,74 @@ def audit(lib, staging):
             r = json.loads(line)
             if r.get("kind") == "audio":
                 recs[r["path"]] = r
+    batch = os.path.basename(staging)
+
+    def fits_its_slot(s):
+        """Whether the batch's file filed in slot s fits it, by its own
+        original; None when it isn't one of the batch's, or has no record."""
+        src = s.get("stage_source") or ""
+        r = recs.get(src.split("/", 1)[1]) if src.startswith(batch + "/") else None
+        if not r:
+            return None
+        m = r.get("meta") or {}
+        was = (m.get("tags") or {}).get("title") or from_name(os.path.basename(src)).get("title", "")
+        return not length_off(m.get("duration") or 0, s.length) and not number_clash(was, s.title)
+
     filed = audit_items(lib, staging)
     review, seen = [], set()
     for i in sorted(filed, key=lambda i: (i.albumartist, i.album, i.disc or 0, i.track or 0)):
         rel = i["stage_source"].split("/", 1)[1]
         seen.add(rel)
-        rec = recs.get(rel)
-        if not rec or i.get("stage_audit") == "ok":
+        if i.get("stage_audit") == "ok":
             continue
-        meta = rec.get("meta") or {}
+        rec = recs.get(rel)
+        meta = (rec or {}).get("meta") or {}
         tags, real = meta.get("tags") or {}, meta.get("duration") or 0
         name = os.path.basename(rel)
-        original = tags.get("title") or from_name(name).get("title", "")
+        original = (tags.get("title") or from_name(name).get("title", "")) if rec else ""
+        album = i.get_album()
+        siblings = sorted(album.items() if album else [i], key=lambda x: (x.disc or 0, x.track or 0))
+        slot = (i.disc or 1, i.track)
         flags = []
+        if not rec:
+            flags.append("its original is no longer in the manifest (rescanned since it was filed?): not checked")
         off = length_off(real, i.length)
         if off:
             flags.append(f"the file is {mmss(real)}, its slot {mmss(i.length)}")
         clash = number_clash(original, i.title)
         if clash:
             flags.append(f"was “{original}”: {clash}")
+        shared = [s for s in siblings if i.track and s.id != i.id and (s.disc or 1, s.track) == slot]
+        if shared:
+            flags.append(f"shares track {i.track} with “{shared[0].title}”")
         if not flags:
             continue
-        album = i.get_album()
-        siblings = sorted(album.items() if album else [i], key=lambda x: (x.disc or 0, x.track or 0))
         slots = {f"{s.disc or 1}-{s.track}": {"disc": s.disc or 1, "track": s.track, "title": s.title,
                                               "mb_trackid": s.mb_trackid or "", "length": s.length}
                  for s in siblings}
-        fits = [s for s in siblings if s.id != i.id and not length_off(real, s.length)
-                and not number_clash(original, s.title)]
+        fits = [s for s in siblings if (s.disc or 1, s.track) != slot and not length_off(real, s.length)
+                and not number_clash(original, s.title)] if rec else []
         options = [{"value": "audit:ok", "label": "It's right as filed",
                     "detail": f"{i.track} {i.title}"}]
         for s in fits[:3]:
+            there = fits_its_slot(s)
             options.append({"value": f"audit:slot:{s.disc or 1}-{s.track}",
                             "label": f"It's track {s.track}: {s.title}",
-                            "detail": f"that slot is {mmss(s.length)}; the file now there gets its own check",
-                            "recommended": len(fits) == 1})
+                            "detail": f"that slot is {mmss(s.length)}" + {
+                                True: "; the file there fits it too, and would share it",
+                                False: "; the file there doesn't fit it either",
+                                None: "; the file there can't be checked here, and would share it"}[there],
+                            # Never suggested onto a slot filled right: two files would share it.
+                            "recommended": len(fits) == 1 and there is False})
         if original and original != i.title:
             options.append({"value": "audit:original", "label": f"Title it as the original did: {original}",
                             "detail": f"stays track {i.track}"})
         conflict = name_conflict(name, tags)
         review.append({
-            "id": item_id(i["stage_source"]),
+            # An id of its own while it shares its slot, and with which
+            # files: an answer from before (accepting it for another flag)
+            # doesn't settle that.
+            "id": item_id(" +".join([i["stage_source"], *sorted(str(s.id) for s in shared)])),
             "key": i["stage_source"],
             "kind": "track",
             "title": f"{i.track} {i.title}",
@@ -563,10 +594,10 @@ def audit(lib, staging):
             "why": "; ".join(flags),
             "evidence": [
                 {"label": "Original file", "value": rel},
-                {"label": "Its tags", "value": f"track {tags.get('track', '—')}; title {tags.get('title', '—')}; "
-                                               f"album {tags.get('album', '—')}"},
+                *([{"label": "Its tags", "value": f"track {tags.get('track', '—')}; title {tags.get('title', '—')}; "
+                                                  f"album {tags.get('album', '—')}"}] if rec else []),
                 *([{"label": "Name vs tags", "value": conflict}] if conflict else []),
-                {"label": "Its length", "value": mmss(real)},
+                *([{"label": "Its length", "value": mmss(real)}] if rec else []),
                 {"label": "The release", "value": "\n".join(
                     f"{'→' if s.id == i.id else ' '} {s.track:>2}  {s.title}  ({mmss(s.length)})"
                     + ("  ← fits" if s in fits else "") for s in siblings)},
@@ -592,17 +623,24 @@ def audit(lib, staging):
 
 def apply_audit_answers(lib, staging, answers, review):
     by_id = {r["id"]: r for r in review}
-    items = {item_id(i["stage_source"]): i for i in audit_items(lib, staging)}
+    items = {i["stage_source"]: i for i in audit_items(lib, staging)}
     changes = []
     for iid, a in answers.items():
-        i, r = items.get(iid), by_id.get(iid)
-        if not i or not r or a["choice"] == "skip":
+        r = by_id.get(iid)
+        i = items.get(r["key"]) if r else None
+        if not i or a["choice"] == "skip":
             continue
         value, f = a.get("value", ""), {}
         if value == "audit:original":
+            if not r.get("original_title"):
+                ui.print_(f"  {r['title']}: its original title went with its manifest record; still flagged")
+                continue
             f = {"title": r["original_title"]}
         elif value.startswith("audit:slot:"):
-            s = r["slots"][value[len("audit:slot:"):]]
+            s = r["slots"].get(value[len("audit:slot:"):])
+            if not s:
+                ui.print_(f"  {r['title']}: its album has no slot {value[len('audit:slot:'):]} now; still flagged")
+                continue
             f = {k: s[k] for k in ("disc", "track", "title", "mb_trackid", "length")}
         elif a["choice"] == "custom":
             fields = a.get("fields") or {}
@@ -617,6 +655,8 @@ def apply_audit_answers(lib, staging, answers, review):
             i.store()
             continue
         changes.append((i, f))
+    moved = [i for i, f in changes
+             if "track" in f and (f.get("disc") or i.disc or 1, f["track"]) != (i.disc or 1, i.track)]
     # Two phases, so no file moves onto a name another still holds (a swap).
     for i, _ in changes:
         src = displayable_path(i.path)
@@ -631,6 +671,19 @@ def apply_audit_answers(lib, staging, answers, review):
         i.try_write()
         i.move(MoveOperation.MOVE)
         ui.print_(f"  {i.track:>2} {i.title}  ->  {displayable_path(i.path)}")
+    # A track moved onto a slot another file still holds: the two are
+    # flagged. The one there is audited again, even if it was accepted (its
+    # shared slot gives it a new id, so its old answer doesn't accept it
+    # again); one the audit can't check, not the batch's, sends the moved
+    # track back instead.
+    for i in moved:
+        album = i.get_album()
+        for s in album.items() if album else []:
+            if s.id != i.id and (s.disc or 1, s.track) == (i.disc or 1, i.track):
+                t = items.get(s.get("stage_source")) or i
+                if t.get("stage_audit"):
+                    del t["stage_audit"]
+                    t.store()
     return len(changes)
 
 
@@ -699,8 +752,18 @@ class StageReview(BeetsPlugin):
         batch = os.path.basename(staging) + "-audit"
         out = sidecar(staging, ".audit.review.json")
         if opts.answers:
-            review = load_json(out, {}).get("items", [])
-            n = apply_audit_answers(lib, staging, load_answers(opts.answers, batch), review)
+            # What the audit flags now as well as the review file: an item
+            # answered without the page is taken out of that file. Now wins
+            # for each track, but one whose manifest record went since (a
+            # rescan) keeps the original title the page showed, which an
+            # answer may have chosen.
+            shown = {r["key"]: r for r in load_json(out, {}).get("items", [])}
+            review = []
+            for r in audit(lib, staging)[0]:
+                was = shown.pop(r["key"], {})
+                r["original_title"] = r["original_title"] or was.get("original_title", "")
+                review.append(r)
+            n = apply_audit_answers(lib, staging, load_answers(opts.answers, batch), [*shown.values(), *review])
             ui.print_(f"audit answers applied: {n} tracks changed")
         review, left, lost = audit(lib, staging)
         filed = len(audit_items(lib, staging))

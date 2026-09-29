@@ -562,7 +562,7 @@ class Checks(unittest.TestCase):
 @unittest.skipIf(sr is None, "beets is in the check on Linux only")
 class Plugin(unittest.TestCase):
     """beetsplug/stagereview.py, on a scratch beets library: stage-review's
-    decisions and answers."""
+    decisions and answers, and stage-audit."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -580,16 +580,29 @@ class Plugin(unittest.TestCase):
         self.staging = self.d / "staging" / "audio"
         self.staging.mkdir(parents=True)
 
-    def album(self, tracks):
-        """"A – Album", filed from the batch: (track, title, slot length) each."""
+    def album(self, tracks, files=False):
+        """"A – Album", filed from the batch: (track, title, slot length)
+        each. Its files exist when `files`."""
         items = []
         for n, title, length in tracks:
             path = self.d / "music" / "A" / "Album" / f"{n:02d} {title}.mp3"
+            if files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                make_mp3(path)
             items.append(Item(path=os.fsencode(path), disc=1, track=n, title=title, length=length,
                               artist="A", albumartist="A", album="Album", mb_trackid=f"mb{n}",
                               stage_source=f"audio/Album/{n:02d} {title}.mp3"))
         self.lib.add_album(items)
         return items
+
+    def manifest(self, records):
+        """The batch's manifest: (original path, real length, title in its tags) each."""
+        Path(f"{self.staging}.manifest.jsonl").write_text("".join(
+            json.dumps({"path": p, "kind": "audio", "meta": {"duration": real, "tags": {"title": title}}}) + "\n"
+            for p, real, title in records))
+
+    def audit(self):
+        return sr.audit(self.lib, str(self.staging))[0]
 
     def test_album_filed_earlier_in_the_run_is_filed(self):
         # One recording on a best-of and, ripped again, on its studio album.
@@ -672,6 +685,110 @@ class Plugin(unittest.TestCase):
             sr.StageReview().run(self.lib, SimpleNamespace(answers=None, batch=None), [str(self.staging)])
         self.assertIn("import started", log.read_text())
 
+    def test_audit_flags_what_it_could_not_compare(self):
+        self.album([(1, "One", 60.0), (2, "Two", 90.0)])
+        # Rescanned after filing: the manifest has only what is still in staging.
+        self.manifest([("Leftover/x.mp3", 30, "x")])
+        review = self.audit()
+        self.assertEqual([r["title"] for r in review], ["1 One", "2 Two"])
+        self.assertIn("not checked", review[0]["why"])
+        self.assertEqual([o["value"] for o in review[0]["options"]], ["audit:ok"])
+        sr.apply_audit_answers(self.lib, str(self.staging), {review[0]["id"]: {"choice": "option",
+                                                                            "value": "audit:ok"}}, review)
+        self.assertEqual([r["title"] for r in self.audit()], ["2 Two"])
+
+    def test_audit_answer_for_an_item_out_of_the_review(self):
+        self.album([(1, "One", 60.0), (2, "Two", 90.0)])
+        self.manifest([("Album/01 One.mp3", 60, "One"), ("Album/02 Two.mp3", 200, "Two")])
+        plugin = sr.StageReview()
+        with redirect_stdout(io.StringIO()):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=None), [str(self.staging)])
+        out = Path(f"{self.staging}.audit.review.json")
+        doc = json.loads(out.read_text())
+        [flagged] = doc["items"]
+        # Settled without the page: an answer file, and the item out of the review JSON.
+        out.write_text(json.dumps({**doc, "items": []}))
+        answers = self.d / "audio.answers"
+        answers.mkdir()
+        (answers / f"{flagged['id']}.json").write_text(json.dumps(
+            {"batch": "audio-audit", "item": flagged["id"], "choice": "option", "value": "audit:ok"}))
+        with redirect_stdout(io.StringIO()):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=str(answers)), [str(self.staging)])
+        self.assertTrue(json.loads(Path(f"{self.staging}.audit.json").read_text())["passed"])
+
+    def test_audit_answer_outlives_a_rescan(self):
+        items = self.album([(1, "One", 60.0), (2, "Two No. 5", 90.0)], files=True)
+        self.manifest([("Album/01 One.mp3", 60, "One"), ("Album/02 Two No. 5.mp3", 90, "Two No. 3")])
+        plugin = sr.StageReview()
+        with redirect_stdout(io.StringIO()):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=None), [str(self.staging)])
+        [two] = json.loads(Path(f"{self.staging}.audit.review.json").read_text())["items"]
+        answers = self.d / "audio.answers"
+        answers.mkdir()
+        # Titled as the original was, from the page; and track 1 the same,
+        # by hand, though the page never showed what its original was.
+        for iid in (two["id"], sr.item_id(items[0]["stage_source"])):
+            (answers / f"{iid}.json").write_text(json.dumps(
+                {"batch": "audio-audit", "item": iid, "choice": "option", "value": "audit:original"}))
+        # Rescanned before the answers are applied: the filed tracks' records are gone.
+        self.manifest([("Leftover/x.mp3", 30, "x")])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=str(answers)), [str(self.staging)])
+        for i in items:
+            i.load()
+        self.assertEqual(items[1].title, "Two No. 3")
+        self.assertTrue(items[1].path.endswith(b"02 Two No. 3.mp3"))
+        self.assertEqual(items[0].title, "One")
+        self.assertIn("1 One: its original title went with its manifest record; still flagged", out.getvalue())
+        self.assertEqual([r["title"] for r in self.audit()], ["1 One"])
+
+    def test_audit_never_leaves_two_tracks_in_one_slot(self):
+        items = self.album([(1, "One", 60.0), (2, "Two", 90.0), (3, "Three", 130.0), (4, "Four", 180.0),
+                            (5, "Five", 245.0)], files=True)
+        # Track 3's file is really 4:02, as long as slot 5; so is slot 5's own file.
+        self.manifest([(f"Album/{i.track:02d} {i.title}.mp3", real, i.title)
+                       for i, real in zip(items, (60, 90, 242, 180, 246))])
+        [three] = self.audit()
+        [slot5] = [o for o in three["options"] if o["value"] == "audit:slot:1-5"]
+        self.assertFalse(slot5["recommended"])
+        self.assertIn("the file there fits it too", slot5["detail"])
+        # Chosen all the same, with slot 5's file accepted before: it is
+        # flagged again, as sharing its slot, and its answer from then, still
+        # among the batch's, doesn't accept it again, round after round.
+        items[4]["stage_audit"] = "ok"
+        items[4].store()
+        answers = self.d / "audio.answers"
+        answers.mkdir()
+        for iid, value in ((three["id"], "audit:slot:1-5"), (sr.item_id(items[4]["stage_source"]), "audit:ok")):
+            (answers / f"{iid}.json").write_text(json.dumps(
+                {"batch": "audio-audit", "item": iid, "choice": "option", "value": value}))
+        plugin = sr.StageReview()
+        for _ in range(2):
+            with redirect_stdout(io.StringIO()):
+                plugin.run_audit(self.lib, SimpleNamespace(answers=str(answers)), [str(self.staging)])
+            [five] = json.loads(Path(f"{self.staging}.audit.review.json").read_text())["items"]
+            self.assertEqual(five["key"], "audio/Album/05 Five.mp3")
+            self.assertIn("shares track 5 with “Five”", five["why"])
+            self.assertIsNone(json.loads(Path(f"{self.staging}.audit.json").read_text())["passed"])
+
+    def test_audit_flags_a_track_moved_onto_a_file_it_cant_check(self):
+        items = self.album([(1, "One", 60.0), (2, "Two", 90.0), (3, "Three", 180.0)], files=True)
+        # Track 3 was filed from another batch; track 2's file is really 3:01.
+        del items[2]["stage_source"]
+        items[2].store()
+        self.manifest([("Album/01 One.mp3", 60, "One"), ("Album/02 Two.mp3", 181, "Two")])
+        [two] = self.audit()
+        [slot3] = [o for o in two["options"] if o["value"] == "audit:slot:1-3"]
+        self.assertFalse(slot3["recommended"])
+        self.assertIn("the file there can't be checked here", slot3["detail"])
+        with redirect_stdout(io.StringIO()):
+            sr.apply_audit_answers(self.lib, str(self.staging), {two["id"]: {"choice": "option",
+                                                                              "value": "audit:slot:1-3"}}, [two])
+        [moved] = self.audit()
+        self.assertEqual((moved["key"], moved["title"]), ("audio/Album/02 Two.mp3", "3 Three"))
+        self.assertIn("shares track 3 with “Three”", moved["why"])
+        self.assertNotEqual(moved["id"], two["id"])
 
 
 class Pipeline(unittest.TestCase):
