@@ -159,6 +159,16 @@ class Review(unittest.TestCase):
             code, out = run_cli("check", str(st), "--library", d)
             self.assertEqual(code, 0, out)
 
+    def test_video_evidence_is_what_scan_read(self):
+        # scan_file keeps the picture as meta["video"] and the container's
+        # title among meta["tags"]: what a reviewer compares copies by.
+        rec = {"path": "Heat.1995.mkv", "kind": "video", "size": 7e9, "guess": ms.guess("Heat.1995.mkv"),
+               "meta": {"duration": 7200.0, "bit_rate": 8000000, "tags": {"title": "Heat.1995.x264-GRP"},
+                        "video": "h264 1920x1080", "audio_langs": ["eng"], "sub_langs": ["eng", "fre"]}}
+        ev = {e["label"]: e["value"] for e in ms.evidence(rec)}
+        self.assertEqual((ev["Video"], ev["Title"]), ("h264 1920x1080", "Heat.1995.x264-GRP"))
+        self.assertEqual((ev["Audio"], ev["Subtitles"]), ("eng", "eng, fre"))
+
 
 class Layout(unittest.TestCase):
     good = [
@@ -207,6 +217,8 @@ class Layout(unittest.TestCase):
         ("books/Terry Pratchett/Discworld/Equal Rites.epub", "series of its own"),
         ("books/Terry Pratchett/Discworld/Mort Vol. 4.epub", "named for its folder"),
         ("rpg/Game/Title..pdf", None),  # legal: the dot is not trailing on the component
+        # Hidden: Jellyfin ignores it, lint and the filed index pass over it.
+        ("movies/...And Justice for All (1979)/...And Justice for All (1979).mkv", "leading dot"),
     ]
 
     def test_good(self):
@@ -275,6 +287,8 @@ class Helpers(unittest.TestCase):
 
     def test_title_clean(self):
         self.assertEqual(ms.title_clean("Alien: Covenant"), "Alien - Covenant")
+        self.assertEqual(ms.title_clean("...And Justice for All"), "And Justice for All")  # not a hidden name
+        self.assertEqual(ms.clean(".hack//Sign ."), "hack--Sign")
         self.assertEqual(ms.norm_title("Aguirre, the Wrath of God"), ms.norm_title("Aguirre The Wrath Of God"))
         self.assertEqual(ms.norm_title("Big Sick, The"), ms.norm_title("The Big Sick"))
 
@@ -296,6 +310,14 @@ class Helpers(unittest.TestCase):
     def test_ep_code(self):
         self.assertEqual(ms.ep_code(1, 2), "S01E02")
         self.assertEqual(ms.ep_code(1, [2, 3]), "S01E02-E03")
+
+    def test_episode_across_seasons_is_left_blank(self):
+        # A finale and the next premiere in one file: no one SxxEyy names it,
+        # and the rest of the batch still drafts.
+        name = "Show.2010.S01E24-S02E01.720p.mkv"
+        t = ms.video_target({"path": name, "guess": ms.guess(name)})
+        self.assertIsNone(t["stem"])
+        self.assertIn("spans seasons", t["note"])
 
 
 class Group(unittest.TestCase):
@@ -441,6 +463,25 @@ class Close(unittest.TestCase):
             code, out = run_cli("close", str(st), "--library", d)
             self.assertNotEqual(code, 0)
             self.assertIn(".originals/", out)
+
+    def test_dot_named_file_blocks(self):
+        # Left out of the batch like junk, but it may be media, and the only copy.
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "print"
+            st.mkdir(parents=True)
+            book = st / "...And Ladies of the Club.pdf"
+            book.write_bytes(b"%PDF-1.4\n")
+            (st / "._x.pdf").write_bytes(b"")  # the Mac's AppleDouble: junk
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertNotEqual(code, 0)
+            self.assertIn(book.name, out)
+            self.assertTrue(book.exists())
+            code, out = run_cli("scan", str(st), "--library", d)
+            self.assertIn("dot-named, so not in the batch", out)
+            book.unlink()
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertFalse(st.exists())
 
 
 class Checks(unittest.TestCase):
@@ -666,6 +707,29 @@ class Concurrency(unittest.TestCase):
             self.assertFalse((lib / ".media-stage.lock").exists())
             self.assertFalse(Path(str(st) + ".lock").exists())
 
+    def test_staging_given_as_dot(self):
+        # From inside the batch: its sidecars, lock and trash still go beside it.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "b"
+            st.mkdir(parents=True)
+            make_pdf(st / "c.pdf")
+            cwd = os.getcwd()
+            os.chdir(st)
+            try:
+                for cmd in ("scan", "draft"):
+                    code, out = run_cli(cmd, ".", "--library", str(lib))
+                    self.assertEqual(code, 0, out)
+                self.assertEqual(sorted(p.name for p in st.parent.iterdir()), ["b", "b.manifest.jsonl", "b.tsv"])
+                Path(str(st) + ".tsv").write_text("old\tnew\nc.pdf\ttrash\n")
+                code, out = run_cli("apply", ".", "--library", str(lib))
+                self.assertEqual(code, 0, out)
+            finally:
+                os.chdir(cwd)
+            self.assertTrue((lib / "staging/trash/b/c.pdf").exists())
+            self.assertTrue(Path(str(st) + ".applied.jsonl").exists())
+            self.assertEqual(list(st.iterdir()), [])
+
     def test_file_changed_since_scan_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             lib, st = self.batch(d)
@@ -731,6 +795,26 @@ class Concurrency(unittest.TestCase):
             self.assertIn("Heat (1995) - Reviewed.mkv", text)
             self.assertIn("movies/Alien (1979)/Alien (1979).mkv", text)
 
+    def test_sidecar_added_later_follows_the_reviewed_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = self.batch(d)
+            table = Path(str(st) + ".tsv")
+            reviewed = "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}"
+            table.write_text(table.read_text().replace("movies/Heat (1995)/Heat (1995)", reviewed))
+            (st / "Heat.1995.en.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+            run_cli("scan", str(st), "--library", str(lib))
+            code, out = run_cli("draft", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            rows = {l.split("\t")[0]: l.split("\t")[1] for l in table.read_text().splitlines()[1:]}
+            self.assertEqual(rows["Heat.1995.en.srt"], reviewed + ".en.srt")
+            # A video set aside keeps its subtitle with it.
+            table.write_text("".join(l.replace(reviewed + ".mkv", "skip") + "\n" for l in table.read_text().splitlines()
+                                     if not l.startswith("Heat.1995.en.srt")))
+            code, out = run_cli("draft", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            rows = {l.split("\t")[0]: l.split("\t")[1] for l in table.read_text().splitlines()[1:]}
+            self.assertEqual(rows["Heat.1995.en.srt"], "skip")
+
 
 def fake_wikidata(entities):
     """A Wikidata API stand-in: `entities` is {qid: (label, prop, tmdb, year, lang_qid)}."""
@@ -755,6 +839,25 @@ def fake_wikidata(entities):
             out[q] = {"labels": {"en": {"value": label}}, "claims": claims}
         return {"entities": out}
     return fetch
+
+
+def video_rec(path, video="h264 1280x720", audio=("eng",), duration=60.0):
+    """A video's manifest record, as scan_file writes one."""
+    return {"path": path, "size": 1, "kind": "video", "ext": ms.ext_of(path), "guess": ms.guess(Path(path).name),
+            "meta": {"duration": duration, "bit_rate": 0, "tags": {}, "video": video,
+                     "audio_langs": list(audio), "sub_langs": []}}
+
+
+def draft_rows(d, recs, lookup=None):
+    """draft on a manifest of `recs` (batch staging/b, library `d`): {old: [new, confidence, note]}."""
+    st = Path(d) / "staging" / "b"
+    st.mkdir(parents=True, exist_ok=True)
+    Path(str(st) + ".manifest.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in sorted(recs, key=lambda r: r["path"])))  # walk's order
+    ns = type("A", (), {"staging": str(st), "library": d, "force": False, "lookup": False})
+    with redirect_stdout(io.StringIO()):
+        ms.draft(ns, lookup=lookup)
+    return {l.split("\t")[0]: l.split("\t")[1:] for l in Path(str(st) + ".tsv").read_text().splitlines()[1:]}
 
 
 class Copies(unittest.TestCase):
@@ -917,6 +1020,31 @@ class Copies(unittest.TestCase):
             self.assertEqual(code, 1, out)
             self.assertIn("FAILED books/Ann Author/Alpha/Alpha.epub: not written: Bad CRC-32", out)
 
+    def test_epub2_keeps_its_opf_attributes(self):
+        # calibre's EPUB2 OPF: the author's sort name and role, and the
+        # identifier's scheme, are attributes in the OPF namespace.
+        with tempfile.TemporaryDirectory() as d:
+            book = Path(d) / "stranger.epub"
+            make_epub(book, "The Stranger", None)
+            ms.rewrite_zip(book, {"OEBPS/content.opf": b"""<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uuid_id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>The Stranger</dc:title>
+    <dc:creator opf:file-as="Camus, Albert" opf:role="aut">Albert Camus</dc:creator>
+    <dc:identifier id="uuid_id" opf:scheme="ISBN">9780679720201</dc:identifier>
+  </metadata>
+  <manifest/><spine/>
+</package>"""})
+            ms.epub_write(book, {"title": "The Stranger", "series": "Absurd", "volume": "1"}, source="0" * 64)
+            with zipfile.ZipFile(book) as z:
+                md = ms.ET.fromstring(z.read("OEBPS/content.opf")).find("opf:metadata", ms.NS)
+            opf = "{%s}" % ms.NS["opf"]
+            creator, ident = md.find("dc:creator", ms.NS), md.find("dc:identifier", ms.NS)
+            self.assertEqual((creator.get(opf + "file-as"), creator.get(opf + "role"), ident.get(opf + "scheme")),
+                             ("Camus, Albert", "aut", "ISBN"))
+            m = ms.epub_meta(book)
+            self.assertEqual((m["title"], m["series"], m["volume"], m["source"]), ("The Stranger", "Absurd", "1", "0" * 64))
+
     def test_one_file_per_volume(self):
         with tempfile.TemporaryDirectory() as d:
             lib = Path(d)
@@ -1063,6 +1191,50 @@ class Copies(unittest.TestCase):
             row = Path(str(st2) + ".tsv").read_text().splitlines()[1].split("\t")
             self.assertEqual(row[1], "trash")
             self.assertIn("the library already has this", row[3])
+
+    def test_copies_in_one_folder_keep_their_own_subtitles(self):
+        sub = lambda p: {"path": p, "size": 1, "kind": "subtitle", "ext": "srt", "guess": ms.guess(Path(p).name)}
+        with tempfile.TemporaryDirectory() as d:
+            rows = draft_rows(d, [
+                # One name, two containers: the subtitle is the kept copy's.
+                video_rec("a/Heat.1995.mkv"), video_rec("a/Heat.1995.mp4", video="h264 640x360"), sub("a/Heat.1995.en.srt"),
+                # A longer name: the subtitle is its, not the shorter one's.
+                video_rec("b/Alien.1979.mkv", video="h264 640x360"), video_rec("b/Alien.1979.remastered.mkv"),
+                sub("b/Alien.1979.remastered.en.srt"),
+                # ...so the kept copy has none of its own, and takes the dropped one's.
+                video_rec("c/Aliens.1986.mkv", video="h264 1920x1080"), video_rec("c/Aliens.1986.remastered.mkv"),
+                sub("c/Aliens.1986.remastered.en.srt")])
+        self.assertEqual(rows["a/Heat.1995.mp4"][0], "discard")
+        self.assertEqual(rows["a/Heat.1995.en.srt"][0], "movies/Heat (1995)/Heat (1995).en.srt")
+        self.assertEqual(rows["b/Alien.1979.mkv"][0], "discard")
+        self.assertEqual(rows["b/Alien.1979.remastered.en.srt"][0], "movies/Alien (1979)/Alien (1979) - Remastered.en.srt")
+        self.assertEqual(rows["c/Aliens.1986.remastered.mkv"][0], "discard")
+        self.assertEqual(rows["c/Aliens.1986.remastered.en.srt"][:3:2],
+                         ["movies/Aliens (1986)/Aliens (1986).en.srt", "subtitle of a dropped copy of the same length; check: timing"])
+
+    def test_untagged_audio_is_not_the_wrong_language(self):
+        # mkvmerge, ffmpeg and many web files leave the audio's language unset.
+        wd = ms.Wikidata(fake_wikidata({"Q1": ("Heat", "P4947", "949", 1995, "L2")}))  # English
+        with tempfile.TemporaryDirectory() as d:
+            rows = draft_rows(d, [video_rec("Heat.1995.2160p.BluRay.mkv", video="hevc 3840x1600", audio=["und"]),
+                                  video_rec("Heat.1995.DVDRip.mkv", video="mpeg2video 720x576", audio=["eng"])], lookup=wd)
+        self.assertEqual(rows["Heat.1995.2160p.BluRay.mkv"][0], "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv")
+        # The one copy known to be in English may yet be wanted: the kept one may be a dub.
+        self.assertEqual(rows["Heat.1995.DVDRip.mkv"][0], "trash")
+        self.assertIn("the kept copy's audio language is untagged", rows["Heat.1995.DVDRip.mkv"][2])
+
+    def test_shows_of_one_name_from_two_countries_are_not_copies(self):
+        with tempfile.TemporaryDirectory() as d:
+            rows = draft_rows(d, [video_rec("The.Office.US.S01E01.720p.WEB.mkv"),
+                                  video_rec("The.Office.US.2005.S01E02.720p.WEB.mkv"),
+                                  video_rec("The.Office.UK.S01E01.576p.DVDRip.mkv", video="mpeg2video 720x576"),
+                                  video_rec("The.Office.UK.S01E02.576p.DVDRip.mkv", video="mpeg2video 720x576")])
+        self.assertEqual(rows["The.Office.US.S01E01.720p.WEB.mkv"][0],
+                         "tv/The Office (2005)/Season 01/The Office (2005) - S01E01.mkv")
+        # The UK show's year is not the US show's: left for review, neither discarded nor filed under it.
+        for p in ("The.Office.UK.S01E01.576p.DVDRip.mkv", "The.Office.UK.S01E02.576p.DVDRip.mkv"):
+            self.assertEqual(rows[p][0], "", rows[p])
+            self.assertIn("show year unknown", rows[p][2])
 
     def test_review_offers_delete_or_trash(self):
         with tempfile.TemporaryDirectory() as d:

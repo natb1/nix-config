@@ -131,6 +131,8 @@ def layout_error(rel):
             return f"character not allowed over SMB in {c!r}"
         if c != c.strip() or c.endswith("."):
             return f"leading/trailing space or trailing dot in {c!r}"
+        if c.startswith("."):
+            return f"leading dot in {c!r}: a hidden name, which Jellyfin and lint pass over"
         if len(c.encode()) > 255:
             return f"component longer than 255 bytes: {c[:40]!r}…"
     top = parts[0]
@@ -372,14 +374,18 @@ def epub_write(path, want, source=None):
     """Make the EPUB say what Kavita should read: dc:title first, the series
     and volume (or none, so its title is its series), dc:creator where the
     book has none, and the original's sha256 as a dc:source. A publisher's
-    own titles stay, after ours."""
+    own titles stay, after ours.
+
+    lxml, not ElementTree: it writes every name with the prefix the book
+    gave it. ElementTree has one prefix per namespace, so with the OPF's as
+    the default it wrote an EPUB2's opf:role, opf:file-as and opf:scheme
+    bare, out of the OPF namespace."""
+    from lxml import etree  # imported lazily: only EPUBs need it
     with zipfile.ZipFile(path) as z:
         opf_name = _opf_path(z)
         raw = z.read(opf_name)
-    ET.register_namespace("", NS["opf"])
-    ET.register_namespace("dc", NS["dc"])
-    root = ET.fromstring(raw)
-    before = ET.tostring(root)
+    root = etree.fromstring(raw, etree.XMLParser(resolve_entities=False))
+    before = etree.tostring(root)
     md = root.find("opf:metadata", NS)
     dc = lambda t: f"{{{NS['dc']}}}{t}"
     meta = f"{{{NS['opf']}}}meta"
@@ -387,7 +393,7 @@ def epub_write(path, want, source=None):
         if (t.text or "").strip() == want["title"]:
             md.remove(t)
     first = next((i for i, e in enumerate(list(md)) if e.tag == dc("title")), len(list(md)))
-    new = ET.Element(dc("title"))
+    new = etree.SubElement(md, dc("title"))  # made in place, so it takes the book's dc: prefix
     new.text = want["title"]
     md.insert(first, new)
     # Series and volume: ours only. A publisher's collection would name
@@ -399,15 +405,16 @@ def epub_write(path, want, source=None):
                 or e.get("property") == "belongs-to-collection" or e.get("refines") in ids):
             md.remove(e)
     if want.get("volume"):
-        ET.SubElement(md, meta, {"name": "calibre:series", "content": want["series"]})
-        ET.SubElement(md, meta, {"name": "calibre:series_index", "content": want["volume"]})
+        plain = {None: NS["opf"]}  # <meta>, as the OPF writes it, not <opf:meta>
+        etree.SubElement(md, meta, {"name": "calibre:series", "content": want["series"]}, nsmap=plain)
+        etree.SubElement(md, meta, {"name": "calibre:series_index", "content": want["volume"]}, nsmap=plain)
     if want.get("author") and not any((e.text or "").strip() for e in md.findall("dc:creator", NS)):
-        ET.SubElement(md, dc("creator")).text = want["author"]
+        etree.SubElement(md, dc("creator")).text = want["author"]
     if source and not any((e.text or "").startswith(SOURCE) for e in md.findall("dc:source", NS)):
-        ET.SubElement(md, dc("source")).text = SOURCE + source
-    if ET.tostring(root) == before:
+        etree.SubElement(md, dc("source")).text = SOURCE + source
+    if etree.tostring(root) == before:
         return
-    rewrite_zip(path, {opf_name: ET.tostring(root, encoding="utf-8", xml_declaration=True)})
+    rewrite_zip(path, {opf_name: etree.tostring(root.getroottree(), encoding="utf-8", xml_declaration=True)})
 
 
 # --------------------------------------------------------------------------
@@ -713,6 +720,14 @@ def walk(staging):
     return files, ignored
 
 
+def is_junk(rel):
+    """Of what walk ignores, what is surely OS junk. A dot-folder may hold
+    anything, and a dot-named file may be real media ("...And Justice for
+    All.mp3"): a batch is not done while it holds one."""
+    n = Path(rel).name
+    return not rel.endswith("/") and (n in IGNORED_NAMES or n.startswith("._"))
+
+
 def sidecar_paths(staging):
     s = str(Path(staging)).rstrip("/")
     return Path(s + ".manifest.jsonl"), Path(s + ".tsv"), Path(s + ".applied.jsonl")
@@ -764,6 +779,10 @@ def scan(a, moved=None):
         print(f"  audio no longer in staging (filed by beets?): {len(gone)} — records kept for `beet stage-audit`")
     if ignored:
         print(f"  ignored (dotfiles, OS junk): {len(ignored)} — e.g. {ignored[0]}")
+    hidden = [f for f in ignored if not f.endswith("/") and not is_junk(f)]
+    if hidden:
+        print("  dot-named, so not in the batch (rename one to file it; close waits for them): "
+              + ", ".join(hidden[:10]) + (" …" if len(hidden) > 10 else ""))
     audio = [r for r in recs if r["kind"] == "audio"]
     if audio:
         print("  audio tag coverage:")
@@ -788,7 +807,9 @@ def scan(a, moved=None):
 
 def clean(s):
     s = SMB_BAD.sub(" ", str(s)).replace("/", "-")
-    s = re.sub(r"\s+", " ", s).strip().rstrip(".")
+    # No dots or spaces at either end: a leading dot hides the name
+    # ("...And Justice for All"; see layout_error).
+    s = re.sub(r"\s+", " ", s).strip(" .")
     return s
 
 
@@ -837,7 +858,9 @@ def year_elsewhere(rec, title):
 def video_target(rec, lookup=None):
     """{'stem', 'conf', 'note', 'group', 'orig_lang'} — `stem` is the target
     without extension, relative to the library, or None when no rule decides.
-    `group` names the film or episode, so copies of one can be ranked.
+    `group` names the film or episode, so copies of one can be ranked; it
+    ends with the country a name gives (The.Office.US and The.Office.UK are
+    two shows, not two copies of one).
     `lookup(title, year, kind)` (draft --lookup) returns Wikidata's canonical
     title, year, TMDB id and original language, or None."""
     ij = rec.get("info_json")
@@ -856,6 +879,10 @@ def video_target(rec, lookup=None):
         kind = None
     if not title or not kind:
         return {"stem": None, "conf": "", "note": "not a recognisable movie/episode name"}
+    if kind == "tv" and isinstance(g.get("season"), list):  # a finale and a premiere in one file
+        return {"stem": None, "conf": "", "note": f"{title!r}: one file spans seasons {g['season']} "
+                                                  f"(episodes {g['episode']}): classify by hand"}
+    country = str(g.get("country") or "")
     year, conf, notes = g.get("year"), "medium", ["from file name (guessit)"]
     if not year:
         year, why = year_elsewhere(rec, title)
@@ -875,29 +902,36 @@ def video_target(rec, lookup=None):
     elif lookup:
         notes.append("check: no single Wikidata match")
     title = title_clean(title)
+    if not title:  # nothing left of it but dots
+        return {"stem": None, "conf": "", "note": "not a recognisable movie/episode name"}
     if kind == "tv":
         code = ep_code(g["season"], g["episode"])
         if not year:
             return {"stem": None, "conf": "", "note": f"episode of {title!r} {code}: show year unknown",
-                    "group": ("tv", norm_title(title), None, code)}
+                    "group": ("tv", norm_title(title), None, code, country)}
         show = f"{title} ({year})"
         name = f"{show} - {code}" + (f" - {clean(g['episode_title'])}" if g.get("episode_title") else "")
         return {"stem": f"tv/{show}{id_suffix(tmdb)}/Season {int(g['season']):02d}/{name}", "conf": conf,
-                "note": "; ".join(notes), "group": ("tv", norm_title(title), year, code), "orig_lang": orig_lang}
+                "note": "; ".join(notes), "group": ("tv", norm_title(title), year, code, country),
+                "orig_lang": orig_lang}
     if not year:
-        return {"stem": None, "conf": "", "note": f"movie {title!r}? year unknown", "group": ("movie", norm_title(title), None)}
+        return {"stem": None, "conf": "", "note": f"movie {title!r}? year unknown",
+                "group": ("movie", norm_title(title), None, country)}
     folder = f"{title} ({year}){id_suffix(tmdb)}"
     edition = g.get("edition")
     stem = folder + (f" - {clean(edition if isinstance(edition, str) else ' '.join(edition))}" if edition else "")
     return {"stem": f"movies/{folder}/{stem}", "conf": conf, "note": "; ".join(notes),
-            "group": ("movie", norm_title(title), year), "orig_lang": orig_lang}
+            "group": ("movie", norm_title(title), year, country), "orig_lang": orig_lang}
 
 
 # --------------------------------------------------------------------------
 # Wikidata: canonical titles, years, TMDB ids and original languages, with no
 # API key. Search is restricted to items that carry a TMDB id (P4947 film,
-# P4983 series); a match must have the same title (spelling and punctuation
-# aside) and, for a film, the same year. Anything else is no match.
+# P4983 series); a match has the same title (spelling and punctuation aside)
+# and the same year (a film's release, a show's first air), at high
+# confidence. When nothing matches exactly, the one item a year off is taken
+# at medium confidence, flagged for a check. A name with no year takes the one
+# item of that title. Anything else is no match.
 
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 USER_AGENT = "media-stage/0.1 (https://github.com/natb1/nix-config)"
@@ -1031,11 +1065,12 @@ def audio_langs(rec):
 
 
 def rank(rec, orig_lang, has_subs):
-    """A sort key: higher is the better copy. Original-language audio first
-    (when the original is known and a copy says what it has), then not a cam,
-    then resolution, then subtitles, source and bit rate."""
+    """A sort key: higher is the better copy. Original-language audio first:
+    a copy that says it has none (when the original is known) sorts last,
+    while an untagged one may well have it. Then not a cam, then resolution,
+    then subtitles, source and bit rate."""
     langs = audio_langs(rec)
-    lang = 1 if not orig_lang or not langs else (2 if langs & set(orig_lang) else 0)
+    lang = 0 if orig_lang and langs and not langs & set(orig_lang) else 1
     g = rec.get("guess") or {}
     return (lang, source_rank(g) > 0, video_height(rec), has_subs, source_rank(g),
             (rec.get("meta") or {}).get("bit_rate", 0))
@@ -1051,10 +1086,12 @@ def describe(rec):
     return " ".join(bits)
 
 
-def rank_copies(groups, recs, rows, stems, has_subs):
+def rank_copies(groups, recs, rows, has_subs):
     """Keep the best copy of each film or episode; the rest are `discard`
     when plainly worse (a cam, a lower resolution, the wrong language) and
-    `trash` when it is a matter of taste (same resolution, another encode)."""
+    `trash` when it is a matter of taste (same resolution, another encode) or
+    in doubt (the one copy known to have the original's audio, beside a kept
+    copy whose audio is untagged and may be a dub)."""
     for key, members in groups.items():
         if len(members) < 2:
             continue
@@ -1073,8 +1110,9 @@ def rank_copies(groups, recs, rows, stems, has_subs):
                 verdict, why = "discard", f"identical to {best}"
             elif len(langs) > 1 and not orig:
                 verdict, why = "trash", why + "; check: audio languages differ and the original is unknown"
+            elif orig and audio_langs(recs[p]) & set(orig) and not audio_langs(brec):
+                verdict, why = "trash", why + "; check: the kept copy's audio language is untagged"
             rows[p] = [verdict, "medium", why]
-            stems[str(Path(p).with_suffix(""))] = verdict
         if len(langs) > 1 and not orig:
             rows[best][1] = "medium"
             rows[best][2] += "; check: copies differ in audio language, original unknown"
@@ -1170,7 +1208,8 @@ def sub_suffix(suffix):
 
 def library_video_for(library, group):
     """A library video that is already this film or episode, or None.
-    `group` is video_target's: ("movie", title, year) or ("tv", title, year, SxxEyy)."""
+    `group` is video_target's: ("movie", title, year, country) or
+    ("tv", title, year, SxxEyy, country)."""
     if group[0] not in ("movie", "tv") or not group[2]:
         return None
     kind, title, year = group[:3]
@@ -1207,17 +1246,19 @@ def draft(a, lookup=None):
                     kept[line.rstrip("\n").split("\t")[keep_header.index("old")]] = line.rstrip("\n")
     recs = {r["path"]: r for r in (json.loads(l) for l in Path(manifest).read_text().splitlines() if l)}
     filed = FiledIndex(library, staging.parent) if library else None
-    rows, stems, groups = {}, {}, {}
-    # A show's year from the batch's other episodes, when they agree on one.
+    rows, groups = {}, {}
+    # A show's year from the batch's other episodes, when they agree on one;
+    # the same show by its country too (The Office US is not The Office UK).
     years = {}
+    show_of = lambda g: (norm_title(g["title"]), str(g.get("country") or ""))
     for r in recs.values():
         g = r.get("guess") or {}
         if r["kind"] == "video" and g.get("type") == "episode" and g.get("title") and g.get("year"):
-            years.setdefault(norm_title(g["title"]), set()).add(g["year"])
+            years.setdefault(show_of(g), set()).add(g["year"])
     for r in recs.values():
         g = r.get("guess") or {}
         if r["kind"] == "video" and g.get("type") == "episode" and g.get("title") and not g.get("year"):
-            known = years.get(norm_title(g["title"]), set())
+            known = years.get(show_of(g), set())
             if len(known) == 1:
                 g["year"] = next(iter(known))
     # Pass 1: primary files.
@@ -1229,7 +1270,6 @@ def draft(a, lookup=None):
             conf, note = t["conf"], t["note"]
             if t["stem"]:
                 new = f"{t['stem']}.{r['ext']}"
-                stems[str(Path(p).with_suffix(""))] = t["stem"]
             if t.get("group"):
                 groups.setdefault(t["group"], []).append((p, t.get("orig_lang")))
         elif k == "audio":
@@ -1261,58 +1301,83 @@ def draft(a, lookup=None):
             hit = filed.find(r["ext"], r["size"], r["sha256"])
             if hit:
                 rows[p] = ["discard", "high", f"already filed as {hit}"]
-                stems[str(Path(p).with_suffix(""))] = "discard"
+    # A sidecar's video: the one in its folder with the longest name that
+    # begins the sidecar's (Heat.1995.remastered.en.srt is
+    # Heat.1995.remastered.mkv's, not Heat.1995.mkv's). Copies named alike
+    # but for the extension (Heat.1995.mkv, Heat.1995.mp4) share it.
+    in_dir = {}
+    for p, r in recs.items():
+        if r["kind"] == "video":
+            in_dir.setdefault(str(Path(p).parent), []).append(p)
+    def videos_of(q):
+        name = Path(q).name
+        mine = [v for v in in_dir.get(str(Path(q).parent), []) if name.startswith(Path(v).stem + ".")]
+        n = max((len(Path(v).stem) for v in mine), default=0)
+        return [v for v in mine if len(Path(v).stem) == n]
+    subbed = {v for q, r in recs.items() if r["kind"] == "subtitle" for v in videos_of(q)}
     # One copy of each film or episode: the best one.
     def has_subs(p):
-        stem = Path(p).with_suffix("").name
-        side = any(q != p and Path(q).parent == Path(p).parent and Path(q).name.startswith(stem + ".")
-                   and recs[q]["kind"] == "subtitle" for q in recs)
-        return side or bool((recs[p].get("meta") or {}).get("sub_langs"))
+        return p in subbed or bool((recs[p].get("meta") or {}).get("sub_langs"))
     live = {g: [m for m in ms_ if rows[m[0]][0] != "discard"] for g, ms_ in groups.items()}
-    rank_copies(live, recs, rows, stems, has_subs)
+    rank_copies(live, recs, rows, has_subs)
     for g, members in live.items():
         hit = library_video_for(library, g) if library else None
         for p, _ in members:
             if hit and rows[p][0] not in ("discard", "trash"):
                 rows[p] = ["trash", "medium", f"check: the library already has this: {hit}; " + rows[p][2]]
-                stems[str(Path(p).with_suffix(""))] = "trash"
+    # A video the table already lists goes where its row says, reviewed or
+    # edited since: what follows from it (a sidecar added since, a subtitle it
+    # takes over) follows that row, not this draft. Kept rows are written
+    # back as they were; this only informs the rows added below.
+    inew = keep_header.index("new") if keep_header and "new" in keep_header else None
+    for p, line in kept.items():
+        if inew is not None and p in recs and recs[p]["kind"] == "video":
+            cols = line.split("\t")
+            rows[p][0] = cols[inew].strip() if inew < len(cols) else ""
+    # Where each video goes, by its row: its target without the extension,
+    # or `discard`, `trash` or `skip`; none while its row is blank.
+    targets = {}
+    for p, r in recs.items():
+        new = rows[p][0]
+        if r["kind"] == "video" and new and new != "beets":
+            e = ext_of(new)
+            targets[p] = new if new in ("discard", "trash", "skip") or not e else new[: -len(e) - 1]
     # A dropped copy's subtitles go with the kept copy when the two run the
     # same length (the same cut; the timings fit), and the kept copy has none.
     adopt = {}
     for members in live.values():
         keep = [p for p, _ in members if rows[p][0] not in ("discard", "trash")]
-        if len(keep) != 1 or not rows[keep[0]][0] or has_subs(keep[0]):
+        if len(keep) != 1 or targets.get(keep[0]) in (None, "skip") or has_subs(keep[0]):
             continue
         k = keep[0]
         for p, _ in members:
             dur = lambda q: (recs[q].get("meta") or {}).get("duration") or 0
             if p != k and has_subs(p) and dur(k) and abs(dur(p) - dur(k)) <= 2:
-                adopt[str(Path(p).with_suffix(""))] = stems[str(Path(k).with_suffix(""))]
+                adopt[p] = targets[k]
                 break
-    # Pass 2: sidecars follow their video (subtitles, info.json, thumbnails).
+    # Pass 2: sidecars follow their video (subtitles, info.json, thumbnails);
+    # of copies that share a sidecar, the kept one.
     for p, r in recs.items():
         if p.endswith(".nfo") and "<" not in (staging / p).read_text(errors="replace")[:200]:
             rows[p] = ["discard", "medium", "a release group's .nfo, not Kodi metadata"]
             continue
         if r["kind"] in ("subtitle", "infojson", "image") or p.endswith(".nfo"):
-            name = Path(p).name
-            parent = str(Path(p).parent)
-            for vstem, target in stems.items():
-                vname = Path(vstem).name
-                if str(Path(vstem).parent) == parent and name.startswith(vname + ".") and name != vname:
-                    suffix = name[len(vname):]
-                    if vstem in adopt and r["kind"] == "subtitle":
-                        rows[p] = [adopt[vstem] + sub_suffix(suffix), "medium",
-                                   "subtitle of a dropped copy of the same length; check: timing"]
-                    elif target in ("discard", "trash"):
-                        rows[p] = [target, "medium", "follows its video"]
-                    else:
-                        rows[p] = [target + suffix.lower() if r["kind"] != "subtitle" else target + suffix,
-                                   "medium", "follows its video"]
-                    break
-            else:
-                if r["kind"] == "subtitle":
+            own = sorted(videos_of(p), key=lambda v: targets.get(v) in ("discard", "trash"))
+            target = targets.get(own[0]) if own else None
+            if not target:
+                if r["kind"] == "subtitle" and not rows[p][0]:
                     rows[p][2] = "subtitle with no matching video"
+                continue
+            v = own[0]
+            suffix = Path(p).name[len(Path(v).stem):]
+            if v in adopt and r["kind"] == "subtitle":
+                rows[p] = [adopt[v] + sub_suffix(suffix), "medium",
+                           "subtitle of a dropped copy of the same length; check: timing"]
+            elif target in ("discard", "trash", "skip"):
+                rows[p] = [target, "medium", "follows its video"]
+            else:
+                rows[p] = [target + suffix.lower() if r["kind"] != "subtitle" else target + suffix,
+                           "medium", "follows its video"]
     header = keep_header or ["old", "new", "confidence", "note"]
     added = {p: v for p, v in rows.items() if p not in kept}
     tmp = table.with_name(f".{table.name}.{os.getpid()}")
@@ -1497,9 +1562,14 @@ def evidence(rec):
             if m.get(k):
                 ev.append({"label": k.capitalize(), "value": ", ".join(m[k]) if isinstance(m[k], list) else str(m[k])})
     elif rec["kind"] == "video":
-        for k in ("duration", "width", "height", "title"):
-            if m.get(k):
-                ev.append({"label": k.capitalize(), "value": str(m[k])})
+        # As scan_file records them: the picture as "h264 1920x1080", the
+        # container's own title among its tags.
+        for label, v in (("Duration", m.get("duration")), ("Video", m.get("video")),
+                         ("Title", (m.get("tags") or {}).get("title")),
+                         ("Audio", ", ".join(m.get("audio_langs") or [])),
+                         ("Subtitles", ", ".join(m.get("sub_langs") or []))):
+            if v:
+                ev.append({"label": label, "value": str(v)})
         if rec.get("guess"):
             ev.append({"label": "Name reads as", "value": ", ".join(f"{k} {v}" for k, v in rec["guess"].items()
                                                                   if k in ("title", "year", "season", "episode", "type", "edition"))})
@@ -2201,7 +2271,7 @@ def close(a):
             sys.exit(f"{staging.name}: not audited — run `beet stage-audit {staging}` and settle what it flags; "
                      f"{manifest.name} is the only record of what each file said it was")
     left, ignored = walk(staging) if staging.exists() else ([], [])
-    left += [d for d in ignored if d.endswith("/")]  # a dot-folder may hold anything
+    left += [d for d in ignored if not is_junk(d)]  # a dot-folder or dot-named file may be media
     if left:
         print(f"{staging.name}: {len(left)} files still in staging:")
         for rel in left[:20]:
@@ -2215,7 +2285,7 @@ def close(a):
         shutil.rmtree(p) if p.is_dir() else p.unlink()
         gone.append(p.name)
     if staging.exists():
-        shutil.rmtree(staging)  # only OS junk is left
+        shutil.rmtree(staging)  # only OS junk is left (is_junk)
         gone.append(staging.name + "/")
     print(f"closed {staging.name}: removed {', '.join(gone) or 'nothing'}"
           + (f"; kept {applied.name}, the record of what was filed" if applied.exists() else ""))
@@ -2451,6 +2521,10 @@ def main(argv=None):
     s.add_argument("--fix", action="store_true", help="write standard metadata where it differs (not audio)")
     s.set_defaults(fn=cmd_lint)
     a = ap.parse_args(argv)
+    if getattr(a, "staging", None):
+        # `media-stage scan .` from inside a batch: its sidecars, lock and
+        # trash still go beside it. abspath, not resolve: /Volumes/… stays.
+        a.staging = os.path.abspath(a.staging)
     a.fn(a)
 
 

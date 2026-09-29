@@ -19,8 +19,9 @@ python3Packages.buildPythonApplication {
   src = ./.;
 
   # pikepdf writes a book's or RPG's metadata into the PDF as one clean
-  # revision, which Kavita's PDF reader can follow.
-  dependencies = [ python3Packages.guessit python3Packages.pikepdf ];
+  # revision, which Kavita's PDF reader can follow; lxml rewrites an EPUB's
+  # OPF keeping the prefixes it was written with (pikepdf needs it too).
+  dependencies = [ python3Packages.guessit python3Packages.pikepdf python3Packages.lxml ];
 
   installPhase = ''
     runHook preInstall
