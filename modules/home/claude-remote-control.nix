@@ -52,15 +52,18 @@ let
   inherit (config.services.claudeRemoteControl) directory;
 
   # Stable anchors only — see the header. The per-user profile is where
-  # useUserPackages puts claude and the rest of home.packages.
+  # useUserPackages puts claude and the rest of home.packages. On NixOS the
+  # setuid wrappers come first, as in a login shell: /run/current-system/sw/bin
+  # also has sudo, mount and su, but without the setuid bit, so ahead of the
+  # wrappers they fail and `rebuild` cannot switch from a session.
   userProfile = "/etc/profiles/per-user/${config.home.username}/bin";
   path = lib.concatStringsSep ":" (lib.unique (
-    [
+    lib.optionals pkgs.stdenv.hostPlatform.isLinux [ "/run/wrappers/bin" ]
+    ++ [
       "${config.home.profileDirectory}/bin"
       userProfile
       "/run/current-system/sw/bin"
     ]
-    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ "/run/wrappers/bin" ]
     ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
       "/nix/var/nix/profiles/default/bin"
       "/usr/bin"

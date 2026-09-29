@@ -59,9 +59,11 @@
       # The systemd USER manager's own PATH is minimal (systemd's bin only) — it
       # does NOT contain git/jq/gh/claude. The daemon forks sessions that run
       # those, and they inherit the SERVICE env, so PATH must be set here. Stable
-      # anchors only — see the header.
+      # anchors only — see the header. The setuid wrappers come first, as in a
+      # login shell: /run/current-system/sw/bin also has sudo, mount and su,
+      # without the setuid bit, and ahead of the wrappers they fail.
       Environment = [
-        "PATH=${config.home.profileDirectory}/bin:/etc/profiles/per-user/${config.home.username}/bin:/run/current-system/sw/bin:/run/wrappers/bin"
+        "PATH=/run/wrappers/bin:${config.home.profileDirectory}/bin:/etc/profiles/per-user/${config.home.username}/bin:/run/current-system/sw/bin"
       ];
       Restart = "always";
       RestartSec = 1;

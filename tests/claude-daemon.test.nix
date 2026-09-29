@@ -6,7 +6,8 @@
 # store path (not the profile symlink) so home-manager's sd-switch restarts the
 # daemon onto the new binary on every version bump, while Environment must use
 # only stable anchors so unrelated activations do NOT restart it. These tests
-# guard the "symlink-only" and "no Environment" regressions.
+# guard the "symlink-only" and "no Environment" regressions, and a PATH that
+# puts the plain sudo ahead of the setuid wrapper.
 #
 # Follows tests/wezterm.test.nix's mock-eval convention: the module is called as
 # a plain function against a mock config + mock pkgs. flake.nix builds `checks`
@@ -101,7 +102,8 @@ let
     '';
 
   # Assertion 2: Environment is a non-empty PATH list built from the stable
-  # profile/system anchors (guards the "no Environment" / symlink-only regression).
+  # profile/system anchors (guards the "no Environment" / symlink-only regression),
+  # with the setuid wrappers first.
   test-environment-stable-anchors =
     let
       env = linuxSvc.Service.Environment;
@@ -131,6 +133,12 @@ let
           "echo 'PASS: PATH references the current-system anchor'"
         else
           "echo 'FAIL: PATH missing current-system anchor' && exit 1"
+      }
+      ${
+        if lib.hasPrefix "PATH=/run/wrappers/bin:" pathEntry then
+          "echo 'PASS: PATH puts the setuid wrappers first'"
+        else
+          "echo 'FAIL: PATH does not start with /run/wrappers/bin — sessions would get the non-setuid sudo (got: ${pathEntry})' && exit 1"
       }
       touch $out
     '';
