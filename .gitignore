@@ -2,3 +2,8 @@ result
 result-*
 .direnv/
 __pycache__/
+# Claude Code's session worktrees (modules/home/claude-remote-control.nix) and
+# its per-machine permissions. Not all of .claude/: a shared settings.json or
+# skills there would be tracked.
+.claude/worktrees/
+.claude/settings.local.json
