@@ -30,13 +30,20 @@
 # `claude` there interactively and accept the workspace trust dialog. Until then
 # rc exits with "Workspace not trusted" and the service keeps retrying.
 #
-# Logs: rc's errors ("Workspace not trusted", "already served") go to stderr,
-# kept in `journalctl --user -u claude-remote-control` on Linux and in
-# ~/Library/Logs/claude-remote-control.log on macOS. Its stdout is discarded: rc
+# Logs: only what rc prints while starting up is kept. Those errors and
+# warnings go to stderr ("Workspace not trusted", "already served", other
+# registration failures, "Could not reuse the previous environment"), and
+# stderr goes to `journalctl --user -u claude-remote-control` on Linux and to
+# ~/Library/Logs/claude-remote-control.log on macOS. stdout is discarded: rc
 # redraws its status screen there about once a second even without a terminal,
 # some 2 MB an hour, which would crowd out the rest of the journal and grow the
-# Mac's log file, which nothing rotates, without bound. The lines rc prints
-# through that screen go with it: a session completed or failed, a worktree
+# Mac's log file, which nothing rotates, without bound. What rc reports once it
+# is running goes through that screen and is dropped with it, errors included:
+# a session that failed to spawn or to get its worktree, a session declined at
+# capacity, a failed token or credential renewal, and the reason it gives up
+# and shuts down ("Server unreachable for N minutes, giving up."), after which
+# the journal shows only the exit and the restart, and the Mac's log nothing.
+# So are the per-session lines: a session completed or failed, a worktree
 # removed.
 #
 # ── Why ExecStart names the profile symlink, unlike claude-daemon.nix ─────────
@@ -107,8 +114,9 @@ in
       WorkingDirectory = directory;
       ExecStart = lib.escapeShellArgs args;
       Environment = [ "PATH=${path}" ];
-      # The status screen is dropped, errors kept — see the header. stderr is
-      # named because the user manager's default for it is to follow stdout.
+      # The status screen, and the runtime errors printed through it, are
+      # dropped; startup errors are kept — see the header. stderr is named
+      # because the user manager's default for it is to follow stdout.
       StandardOutput = "null";
       StandardError = "journal";
       Restart = "always";
