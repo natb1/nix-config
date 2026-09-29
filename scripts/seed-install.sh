@@ -73,6 +73,16 @@ seed_home() {
   local src="$1" rel="$2" mode="${3:-}"
   local dst="$TARGET$HOME_N/$rel"
   [ -e "$src" ] || { skip "$rel — not present on this live session"; return 0; }
+  # FORCE=1 deletes $dst before copying, so $dst must never be $src or hold
+  # it: the script run from a repo it seeded earlier, or TARGET=/, would
+  # otherwise delete the source and then have nothing to copy.
+  local rs rd
+  rs=$(realpath -- "$src")
+  rd=$(realpath -m -- "$dst")
+  case "$rs/" in "$rd/"*)
+    skip "$rel — the source is the destination, or inside it"
+    return 0 ;;
+  esac
   if [ -e "$dst" ] && [ "$FORCE" != "1" ]; then
     skip "$rel — already at the destination (FORCE=1 to overwrite)"
     return 0
