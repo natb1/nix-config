@@ -100,12 +100,13 @@ window-rule {
 // would make two launchers race for org.freedesktop.Notifications, which is
 // what left swaync.service failed on 2026-09-24.
 
-// niri has no built-in Xwayland; this starts it on demand. Steam needs it.
-spawn-at-startup "xwayland-satellite"
-
-environment {
-    DISPLAY ":0"
-}
+// No spawn-at-startup or DISPLAY for X11 apps (Steam) either. niri runs
+// xwayland-satellite itself, from PATH (hosts/desk/desktop.nix): it opens the
+// X socket, gives its children and the systemd user environment DISPLAY, and
+// starts the satellite on the first X client and again if it dies. Starting
+// one here as well ran a second, unsupervised Xwayland, and after a niri
+// crash (a stale /tmp/.X0-lock moves niri to :1) a hard-coded ":0" sent apps
+// from a terminal to that one and the rest to niri's.
 
 prefer-no-csd
 
@@ -187,7 +188,8 @@ binds {
     XF86AudioLowerVolume allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%-"; }
     XF86AudioMute        allow-when-locked=true { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
 
-    // No screen locker by design, so this is the only way out of the session.
+    // No screen locker by design. Quits the session (niri asks first), as
+    // does the power menu's Log out below.
     Mod+Shift+E { quit; }
     // Suspend / reboot (into the boot menu, firmware setup, Windows, MemTest)
     // / power off / log out — hosts/desk/power-menu.nix.
