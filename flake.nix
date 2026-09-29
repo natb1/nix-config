@@ -301,7 +301,13 @@
             kill %1 || true
             cat qs.log
             grep -q "Configuration Loaded" qs.log
-            ! grep -qE "Failed to load configuration|TypeError|ReferenceError" qs.log
+            # An if, not `! grep`: set -e ignores a command negated with `!`,
+            # so that form never failed the build. A binding that throws still
+            # logs "Configuration Loaded", so this is the line that catches it.
+            if grep -E "Failed to load configuration|TypeError|ReferenceError" qs.log; then
+              echo "quickshell-config: QML errors in qs.log" >&2
+              exit 1
+            fi
             touch "$out"
           '';
         }
