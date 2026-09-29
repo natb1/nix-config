@@ -101,7 +101,6 @@ in
   config.systemd.user.services.claude-remote-control = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
     Unit = {
       Description = "Claude Code Remote Control server (worktree spawn mode)";
-      After = [ "network-online.target" ];
     };
     Service = {
       Type = "simple";
@@ -114,7 +113,10 @@ in
       StandardError = "journal";
       Restart = "always";
       # rc exits after ~a minute on errors it reports (untrusted folder, folder
-      # already served); don't hammer it beyond that.
+      # already served); don't hammer it beyond that. It also exits at boot when
+      # it starts before DNS works ("getaddrinfo ENOTFOUND"): the user manager
+      # has no network-online.target to wait for, so this retry is what brings
+      # it up.
       RestartSec = 10;
     };
     Install.WantedBy = [ "default.target" ];
