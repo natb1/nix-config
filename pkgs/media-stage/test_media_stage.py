@@ -180,6 +180,23 @@ class Review(unittest.TestCase):
         self.assertEqual((ev["Video"], ev["Title"]), ("h264 1920x1080", "Heat.1995.x264-GRP"))
         self.assertEqual((ev["Audio"], ev["Subtitles"]), ("eng", "eng, fre"))
 
+    def test_export_keeps_stage_reviews_albums(self):
+        # Music with a booklet: `beet stage-review` wrote its albums first;
+        # the table's rows join them in the batch's one review.
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "b"
+            st.mkdir()
+            (Path(d) / "b.tsv").write_text("old\tnew\tconfidence\tnote\n"
+                                           "A/01.flac\tbeets\thigh\t\nA/booklet.pdf\t\t\t\n")
+            album = {"id": "a1b2c3d4e5f6", "key": "A", "kind": "album", "twin": 42, "options": []}
+            review = Path(d) / "b.review.json"
+            review.write_text(json.dumps({"batch": "b", "kind": "audio", "source": "beets", "items": [album]}))
+            for _ in range(2):  # again: the table's rows are replaced, the album kept once
+                run_cli("review", "export", str(st))
+                items = json.loads(review.read_text())["items"]
+                self.assertEqual([i["key"] for i in items], ["A", "A/booklet.pdf"])
+                self.assertEqual(items[0], album)
+
 
 class Layout(unittest.TestCase):
     good = [

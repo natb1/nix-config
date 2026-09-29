@@ -115,7 +115,9 @@ agent or person per batch.
 6. **Review page**: the user decides what you could not.
    - Tables: `media-stage review export <staging>/<batch>` writes
      `<batch>.review.json` with every row that is blank, `skip`, below `high`,
-     or flagged in its note. Audio: `beet stage-review` already wrote it.
+     or flagged in its note, and keeps the albums `beet stage-review` put
+     there, so a batch of music and other files is one review. Music only:
+     `beet stage-review` already wrote it.
    - Read every item before loading it, and settle what you can: the
      page asks only what you can't answer, and suggests what you would.
      - Where you know the answer (the evidence settles it), answer it

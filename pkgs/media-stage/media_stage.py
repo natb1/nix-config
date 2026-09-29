@@ -1618,12 +1618,19 @@ def review_export(a, staging, table):
                 {"key": "new", "label": "Library path", "value": "" if new in ("skip", "discard", "trash") else new}]},
         })
     out = Path(str(staging).rstrip("/") + ".review.json")
+    # `beet stage-review` writes the batch's albums to the same file first:
+    # they stay, so a batch of music and other files is one review, and
+    # `beet stage-review --answers` still finds its albums here.
+    prev = json.loads(out.read_text()) if out.exists() else {}
+    albums = [i for i in prev.get("items", []) if i.get("kind") == "album"] \
+        if prev.get("batch") == staging.name else []
     out.write_text(json.dumps({
         "batch": staging.name, "kind": "table", "source": "media-stage",
         "created": datetime.datetime.now().isoformat(timespec="seconds"),
-        "layout": LAYOUT_HELP, "items": items,
+        "layout": LAYOUT_HELP, "items": albums + items,
     }, indent=1, ensure_ascii=False))
-    print(f"for review: {len(items)} of {len(rows)} rows -> {out}")
+    print(f"for review: {len(items)} of {len(rows)} rows"
+          + (f", and {len(albums)} albums from stage-review" if albums else "") + f" -> {out}")
 
 
 LAYOUT_HELP = [
