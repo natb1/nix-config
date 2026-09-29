@@ -600,6 +600,20 @@ class Concurrency(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("changed since scan", out)
 
+    def test_discard_changed_since_scan_is_refused(self):
+        # A copy drafted as the worse one while it was still being copied:
+        # apply deletes a `discard` row, so it is held to its scan too.
+        for new in ("discard", "trash"):
+            with tempfile.TemporaryDirectory() as d:
+                lib, st = self.batch(d)
+                Path(str(st) + ".tsv").write_text(f"old\tnew\nHeat.1995.mkv\t{new}\n")
+                with open(st / "Heat.1995.mkv", "ab") as f:
+                    f.write(b"\0" * 10)
+                code, out = run_cli("apply", str(st), "--library", str(lib))
+                self.assertEqual(code, 1, new)
+                self.assertIn("changed since scan", out)
+                self.assertTrue((st / "Heat.1995.mkv").exists())
+
     def test_case_clash_with_library_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             lib, st = self.batch(d)

@@ -1745,6 +1745,18 @@ def load_manifest(staging):
     return {r["path"]: r for r in recs}
 
 
+def changed_since_scan(rec, st):
+    """Why a staged file no longer matches its scan (`st`, its stat), or
+    None. A file that changed was still being copied (Finder writes under
+    the final name) or has been edited: its manifest, and so the review, are
+    about a different file."""
+    if rec is None:
+        return "not in the manifest — scan again"
+    if rec["size"] != st.st_size or abs(rec.get("mtime_epoch", st.st_mtime) - st.st_mtime) > 2:
+        return "changed since scan (still copying?) — scan again"
+    return None
+
+
 def validate(staging, library):
     """(errors, rows to move, counts). Errors are strings; empty means go."""
     _, table, _ = sidecar_paths(staging)
@@ -1779,6 +1791,10 @@ def validate(staging, library):
             if new == "trash" and (trash_dir(staging) / old).exists():
                 errors.append(f"{where}: already in {trash_dir(staging)}")
             if new in ("discard", "trash"):
+                # apply deletes it, or sets it aside, on the strength of its scan
+                why = changed_since_scan(manifest.get(old), (staging / old).stat())
+                if why:
+                    errors.append(f"{where}: {why}")
                 moves.append((old, new))
             counts[new] += 1
             continue
@@ -1807,15 +1823,10 @@ def validate(staging, library):
         clash = cases.clash(new)
         if clash:
             errors.append(f"{where}: differs only in case from existing {clash}")
-        # A file that changed since the scan was still being copied (Finder
-        # writes under the final name) or has been edited: its manifest, and
-        # so the review, are about a different file.
         rec = manifest.get(old)
-        st = (staging / old).stat()
-        if rec is None:
-            errors.append(f"{where}: not in the manifest — scan again")
-        elif rec["size"] != st.st_size or abs(rec.get("mtime_epoch", st.st_mtime) - st.st_mtime) > 2:
-            errors.append(f"{where}: changed since scan (still copying?) — scan again")
+        why = changed_since_scan(rec, (staging / old).stat())
+        if why:
+            errors.append(f"{where}: {why}")
         elif rec.get("sha256") and kind_of(old) != "audio":
             hit = filed.find(ext_of(old), rec["size"], rec["sha256"])
             if hit:
