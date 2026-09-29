@@ -50,58 +50,17 @@ in
 {
   # WSL: mirror the pinned Windows WezTerm into the user's %LOCALAPPDATA%.
   # DAG ordering: runs after "linkGeneration" so symlinks are stable before we
-  # reach across the WSL boundary.
+  # reach across the WSL boundary, and after "resolveWindowsUser"
+  # (windows-user.nix), which picks the Windows profile.
   home.activation.installWeztermWindows =
-    lib.hm.dag.entryAfter [ "linkGeneration" ] ''
-      readonly WW_ERR_PERMISSION_DENIED=21
-      readonly WW_ERR_USERNAME_DETECTION=22
+    lib.hm.dag.entryAfter [ "linkGeneration" "resolveWindowsUser" ] ''
       readonly WW_ERR_INSTALL_FAILED=23
       readonly WW_ERR_FILE_LOCKED=24
 
-      if [ ! -d "/mnt/c/Users" ]; then
+      # WINDOWS_USER is empty when not running on WSL (see windows-user.nix).
+      if [ -z "$WINDOWS_USER" ]; then
         echo "Not running on WSL, skipping Windows WezTerm install"
       else
-        if [ ! -r "/mnt/c/Users" ]; then
-          echo "ERROR: Permission denied accessing /mnt/c/Users/" >&2
-          echo "  WSL mount exists but directory is not readable" >&2
-          exit $WW_ERR_PERMISSION_DENIED
-        fi
-
-        # Auto-detect Windows username (the tier-3 heuristic of
-        # wezterm-windows-config.nix). Use a
-        # module-prefixed temp-file name so the EXIT trap registered by
-        # copyWeztermToWindows isn't clobbered.
-        WW_LS_STDERR=$(mktemp)
-        WW_LS_OUTPUT=$(ls /mnt/c/Users/ 2>"$WW_LS_STDERR")
-        WW_LS_EXIT_CODE=$?
-
-        if [ $WW_LS_EXIT_CODE -ne 0 ]; then
-          echo "ERROR: Failed to list /mnt/c/Users/ directory" >&2
-          echo "  Exit code: $WW_LS_EXIT_CODE" >&2
-          if [ -s "$WW_LS_STDERR" ]; then
-            echo "  Error output:" >&2
-            cat "$WW_LS_STDERR" 2>/dev/null | sed 's/^/    /' >&2
-          fi
-          rm -f "$WW_LS_STDERR"
-          exit $WW_ERR_PERMISSION_DENIED
-        fi
-        rm -f "$WW_LS_STDERR"
-
-        WINDOWS_USER=$(echo "$WW_LS_OUTPUT" | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-        if [ -z "$WINDOWS_USER" ]; then
-          echo "ERROR: Failed to detect Windows username" >&2
-          echo "  Available directories:" >&2
-          echo "$WW_LS_OUTPUT" | sed 's/^/    /' >&2
-          exit $WW_ERR_USERNAME_DETECTION
-        fi
-
-        if [ ! -d "/mnt/c/Users/$WINDOWS_USER" ]; then
-          echo "ERROR: Detected Windows user '$WINDOWS_USER' but directory does not exist" >&2
-          echo "  Expected: /mnt/c/Users/$WINDOWS_USER" >&2
-          exit $WW_ERR_USERNAME_DETECTION
-        fi
-
         TARGET_DIR="/mnt/c/Users/$WINDOWS_USER/AppData/Local/WezTerm"
 
         if [ -z "$DRY_RUN_CMD" ]; then

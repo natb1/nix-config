@@ -2,13 +2,14 @@
 #
 # Validates the WezTerm Home Manager configuration as each host composes it:
 # - modules/home/wezterm.nix alone (macOS, a native NixOS machine)
-# - plus hosts/wsl/home/wezterm-windows-config.nix (the WSL host)
+# - plus hosts/wsl/home/wezterm-windows-config.nix and the Windows-profile
+#   resolver it runs after, hosts/wsl/home/windows-user.nix (the WSL host)
 #
 # Covers:
 # 1. Lua syntax validation for generated config
 # 2. Platform-specific and host-specific logic
 # 3. Variable interpolation (username, home directory)
-# 4. Activation script logic for WSL Windows config copy
+# 4. The WSL copy-to-Windows activation text, run for real (wezterm_test.sh)
 #
 # Modules are evaluated with lib.evalModules against stub declarations of the
 # few home-manager options they touch, so fragment ordering (mkBefore/mkOrder/
@@ -19,6 +20,7 @@
 let
   weztermModule = ../modules/home/wezterm.nix;
   wslWeztermModule = ../hosts/wsl/home/wezterm-windows-config.nix;
+  wslWindowsUserModule = ../hosts/wsl/home/windows-user.nix;
 
   # lib.hm.dag stand-in: records the DAG entry so tests can inspect it.
   hmLib = lib.extend (
@@ -101,7 +103,10 @@ let
           home.username = username;
           home.homeDirectory = homeDirectory;
         }
-      ] ++ lib.optional wslHost wslWeztermModule;
+      ] ++ lib.optionals wslHost [
+        wslWeztermModule
+        wslWindowsUserModule
+      ];
       specialArgs.pkgs = mockPkgs;
     }).config;
 
@@ -110,6 +115,13 @@ let
 
   # Test helper: Extract the copy-to-Windows activation entry, or null
   extractCopyActivation = moduleResult: moduleResult.home.activation.copyWeztermToWindows or null;
+
+  # Test helper: Extract the Windows-profile resolver activation entry, or null
+  extractResolveActivation = moduleResult: moduleResult.home.activation.resolveWindowsUser or null;
+
+  # Test helper: Everything before the shared body, where a host fragment such
+  # as the WSL one (mkOrder 600) lands.
+  extractPreamble = luaConfig: builtins.head (lib.splitString "-- Auto-discover" luaConfig);
 
   # Test helper: Validate Lua syntax using lua interpreter
   validateLuaSyntax =
@@ -161,30 +173,35 @@ let
         wslHost = true;
       };
       luaConfig = extractLuaConfig result;
-      # Everything before the shared body: must carry the WSL fragment.
-      preamble = builtins.head (lib.splitString "-- Auto-discover" luaConfig);
+      # Everything before the shared body: must carry the WSL fragment. The
+      # fragment's checks look only here, because the shared body also has
+      # target_triple:find('windows'), wsl.exe, '/home/' and the username.
+      preamble = extractPreamble luaConfig;
     in
     pkgs.runCommand "test-wezterm-linux-config" { } ''
       ${
-        if lib.hasInfix "target_triple" luaConfig && lib.hasInfix "windows" luaConfig then
+        if
+          lib.hasInfix "if wezterm.target_triple:find('windows') then\n  config.default_prog = { 'wsl.exe'" preamble
+          && lib.hasInfix "config.default_gui_startup_args = { 'connect', 'wsl' }\nend\n" preamble
+        then
           "echo 'PASS: WSL config guards default_prog with target_triple windows check'"
         else
           "echo 'FAIL: WSL config missing target_triple windows guard' && exit 1"
       }
       ${
-        if lib.hasInfix "default_prog" luaConfig && lib.hasInfix "wsl.exe" luaConfig then
+        if lib.hasInfix "config.default_prog = { 'wsl.exe', '-d', 'NixOS'" preamble then
           "echo 'PASS: WSL config includes default_prog with wsl.exe'"
         else
           "echo 'FAIL: WSL config missing default_prog/wsl.exe' && exit 1"
       }
       ${
-        if lib.hasInfix "/home/" luaConfig && lib.hasInfix "linuxuser" luaConfig then
+        if lib.hasInfix "'--cd', '/home/' .. \"linuxuser\"" preamble then
           "echo 'PASS: WSL config includes correct home directory'"
         else
           "echo 'FAIL: WSL config has wrong home directory' && exit 1"
       }
       ${
-        if lib.hasInfix "default_gui_startup_args" luaConfig && lib.hasInfix "'connect', 'wsl'" luaConfig then
+        if lib.hasInfix "config.default_gui_startup_args = { 'connect', 'wsl' }" preamble then
           "echo 'PASS: WSL config includes default_gui_startup_args to auto-connect to wsl mux'"
         else
           "echo 'FAIL: WSL config missing default_gui_startup_args for wsl mux auto-connect' && exit 1"
@@ -238,7 +255,9 @@ let
           "echo 'FAIL: WSL config missing tailscale' && exit 1"
       }
       ${
-        if lib.hasInfix "wsl.exe" luaConfig && lib.hasInfix "tailscale_status_cmd" luaConfig then
+        if
+          lib.hasInfix "tailscale_status_cmd = { 'wsl.exe', '-d', 'NixOS', '--', 'bash', '-lc', 'tailscale status --json' }" luaConfig
+        then
           "echo 'PASS: WSL config calls tailscale via wsl.exe on Windows'"
         else
           "echo 'FAIL: WSL config missing wsl.exe tailscale invocation' && exit 1"
@@ -384,6 +403,8 @@ let
         "bob-smith"
         "user_123"
       ];
+      # Checked in the WSL fragment's --cd path: the shared body carries the
+      # username too, so a match anywhere in the config proves nothing about it.
       results = lib.genAttrs testUsernames (
         username:
         let
@@ -393,7 +414,7 @@ let
             wslHost = true;
           });
         in
-        lib.hasInfix username luaConfig
+        lib.hasInfix "'--cd', '/home/' .. ${builtins.toJSON username}" (extractPreamble luaConfig)
       );
     in
     pkgs.runCommand "test-wezterm-username-interpolation" { } ''
@@ -516,14 +537,17 @@ let
       touch $out
     '';
 
-  # Test 11: Activation script runtime behavior
+  # Test 11: Activation script runtime behavior. wezterm_test.sh runs the real
+  # resolveWindowsUser + copyWeztermToWindows text below, as home-manager
+  # generates it, against a temp tree standing in for /mnt/c.
   test-activation-script-runtime =
     pkgs.runCommand "test-wezterm-activation-script-runtime"
       {
         buildInputs = [ pkgs.bash ];
       }
       ''
-        ${pkgs.bash}/bin/bash ${./wezterm_test.sh}
+        COPY_SCRIPT=${wslCopyScript} MOCK_HOME=${wslMockConfig.homeDirectory} \
+          ${pkgs.bash}/bin/bash ${./wezterm_test.sh}
         touch $out
       '';
 
@@ -573,10 +597,22 @@ let
           "echo 'FAIL: WSL config missing activation script in DAG' && exit 1"
       }
       ${
+        if extractResolveActivation wslResult != null then
+          "echo 'PASS: WSL config includes the Windows-profile resolver in DAG'"
+        else
+          "echo 'FAIL: WSL config missing the Windows-profile resolver in DAG' && exit 1"
+      }
+      ${
         if extractCopyActivation macosResult == null then
           "echo 'PASS: macOS config excludes activation script'"
         else
           "echo 'FAIL: macOS config should not include activation script' && exit 1"
+      }
+      ${
+        if extractResolveActivation linuxResult == null && extractResolveActivation macosResult == null then
+          "echo 'PASS: native Linux and macOS configs exclude the Windows-profile resolver'"
+        else
+          "echo 'FAIL: only the WSL host should resolve a Windows profile' && exit 1"
       }
       ${
         if wslResult.systemd.user.services ? wezterm-mux-server then
@@ -596,21 +632,27 @@ let
       touch $out
     '';
 
-  # The WSL host's copy-to-Windows activation entry, shared by tests 14 and 15.
+  # The WSL host's copy-to-Windows activation entry, shared by tests 11 and 14.
   wslMockConfig = {
     username = "testuser";
     homeDirectory = "/home/testuser";
   };
-  wslDagEntry = extractCopyActivation (
-    evaluateModule (
-      wslMockConfig
-      // {
-        isLinux = true;
-        wslHost = true;
-      }
-    )
+  wslResult = evaluateModule (
+    wslMockConfig
+    // {
+      isLinux = true;
+      wslHost = true;
+    }
   );
+  wslDagEntry = extractCopyActivation wslResult;
   wslScriptData = if wslDagEntry != null && wslDagEntry ? data then wslDagEntry.data else null;
+
+  # The copy step as activation runs it: the resolver it is ordered after first,
+  # in the same shell, since it reads the WINDOWS_USER the resolver sets.
+  wslCopyScript = pkgs.writeText "copy-wezterm-to-windows.sh" ''
+    ${(extractResolveActivation wslResult).data}
+    ${wslScriptData}
+  '';
 
   # Test 14: Activation script DAG execution and variable access
   test-activation-dag-execution =
@@ -636,6 +678,12 @@ let
           "echo 'PASS: Activation script depends on linkGeneration'"
         else
           "echo 'FAIL: Activation script missing linkGeneration dependency' && exit 1"
+      }
+      ${
+        if dagEntry != null && (builtins.elem "resolveWindowsUser" (dagEntry.after or [ ])) then
+          "echo 'PASS: Activation script runs after the Windows-profile resolver'"
+        else
+          "echo 'FAIL: Activation script missing resolveWindowsUser dependency' && exit 1"
       }
       ${
         if scriptData != null && builtins.isString scriptData then
@@ -664,39 +712,6 @@ let
 
       echo ""
       echo "Activation script DAG execution test passed"
-      touch $out
-    '';
-
-  # Test 15: Fidelity anchor — activation script contains three-tier detection tokens
-  # Asserts the real nix string in hosts/wsl/home/wezterm-windows-config.nix
-  # includes the key tokens introduced by the three-tier Windows-user detection
-  # chain (issue #62). The bash test suite validates the algorithm against a
-  # reimplementation; this test ties it to the actual nix activation string so a
-  # typo there fails here.
-  test-activation-script-tokens =
-    let
-      scriptData = wslScriptData;
-      requiredTokens = [
-        "WEZTERM_WINDOWS_USER"
-        "cmd.exe"
-        "wslpath"
-        "USERPROFILE"
-      ];
-    in
-    pkgs.runCommand "test-activation-script-tokens" { } ''
-      ${
-        if scriptData != null then
-          "echo 'PASS: Activation script data is accessible'"
-        else
-          "echo 'FAIL: Activation script data is null — cannot check tokens' && exit 1"
-      }
-      ${lib.concatMapStringsSep "\n" (
-        token:
-        if scriptData != null && lib.hasInfix token scriptData then
-          "echo 'PASS: Activation script contains token: ${token}'"
-        else
-          "echo 'FAIL: Activation script missing token: ${token}' && exit 1"
-      ) requiredTokens}
       touch $out
     '';
 
@@ -749,7 +764,6 @@ let
     test-activation-script-runtime
     test-homemanager-integration
     test-activation-dag-execution
-    test-activation-script-tokens
     test-format-tab-title
   ];
 
@@ -780,7 +794,6 @@ in
       test-activation-script-runtime
       test-homemanager-integration
       test-activation-dag-execution
-      test-activation-script-tokens
       test-format-tab-title
       ;
   };
