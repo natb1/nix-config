@@ -2,7 +2,7 @@
 #
 # The gate is evaluation plus the x86_64-linux checks: every host's system
 # derivation must evaluate against the new lock, or nothing is pushed. It does
-# not build or activate either host, so it cannot catch activation-time
+# not build or activate any host, so it cannot catch activation-time
 # failures; that is what reviewing the closure diff before a switch is for.
 name: update flake.lock
 
@@ -18,6 +18,11 @@ concurrency: update-flake-lock
 
 jobs:
   update:
+    # main only. The push below is HEAD:main, and the change test compares
+    # with origin/main, which checkout fetches only for a run on main: run from
+    # another branch, it always says "changed" and tries to push that branch
+    # to main.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
