@@ -22,9 +22,16 @@ Singleton {
     property var exitNodes: []
     property int peers: 0
     property int peersOnline: 0
+    // Why the last poll failed, if it did.
     property string error: ""
+    // Why the last up/down or exit-node change failed, until the next one
+    // or the panel closes. Apart from `error`, which the poll that follows
+    // every change would clear before it could be read.
+    property string actionError: ""
 
     readonly property string summary: {
+        if (actionError !== "")
+            return actionError;
         if (error !== "")
             return error;
         if (backend === "")
@@ -52,8 +59,14 @@ Singleton {
     }
 
     function run(cmd) {
+        actionError = "";
         action.command = cmd;
         action.running = true;
+    }
+
+    onActiveChanged: {
+        if (!active)
+            actionError = "";
     }
 
     Timer {
@@ -73,22 +86,31 @@ Singleton {
         stderr: StdioCollector {
             id: statusErr
         }
+        // A failure has no JSON to parse (parse() leaves everything as it
+        // was), so drop the last answer here: a stopped daemon is not still
+        // "up" with its peers. The collectors finish before this runs.
         onExited: code => {
-            if (code !== 0 && root.backend === "")
-                root.error = statusErr.text.trim().split("\n")[0] || "tailscale failed";
+            if (code === 0)
+                return;
+            root.backend = "";
+            root.exitNode = "";
+            root.exitNodes = [];
+            root.peers = 0;
+            root.peersOnline = 0;
+            root.error = statusErr.text.trim().split("\n")[0] || "tailscale failed";
         }
     }
 
     Process {
         id: action
         stderr: StdioCollector {
-            onStreamFinished: {
-                const msg = text.trim();
-                if (msg !== "")
-                    root.error = msg.split("\n")[0];
-            }
+            id: actionErr
         }
-        onExited: root.refresh()
+        onExited: code => {
+            if (code !== 0)
+                root.actionError = actionErr.text.trim().split("\n")[0] || "tailscale failed";
+            root.refresh();
+        }
     }
 
     function parse(text) {
