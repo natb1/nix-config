@@ -171,16 +171,17 @@
           # nightly (modules/home/wezterm-package.nix) as a real WezTerm.app and
           # generates ~/.config/wezterm/wezterm.lua. Installing the pinned build
           # here — rather than an out-of-Nix GUI — keeps this Mac's `wezterm
-          # connect` client in version lockstep with the WSL mux server, which is
-          # built from the same pin. The module's Linux-only mux service is
-          # guarded by pkgs.stdenv.hostPlatform.isLinux; the Windows-side pieces live in
-          # hosts/wsl/home and are not imported here.
+          # connect` client in version lockstep with the desk and WSL mux
+          # servers, which are built from the same pin. The module's Linux-only
+          # mux service is guarded by pkgs.stdenv.hostPlatform.isLinux; the
+          # Windows-side pieces live in hosts/wsl/home and are not imported here.
         ];
       };
 
-      # WSL wezterm rebuilt from the pinned nightly (modules/home/wezterm-pin.nix).
-      # Exposed so `nix build .#wezterm` can verify the pin and so
-      # scripts/sync-wezterm.sh can resolve the vendor hash against it.
+      # The wezterm every host installs, rebuilt from the pinned nightly
+      # (modules/home/wezterm-pin.nix). Exposed so `nix build .#wezterm` can
+      # verify the pin and so scripts/sync-wezterm.sh can resolve the vendor
+      # hash against it.
       packages = forAllSystems ({ pkgs, ... }: {
         wezterm = pkgs.callPackage ./modules/home/wezterm-package.nix { };
         # Media filing for /srv/media (docs/desktop-migration.md, "Layout on

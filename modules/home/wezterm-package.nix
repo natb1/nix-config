@@ -1,8 +1,10 @@
-# WSL WezTerm package — nixpkgs' wezterm rebuilt from the pinned nightly commit.
+# WezTerm package for every host — nixpkgs' wezterm rebuilt from the pinned
+# nightly commit.
 #
 # nixpkgs pins its own (older) nightly snapshot; we override the source to the
 # exact commit the Windows GUI binary was built from (see wezterm-pin.nix) so the
-# mux server this produces speaks the same protocol as the Windows client.
+# mux servers (desk, WSL) and GUIs (desk, Mac) this produces speak the same
+# protocol as the Windows client.
 #
 # The override replaces `src` and the vendored-deps hash. Everything else — build
 # inputs, patches, features, the mux-server/gui outputs — is inherited from

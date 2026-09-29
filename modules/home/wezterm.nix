@@ -38,8 +38,8 @@ in
 
     # Build wezterm from the pinned nightly (modules/home/wezterm-pin.nix) rather
     # than the nixpkgs snapshot, so every mux client and server this repo installs
-    # — the WSL mux server, the Mac GUI, and the Windows GUI that
-    # hosts/wsl/home/wezterm-windows.nix mirrors — share one version. The
+    # — the mux servers on desk and WSL, the desk and Mac GUIs, and the Windows
+    # GUI that hosts/wsl/home/wezterm-windows.nix mirrors — share one version. The
     # mux-server user service below references config.programs.wezterm.package,
     # so it follows this automatically. Refresh with scripts/sync-wezterm.sh.
     package = pkgs.callPackage ./wezterm-package.nix { };

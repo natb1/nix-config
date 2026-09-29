@@ -3,8 +3,8 @@
 # Both the WezTerm package (wezterm-package.nix, built from source at `rev`)
 # and the Windows GUI binary (hosts/wsl/home/wezterm-windows.nix, the matching
 # nightly zip) are pinned to the SAME upstream build here, so every mux client
-# (Windows GUI, Mac GUI) and the WSL wezterm-mux-server speak the same PDU
-# protocol version.
+# (Windows, Mac and desk GUIs) and every wezterm-mux-server (desk and WSL) speak
+# the same PDU protocol version.
 #
 # `version` is authoritative and is read from the distributed Windows binary
 # itself (the zip's internal `WezTerm-windows-<version>` directory name), NOT
