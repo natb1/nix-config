@@ -3422,8 +3422,11 @@ A backup is a claim until it is restored. All four, before trusting it:
       Wi-Fi), and `cmp` against `/srv/media/takeout/` was identical. The switch
       installs `restic-media`, which is restic with the unit's repository,
       password and ssh. Repeat on the full set before the retirement gate*
-- [ ] Simulate the real failure: unplug the bulk SSD, boot, and confirm Samba
-      refuses to serve rather than exposing an empty share, **and** that
+- [ ] Simulate the real failure: make only the media volume fail to mount (a
+      bogus `subvol=` in a test generation — the bulk SSD also holds `/` and
+      `/boot`, so it cannot be pulled), boot, confirm SSH and Tailscale still
+      come up, and confirm Samba refuses to serve rather than exposing an
+      empty share, **and** that
       `restic-backups-media` fails (and alerts) rather than snapshotting an empty
       directory — then restore into a fresh filesystem and time it
 - [ ] `systemctl list-timers restic-backups-media` after a week, and confirm a
@@ -5622,8 +5625,10 @@ Still to do, after Phase 8:
     this list it is the likeliest to be discovered too late.
 13. **Samba serving an empty share.** If the bulk SSD does not mount, an
     unguarded smbd exports `/srv/media` on the root filesystem and clients write
-    into it. The `requires=srv-media.mount` binding prevents it; verify by
-    booting once with the drive pulled.
+    into it. The `requires=srv-media.mount` binding prevents it, and `nofail`
+    on the mount lets the host boot far enough for it to matter; verify by
+    booting once with only the media volume failing to mount (the drive also
+    holds `/`, so it cannot be pulled).
 14. **Secure Boot keys lost to a firmware update.** A BIOS flash or CMOS clear
     restores factory keys; NixOS stops booting, Windows does not, which makes
     it look like NixOS broke. Re-enroll per

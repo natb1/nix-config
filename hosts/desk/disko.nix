@@ -48,9 +48,19 @@
               # unnoticed — and restic would back up the corrupted copy without
               # complaint. Checksums plus a monthly scrub turn bit rot into an
               # alert. No compression: the payload is already-compressed video.
+              #
+              # nofail: a volume that will not mount must not take the host
+              # down with it. Without it local-fs.target fails and desk sits in
+              # emergency mode, no SSH or tailnet, until someone is at the
+              # keyboard — as it did on 2026-09-26 over a stale /srv/games.
+              # With it, the requires = [ "srv-media.mount" ] guards (Samba,
+              # restic, Jellyfin, Kavita, Navidrome, slskd, …) fail just those
+              # services. nofail also drops the mount's ordering before
+              # local-fs.target; x-systemd.before puts it back, so tmpfiles and
+              # everything else after local-fs.target still sees the subvolume.
               "/media" = {
                 mountpoint = "/srv/media";
-                mountOptions = [ "noatime" ];
+                mountOptions = [ "noatime" "nofail" "x-systemd.before=local-fs.target" ];
               };
             };
           };
