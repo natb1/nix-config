@@ -674,6 +674,13 @@ class Plugin(unittest.TestCase):
         with redirect_stdout(out):
             self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.SKIP)
         self.assertIn("A – Album is already filed; left in staging", out.getvalue())
+        # Tagged by hand like it: no release to offer again, so it says what the answer needs.
+        session.answers[sr.item_id("Album")] = {"choice": "custom", "fields": {"albumartist": "A", "album": "Album"}}
+        self.assertEqual(session.answered(task), sr.Action.RETAG)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.SKIP)
+        self.assertIn('"on_duplicate"', out.getvalue())
 
     def test_import_log_is_written(self):
         log = self.d / "import.log"

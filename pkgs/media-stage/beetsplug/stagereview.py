@@ -477,8 +477,11 @@ class StageSession(TerminalImportSession):
             if mode in ("dup:keep", "dup:remove"):
                 return {"dup:keep": DuplicateAction.KEEP, "dup:remove": DuplicateAction.REMOVE}[mode]
             d = found_duplicates[0]
-            ui.print_(f"stagereview: {key}: {d.albumartist} – {d.album} is already filed; left in staging "
-                      "(the next round offers its release again, replacing that album or keeping both)")
+            ui.print_(f"stagereview: {key}: {d.albumartist} – {d.album} is already filed; left in staging ("
+                      + ("the next round offers its release again, replacing that album or keeping both"
+                         if a.get("value", "").startswith("mb:") else
+                         'to file it with these tags all the same, its answer needs "on_duplicate": '
+                         '"remove" or "keep"') + ")")
             return DuplicateAction.SKIP
         twin = found_duplicates[0]
         # The matched release too, filed as itself, when it is another
