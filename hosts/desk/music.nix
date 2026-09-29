@@ -28,9 +28,14 @@
       MusicFolder = "/srv/media/music";
       Address = "0.0.0.0";
       Port = 4533;
-      # Albums as beets filed them: MusicBrainz album ids group the discs of
-      # a set and keep two releases of one title apart.
-      Scanner.GroupAlbumReleases = false;
+      # Albums as beets filed them, with nothing to set: Navidrome's default
+      # PID.Album keys an album on its MusicBrainz album id first, which
+      # groups the discs of a set and keeps two releases of one title apart.
+      # (Scanner.GroupAlbumReleases, once set here, is deprecated and did
+      # nothing. Setting PID.Album to anything but the default re-keys every
+      # album at the next scan, which can orphan album favourites and play
+      # counts.)
+
       # New imports appear without a manual rescan; the file watcher is the
       # default, this is the backstop.
       Scanner.Schedule = "@every 6h";
