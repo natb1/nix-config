@@ -346,9 +346,13 @@ PanelWindow {
                         Layout.fillWidth: true
                         spacing: 1
 
+                        // Plain text: any web page can set these (Chrome's
+                        // media session), and the default AutoText would
+                        // render markup, fetching an <img src> with it.
                         Text {
                             Layout.fillWidth: true
                             text: panel.player?.trackTitle || panel.player?.identity || ""
+                            textFormat: Text.PlainText
                             elide: Text.ElideRight
                             font.family: Theme.font
                             font.pixelSize: 13
@@ -359,6 +363,7 @@ PanelWindow {
                             Layout.fillWidth: true
                             text: panel.player?.trackArtist ?? ""
                             visible: text !== ""
+                            textFormat: Text.PlainText
                             elide: Text.ElideRight
                             font.family: Theme.font
                             font.pixelSize: 11
