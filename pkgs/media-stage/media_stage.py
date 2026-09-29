@@ -2054,7 +2054,10 @@ def tag_file(library, rel, dry_run=False, source=None):
             return [f"{x}={v}" for x, v in todo.items()] if dry_run else []
         if not have.get("source") and not source:
             source = pdf_original_sha256(path) if k == "pdf" else sha256(path)
-        err = {"pdf": pdf_write, "epub": epub_write, "cbz": cbz_write}[k](path, want, source)
+        try:
+            err = {"pdf": pdf_write, "epub": epub_write, "cbz": cbz_write}[k](path, want, source)
+        except Exception as e:  # a member that won't read (bad CRC-32), a full disk: reported, as pdf_write does
+            err = f"not written: {str(e)[:200]}"
         if err:
             return [err]
         todo["source"] = source[:12] + "…" if "source" in todo else None
@@ -2068,7 +2071,10 @@ def tag_file(library, rel, dry_run=False, source=None):
                  "mov": mp4_title, "avi": avi_title}.get(e)
         if not write:
             return [f"title not written: .{e} has no title tag we write"]
-        err = write(path, todo["title"])
+        try:
+            err = write(path, todo["title"])
+        except Exception as e:  # tags from mkvextract that won't parse, say: reported, not fatal
+            err = str(e)
         if err:
             return [f"title not written: {err.strip()[:200]}"]
     return [f"{x}={v}" for x, v in todo.items()]
@@ -2147,9 +2153,27 @@ def cmd_tag(a):
         tag_paths(a, library)
 
 
+def library_arg(library, arg):
+    """A path from the command line, relative to the current directory or,
+    where there is nothing there, to the library (`ssh desk` starts in ~):
+    (the path, its path in the library or None if it is outside it)."""
+    p = Path(arg)
+    if not p.is_absolute() and not p.exists():
+        p = Path(library) / arg
+    rel = os.path.relpath(p.resolve(), Path(library).resolve())
+    return p, None if rel == ".." or rel.startswith("../") else rel
+
+
 def tag_paths(a, library):
-    for p in a.paths:
-        rel = os.path.relpath(Path(p).resolve(), library.resolve())
+    rels = []
+    for arg in a.paths:
+        p, rel = library_arg(library, arg)
+        if not p.is_file():
+            sys.exit(f"no such file: {arg}")
+        if rel is None or rel.split("/")[0] not in LIBRARY_DIRS:
+            sys.exit(f"not in the library: {arg}")
+        rels.append(rel)
+    for rel in rels:
         changes = tag_file(library, rel, a.dry_run)
         print(f"{rel}: {'; '.join(changes) if changes else 'ok'}")
 
@@ -2270,6 +2294,17 @@ def glob_escape(s):
 AUDIO_REQUIRED = ("artist", "album", "title", "track")
 
 
+def shelf_problems(rel, have):
+    """What lint reports of a books/ or rpg/ file's metadata, {field: value}:
+    what Kavita would read wrong, no record of the original, or unreadable."""
+    if "error" in have:
+        return {"unreadable": have["error"]}
+    todo = shelf_todo(rel, have)
+    if not have.get("source"):
+        todo["source"] = "none"
+    return todo
+
+
 def cmd_lint(a):
     library = Path(a.library) if a.library else default_library()
     if not a.fix:
@@ -2280,11 +2315,19 @@ def cmd_lint(a):
 
 
 def lint(a, library):
-    roots = [Path(d) for d in a.dirs] or [library / d for d in LIBRARY_DIRS]
+    roots = []
+    for d in a.dirs:
+        p, rel = library_arg(library, d)
+        if not p.is_dir():
+            sys.exit(f"no such directory: {d}")
+        if rel is None:
+            sys.exit(f"not in the library: {d}")
+        roots.append(library / rel)
+    roots = roots or [library / d for d in LIBRARY_DIRS]
     problems = 0
     for root in roots:
         if not root.exists():
-            continue
+            continue  # a library need not have every top directory
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
             folded = {}
@@ -2313,11 +2356,12 @@ def lint(a, library):
                     if have.get("encrypted"):
                         print(f"NOTE   {rel}: encrypted; Kavita reads only its name")
                         continue
-                    todo = {"unreadable": have["error"]} if "error" in have else shelf_todo(rel, have)
-                    if not have.get("source") and "error" not in have:
-                        todo["source"] = "none"
+                    todo = shelf_problems(rel, have)
                     if todo and a.fix and "error" not in have:
-                        print(f"FIXED  {rel}: {'; '.join(tag_file(library, rel))}")
+                        changes = tag_file(library, rel)
+                        left = shelf_problems(rel, current_meta(path))  # read back: a write can fail
+                        problems += bool(left)
+                        print(f"{'FAILED' if left else 'FIXED '} {rel}: {'; '.join(changes) or ', '.join(left)}")
                     elif todo:
                         problems += 1
                         print(f"META   {rel}: " + ", ".join(
@@ -2336,14 +2380,19 @@ def lint(a, library):
                         print(f"META   {rel}: missing {', '.join(missing)}")
                 elif k == "video":
                     want, have = standard(rel), current_meta(path)
-                    bad = [x for x, v in want.items() if v and have.get(x) != v and x != "author"]
-                    if bad:
-                        if a.fix:
-                            changes = tag_file(library, rel)
-                            print(f"FIXED  {rel}: {'; '.join(changes)}")
-                        else:
-                            problems += 1
-                            print(f"META   {rel}: " + ", ".join(f"{x} is {have.get(x)!r}" for x in bad))
+                    off = lambda have: [x for x, v in want.items() if v and have.get(x) != v and x != "author"]
+                    bad = off(have)
+                    if bad and a.fix:
+                        changes = tag_file(library, rel)
+                        # Read back: a write can fail, and some containers have no title we write.
+                        have = current_meta(path)
+                        bad = off(have)
+                        problems += bool(bad)
+                        print(f"{'FAILED' if bad else 'FIXED '} {rel}: "
+                              + ('; '.join(changes) or ", ".join(f"{x} is {have.get(x)!r}" for x in bad)))
+                    elif bad:
+                        problems += 1
+                        print(f"META   {rel}: " + ", ".join(f"{x} is {have.get(x)!r}" for x in bad))
     print(f"{problems} problems")
     return 1 if problems else 0
 
@@ -2386,7 +2435,7 @@ def main(argv=None):
     s.add_argument("--no-tag", action="store_true", help="move only; leave metadata alone")
     s.set_defaults(fn=cmd_apply)
     s = sub.add_parser("tag", help="write standard metadata for library files")
-    s.add_argument("paths", nargs="+")
+    s.add_argument("paths", nargs="+", help="library files (relative to here, else to the library, or absolute)")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(fn=cmd_tag)
     s = sub.add_parser("close", help="remove a filed batch's records (audio: once `beet stage-audit` passes)")
@@ -2397,7 +2446,8 @@ def main(argv=None):
     s.add_argument("paths", nargs="+", help="library files or folders (relative to the library, or absolute)")
     s.set_defaults(fn=cmd_restage)
     s = sub.add_parser("lint", help="audit layout and metadata of the library")
-    s.add_argument("dirs", nargs="*", help="limit to these directories")
+    s.add_argument("dirs", nargs="*",
+                   help="limit to these directories (relative to here, else to the library, or absolute)")
     s.add_argument("--fix", action="store_true", help="write standard metadata where it differs (not audio)")
     s.set_defaults(fn=cmd_lint)
     a = ap.parse_args(argv)

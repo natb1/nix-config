@@ -890,6 +890,31 @@ class Copies(unittest.TestCase):
             code, out = run_cli("lint", "--library", str(lib))
             self.assertEqual(code, 0, out)
 
+    def test_damaged_book_is_filed_and_logged(self):
+        # Its OPF reads, one chapter doesn't (a bad CRC-32): apply files and
+        # logs it with the error and goes on; lint --fix reports it.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "b"
+            st.mkdir(parents=True)
+            make_epub(st / "a.epub", "Alpha", "Author, Ann")
+            with zipfile.ZipFile(st / "a.epub", "a") as z:
+                z.writestr("OEBPS/ch1.xhtml", "<html>chapter one</html>")
+            (st / "a.epub").write_bytes((st / "a.epub").read_bytes().replace(b"chapter one", b"chapter 0ne"))
+            make_pdf(st / "b.pdf", title="b")
+            run_cli("scan", str(st), "--library", str(lib))
+            Path(str(st) + ".tsv").write_text("old\tnew\na.epub\tbooks/Ann Author/Alpha/Alpha.epub\n"
+                                              "b.pdf\trpg/Game/Beta.pdf\n")
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            log = {e["old"]: e for e in map(json.loads, Path(str(st) + ".applied.jsonl").read_text().splitlines())}
+            self.assertEqual(sorted(log), ["a.epub", "b.pdf"])
+            self.assertIn("Bad CRC-32", log["a.epub"]["metadata"][0])
+            self.assertEqual(ms.pdf_meta(lib / "rpg/Game/Beta.pdf")["title"], "Beta")
+            code, out = run_cli("lint", "--fix", "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("FAILED books/Ann Author/Alpha/Alpha.epub: not written: Bad CRC-32", out)
+
     def test_one_file_per_volume(self):
         with tempfile.TemporaryDirectory() as d:
             lib = Path(d)
@@ -933,6 +958,48 @@ class Copies(unittest.TestCase):
                 self.assertEqual(ms.current_meta(lib / rel).get("title"), "Heat (1995)", e)
                 self.assertEqual(len(ms.ffprobe(lib / rel)["streams"]), streams, e)
                 self.assertEqual(ms.tag_file(lib, rel), [], e)
+
+    def test_lint_fix_says_what_it_could_not_write(self):
+        # MPEG-PS has no title tag we write: --fix says so, and fails.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            mpg = lib / "movies/Heat (1995)/Heat (1995).mpg"
+            mpg.parent.mkdir(parents=True)
+            ffmpeg("-f", "lavfi", "-i", "testsrc=size=64x48:rate=25", "-t", "1", "-c:v", "mpeg2video", str(mpg))
+            code, out = run_cli("lint", "--fix", "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("FAILED movies/Heat (1995)/Heat (1995).mpg: title not written", out)
+
+    def test_lint_and_tag_take_library_paths(self):
+        # Relative to the current directory, else to the library (`ssh desk`
+        # starts in ~). A path that is neither is an error, never "ok".
+        with tempfile.TemporaryDirectory() as d:
+            lib, home = Path(d) / "media", Path(d) / "home"
+            (lib / "rpg/Game").mkdir(parents=True)
+            home.mkdir()
+            make_pdf(lib / "rpg/Game/Game (v2).pdf", title="x")
+            make_pdf(lib / "rpg/Game/Other - Rules.pdf", title="x")
+            cwd = os.getcwd()
+            os.chdir(home)
+            try:
+                code, out = run_cli("lint", "rpg", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("LAYOUT rpg/Game/Game (v2).pdf", out)
+                code, out = run_cli("lint", "rgp", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("no such directory: rgp", out)
+                code, out = run_cli("tag", "rpg/Game/Other - Rules.pdf", "--library", str(lib))
+                self.assertEqual(code, 0, out)
+                self.assertEqual(ms.pdf_meta(lib / "rpg/Game/Other - Rules.pdf")["title"], "Other - Rules")
+                code, out = run_cli("tag", "rpg/Game/Nothing.pdf", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("no such file: rpg/Game/Nothing.pdf", out)
+                (home / "notes.pdf").write_bytes(b"")
+                code, out = run_cli("tag", "notes.pdf", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("not in the library: notes.pdf", out)
+            finally:
+                os.chdir(cwd)
 
     def test_best_copy_is_kept(self):
         with tempfile.TemporaryDirectory() as d:
