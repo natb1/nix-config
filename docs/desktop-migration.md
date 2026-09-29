@@ -3568,7 +3568,7 @@ unreliable: `…Shoemaker's Wife.mp3` and `…Shoemaker's Wife_1.mp3` are two
 different pieces from two different CDs by their tags, and the 34 `_N`
 suffixes (33 of them Liszt) are flattened disc collisions, not duplicates.
 [`beets`](https://beets.io) with MusicBrainz, configured in
-[`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix): `move` and
+[`hosts/desk/home/media-tools.nix`](../hosts/desk/home/media-tools.nix): `move` and
 `write` on, compilations filed like any other album (not beets' top-level
 `Compilations/`), plugins `chroma` (AcoustID), `duplicates`, `info`:
 
@@ -3715,7 +3715,7 @@ paths…>` moves filed files back into a batch, under their library paths, and
 records each book's or RPG's original sha256 for `apply`; the batch is then
 filed like any other, its table reading old name → new name.
 
-Steps 1–5 and 6–8 are Claude's to run. Step 5′ is the one place the procedure waits for a person, and nothing in the batch is applied before it. beets 2.x needs `musicbrainz` in its plugin list to match anything at all ([`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)).
+Steps 1–5 and 6–8 are Claude's to run. Step 5′ is the one place the procedure waits for a person, and nothing in the batch is applied before it. beets 2.x needs `musicbrainz` in its plugin list to match anything at all ([`hosts/desk/home/media-tools.nix`](../hosts/desk/home/media-tools.nix)).
 
 **Standard metadata** — what `apply` writes and `lint` expects, derived from
 the library path so the two cannot drift apart:

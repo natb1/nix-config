@@ -7,7 +7,7 @@
 #   /var/lib/media-fetch  media-fetch's results and jobs, which its pump
 #                         service (hosts/desk/soulseek.nix) serves
 #   /var/lib/beets        beets' library database and import log
-#                         (hosts/desk/home/beets.nix)
+#                         (hosts/desk/home/media-tools.nix)
 # and, read-only, the API keys media-fetch uses: slskd's (/etc/slskd/api.env)
 # and itch.io's (/etc/itch/api.env, written by hand: README.md), each 0440
 # n8:media.

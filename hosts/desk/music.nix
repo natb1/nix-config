@@ -1,9 +1,10 @@
 # Navidrome: /srv/media/music as a music server, for the phone and desk alike.
 #
 # Why a server rather than players reading the SMB share: the library is filed
-# by beets (hosts/desk/home/media.nix) and every file carries full tags and
-# MusicBrainz ids, so a tag-reading server gives albums, artists, compilations
-# and multi-disc sets as MusicBrainz knows them, whatever the folder names.
+# by beets (hosts/desk/home/media-tools.nix) and every file carries full tags
+# and MusicBrainz ids, so a tag-reading server gives albums, artists,
+# compilations and multi-disc sets as MusicBrainz knows them, whatever the
+# folder names.
 # It streams (transcoding if asked) and speaks the Subsonic API, so the phone
 # uses a Subsonic app with offline caching and CarPlay (Amperfy, recommended
 # in docs/desktop-migration.md, "Listening"), and desk uses Feishin, below.
