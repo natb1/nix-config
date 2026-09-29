@@ -18,6 +18,31 @@
 
 { pkgs, ... }:
 
+let
+  # The alert for a failed unit (restic's and the scrub's, below): an email
+  # with the failed run's log (mail.nix), then a desktop pop-up. These are
+  # system units, so the pop-up has to reach into n8's session bus, and fails
+  # if nobody is logged in; the mail fails when the network is down, the
+  # likeliest reason a backup failed. So neither waits on the other: both
+  # are tried, and the alert unit fails if either did.
+  alert = { unit, subject, app, title }: ''
+    mail=0
+    {
+      echo 'To: nathan@natb1.com'
+      echo "Subject: ${subject}"
+      echo
+      # -I: the latest invocation, i.e. the run that failed.
+      ${pkgs.systemd}/bin/journalctl -u "${unit}" -I -n 100 --no-pager
+    } | ${pkgs.msmtp}/bin/msmtp -t || mail=$?
+
+    uid=$(${pkgs.coreutils}/bin/id -u n8)
+    ${pkgs.util-linux}/bin/runuser -u n8 -- \
+      ${pkgs.coreutils}/bin/env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      ${pkgs.libnotify}/bin/notify-send -u critical -a ${app} \
+        "${title}" "journalctl -u ${unit}"
+    exit "$mail"
+  '';
+in
 {
   services.samba = {
     enable = true;
@@ -139,6 +164,24 @@
     fileSystems = [ "/srv/media" ];
   };
 
+  # The alert. Data here is single-copy, so a bad data block is one the
+  # scrub cannot repair: it exits 3, and the unit fails. A scrub a suspend
+  # cut short (nixpkgs cancels it before sleep on kernels older than 6.19)
+  # fails and alerts too — it did not finish, and the next is a month away.
+  systemd.services."btrfs-scrub@".unitConfig.OnFailure = "btrfs-scrub-failed@%i.service";
+  systemd.services."btrfs-scrub-failed@" = {
+    description = "Alert: btrfs scrub of %f failed";
+    serviceConfig.Type = "oneshot";
+    # Specifiers expand in ExecStart, not in the script it runs.
+    scriptArgs = "%i %f";
+    script = alert {
+      unit = "btrfs-scrub@$1.service";
+      subject = "desk: btrfs scrub of $2 failed";
+      app = "btrfs";
+      title = "Scrub of $2 failed";
+    };
+  };
+
   # THE footgun. Without this, a bulk SSD that fails to mount leaves Samba
   # serving an empty /srv/media *on the root filesystem* — and clients
   # cheerfully write into it. Silent, and you find out when the root disk fills.
@@ -198,27 +241,16 @@
     unitConfig.OnFailure = "restic-backups-media-failed.service";
   };
 
-  # The alert: an email with the failed run's log (mail.nix), then a desktop
-  # pop-up. This is a system unit, so the pop-up has to reach into n8's
-  # session bus, and fails if nobody is logged in — hence mail first.
+  # The alert, as for the scrub: mail and a pop-up (`alert`, at the top).
   systemd.services.restic-backups-media-failed = {
     description = "Alert: restic-backups-media failed";
     serviceConfig.Type = "oneshot";
-    script = ''
-      {
-        echo 'To: nathan@natb1.com'
-        echo 'Subject: desk: media backup failed'
-        echo
-        # -I: the latest invocation, i.e. the run that failed.
-        ${pkgs.systemd}/bin/journalctl -u restic-backups-media -I -n 100 --no-pager
-      } | ${pkgs.msmtp}/bin/msmtp -t
-
-      uid=$(${pkgs.coreutils}/bin/id -u n8)
-      ${pkgs.util-linux}/bin/runuser -u n8 -- \
-        ${pkgs.coreutils}/bin/env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
-        ${pkgs.libnotify}/bin/notify-send -u critical -a restic \
-          'Media backup failed' 'journalctl -u restic-backups-media'
-    '';
+    script = alert {
+      unit = "restic-backups-media";
+      subject = "desk: media backup failed";
+      app = "restic";
+      title = "Media backup failed";
+    };
   };
 
   # The unit runs as root; ssh reads this system-wide known_hosts. The

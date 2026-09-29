@@ -358,7 +358,8 @@ These are provisioned by hand and a clean rebuild will not recreate them:
 - `desk`'s outgoing mail password, `/etc/msmtp/gmail-app-password` (root,
   0600), for `hosts/desk/mail.nix`: a Google app password for
   `nathan@natb1.com` (myaccount.google.com → Security → App passwords), no
-  trailing newline needed. Without it, backup-failure emails are not sent.
+  trailing newline needed. Without it, the backup and scrub alerts are
+  desktop pop-ups only: no email.
   Check: `printf 'Subject: test\n\nhi\n' | sudo msmtp nathan@natb1.com`.
 - `desk`'s Soulseek login, `/etc/slskd/credentials` (root, 0600): the
   Soulseek account and the slskd web UI's login (`hosts/desk/soulseek.nix`).
