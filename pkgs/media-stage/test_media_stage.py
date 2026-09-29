@@ -1,5 +1,6 @@
 """Tests for media-stage. Run by the package's checkPhase (`nix build .#media-stage`,
-`nix flake check`), where ffmpeg, poppler, exiftool and mkvtoolnix are on PATH.
+`nix flake check`), where ffmpeg, poppler, exiftool and mkvtoolnix are on PATH,
+and, on Linux, beets for the beets plugin.
 
 The pipeline test builds a small batch of real files — generated video, audio,
 a hand-written PDF and EPUB — and takes it through scan, draft, check, apply
@@ -15,11 +16,21 @@ import unittest
 import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import media_stage as ms
 
 sys.path.insert(0, str(Path(__file__).parent / "beetsplug"))
 import stagecheck as sc  # noqa: E402
+
+try:  # beets is in the check on Linux only (default.nix)
+    from beets import config as beets_config
+    from beets import logging as beets_logging
+    from beets.library import Item, Library
+    import beetsplug.stagereview as sr
+except ImportError:
+    sr = None
 
 
 def run_cli(*args):
@@ -546,6 +557,122 @@ class Checks(unittest.TestCase):
             self.assertIsNotNone(a)
             self.assertGreaterEqual(sc.similarity(a, a2), sc.SAME_RECORDING)
             self.assertLess(sc.similarity(a, b), sc.SAME_RECORDING)
+
+
+@unittest.skipIf(sr is None, "beets is in the check on Linux only")
+class Plugin(unittest.TestCase):
+    """beetsplug/stagereview.py, on a scratch beets library: stage-review's
+    decisions and answers."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.d = Path(tmp.name)
+        # beets' defaults only, never the config of whoever runs the tests.
+        self.enterContext(mock.patch.dict(os.environ, BEETSDIR=str(self.d / "beets")))
+        beets_config.clear()
+        beets_config.read(user=False)
+        # A file, not ":memory:": beets backs a new library up beside it (in
+        # the working directory, for ":memory:") as it migrates it, and says so.
+        with redirect_stdout(io.StringIO()):
+            self.lib = Library(str(self.d / "library.db"), str(self.d / "music"))
+        self.addCleanup(self.lib._close)
+        self.staging = self.d / "staging" / "audio"
+        self.staging.mkdir(parents=True)
+
+    def album(self, tracks):
+        """"A – Album", filed from the batch: (track, title, slot length) each."""
+        items = []
+        for n, title, length in tracks:
+            path = self.d / "music" / "A" / "Album" / f"{n:02d} {title}.mp3"
+            items.append(Item(path=os.fsencode(path), disc=1, track=n, title=title, length=length,
+                              artist="A", albumartist="A", album="Album", mb_trackid=f"mb{n}",
+                              stage_source=f"audio/Album/{n:02d} {title}.mp3"))
+        self.lib.add_album(items)
+        return items
+
+    def test_album_filed_earlier_in_the_run_is_filed(self):
+        # One recording on a best-of and, ripped again, on its studio album.
+        for folder in ("Best Of", "Studio"):
+            (self.staging / folder).mkdir()
+        tune = "sin(2*PI*(220*pow(2,floor(mod(t*3,7))/12))*t)+0.5*sin(2*PI*110*pow(2,floor(mod(t,5))/7)*t)"
+        ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{tune}':d=20", str(self.staging / "Best Of" / "a.flac"))
+        ffmpeg("-i", str(self.staging / "Best Of" / "a.flac"), "-b:a", "96k", str(self.staging / "Studio" / "a.mp3"))
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging))
+
+        def task(folder, name):
+            path = next((self.staging / folder).iterdir())
+            info = SimpleNamespace(album_id=name, artist="A", album=name, label=None, country=None, media="CD",
+                                   year=None, tracks=[None], albumdisambig=None, data_url=None)
+            return SimpleNamespace(
+                paths=[os.fsencode(self.staging / folder)], rec=sr.Recommendation.strong,
+                items=[Item(path=os.fsencode(path), track=1, title="Tune", length=20.0,
+                            artist="A", albumartist="A", album=name)],
+                candidates=[SimpleNamespace(distance=0.0, info=info, extra_items=[], extra_tracks=[])])
+
+        best = task("Best Of", "Best Of")
+        self.assertIs(session.choose_match(best), best.candidates[0])
+        self.lib.add_album(best.items)  # as beets does, before it asks about the next album
+        studio = task("Studio", "Studio")
+        self.assertEqual(session.choose_match(studio), sr.Action.SKIP)
+        self.assertEqual(session.review[0]["why"], "same recordings as 1 of these 1 files already filed")
+
+    def test_dup_answer_names_the_library_album(self):
+        twin = self.album([(1, "One", 60.0)])[0].get_album()
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging), answers={})
+        [merge] = [o for o in session.dup_options(twin, 1) if o["value"].startswith("dup:merge")]
+        # Answered without the page, as the media-share skill says: the item
+        # is taken out of the review JSON.
+        folder = self.staging / "Album (more)"
+        item = Item(path=os.fsencode(folder / "02 Two.mp3"), track=2, title="Two")
+        task = SimpleNamespace(paths=[os.fsencode(folder)], items=[item])
+        session.answers[sr.item_id("Album (more)")] = {"choice": "option", "value": merge["value"]}
+        self.assertEqual(session.answered(task), sr.Action.RETAG)
+        self.assertEqual((item.albumartist, item.album), ("A", "Album"))
+        self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.MERGE)
+
+    def test_release_named_like_a_filed_album(self):
+        twin = self.album([(1, "One", 60.0)])[0].get_album()
+        twin.mb_albumid = "e1"
+        twin.store()
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging))
+        # The edition filed, a second edition of "A – Album", and a live album.
+        first, edition, live = (SimpleNamespace(info=SimpleNamespace(album_id=r, artist="A", album=name))
+                                for r, name in (("e1", "Album"), ("e2", "Album"), ("live", "Album (Live)")))
+        offered = session.against_filed(
+            [{"value": "mb:e1", "label": "A – Album (2000)", "detail": "", "recommended": False},
+             {"value": "mb:e2", "label": "A – Album (2020)", "detail": "CD", "recommended": True},
+             {"value": "mb:live", "label": "A – Album (Live)", "detail": "", "recommended": False}],
+            [first, edition, live], twin)
+        self.assertEqual([o["value"] for o in offered], ["mb:e2+remove", "mb:e2+keep", "mb:live"])
+        self.assertFalse(any(o["recommended"] for o in offered))
+
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging), answers={})
+        task = SimpleNamespace(paths=[os.fsencode(self.staging / "Album")], items=[], candidates=[])
+        task.lookup_candidates = lambda ids: setattr(task, "candidates", [edition] if ids == ["e2"] else [])
+        session.answers[sr.item_id("Album")] = {"choice": "option", "value": "mb:e2+keep"}
+        self.assertIs(session.answered(task), edition)
+        self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.KEEP)
+        # Chosen bare, it waits in staging, and says why.
+        session.dupmode.clear()
+        session.answers[sr.item_id("Album")] = {"choice": "option", "value": "mb:e2"}
+        self.assertIs(session.answered(task), edition)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.SKIP)
+        self.assertIn("A – Album is already filed; left in staging", out.getvalue())
+
+    def test_import_log_is_written(self):
+        log = self.d / "import.log"
+        beets_config["import"]["log"] = str(log)
+        beets_log = beets_logging.getLogger("beets")
+        beets_log.set_global_level(beets_logging.INFO)  # as the `beet` command sets it
+        self.addCleanup(beets_log.set_global_level, beets_logging.NOTSET)
+        with redirect_stdout(io.StringIO()):
+            sr.StageReview().run(self.lib, SimpleNamespace(answers=None, batch=None), [str(self.staging)])
+        self.assertIn("import started", log.read_text())
+
+
 
 class Pipeline(unittest.TestCase):
     def test_batch(self):
