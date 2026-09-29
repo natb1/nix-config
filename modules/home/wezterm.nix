@@ -143,7 +143,7 @@ in
   # NixOS: run the mux server as a managed systemd user service.
   #
   # Otherwise the mux server is spawned lazily by `wezterm connect` as a detached
-  # process that never restarts. After `home-manager switch` upgrades wezterm, that
+  # process that never restarts. After a switch upgrades wezterm, that
   # stale process keeps the old binary, and a freshly-upgraded client fails the mux
   # version handshake ("unexpected response ... UnitResponse").
   #

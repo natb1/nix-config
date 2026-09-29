@@ -98,7 +98,7 @@ in
           if [ $rsync_exit -ne 0 ]; then
             if echo "$rsync_error" | grep -qi "permission denied"; then
               echo "ERROR: Failed to install Windows WezTerm — files appear locked" >&2
-              echo "  Close WezTerm on Windows and re-run 'home-manager switch'" >&2
+              echo "  Close WezTerm on Windows and run 'rebuild' again" >&2
               echo "  Details:" >&2
               echo "$rsync_error" | sed 's/^/    /' >&2
               exit $WW_ERR_FILE_LOCKED
