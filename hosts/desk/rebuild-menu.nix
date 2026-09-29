@@ -1,5 +1,6 @@
 # The rebuild menu: Mod+Shift+R in niri (hosts/desk/home/niri.kdl) opens
-# `rebuild-menu`, a list of every worktree of ~/natb1/nix-config, and runs
+# `rebuild-menu`, a list of every worktree of ~/natb1/nix-config and every open
+# pull request, and runs
 # `rebuild` (modules/home/rebuild.nix) against the one picked — pull, then
 # switch — in a terminal for the sudo prompt, held open to read the result.
 #
@@ -11,6 +12,13 @@
 # request's number and title (from gh, which is already logged in), the last
 # commit's subject, and the worktree's directory. Without a pull request — main, or never seen online — the first
 # line is the branch.
+#
+# After the worktrees come the open pull requests that no worktree has checked
+# out — a PR from another account's clone (drlindsey's sessions), or one whose
+# worktree was removed. Picking one fetches its branch and adds a worktree for
+# it, .claude/worktrees/pr-<number>, with the branch tracking origin so
+# `rebuild` pulls it; then rebuilds that as any other. Once the PR is merged or
+# closed the tidy-up below removes the worktree like the rest.
 #
 # It opens at once, with the pull requests as of the last run, and fills in
 # while it is open: `rebuild-menu --refresh`, the tidy-up below and `gh pr
@@ -63,9 +71,10 @@ let
       touch "$prs"
 
       # One row per live worktree, main checkout first: the worktree's path
-      # (what pick answers with), then the three lines shown.
+      # (what pick answers with), then the three lines shown. Then one per
+      # open PR with no worktree, keyed "pr:<number>".
       rows() {
-        local -A pr_number=() pr_title=()
+        local -A pr_number=() pr_title=() has_worktree=()
         local branch number title path ref first
         while IFS=$'\t' read -r branch number title; do
           pr_number[$branch]=$number
@@ -73,6 +82,7 @@ let
         done <"$prs"
 
         while IFS=$'\t' read -r path ref; do
+          [ -z "$ref" ] || has_worktree[$ref]=1
           if [ -n "''${pr_number[$ref]:-}" ]; then
             first="#''${pr_number[$ref]} ''${pr_title[$ref]}"
           else
@@ -86,6 +96,31 @@ let
           /^prunable/  { gone = 1 }
           /^$/         { if (!gone) print path "\t" ref }
         ')
+
+        while IFS=$'\t' read -r branch number title; do
+          [ -n "$branch" ] && [ -z "''${has_worktree[$branch]:-}" ] || continue
+          printf 'pr:%s\t#%s %s\t%s\t%s\n' "$number" "$number" "$title" "no worktree yet — picking adds one" "$branch"
+        done <"$prs"
+      }
+
+      # worktree_for NUMBER: add a worktree for an open PR's branch, tracking
+      # origin, and print its path. A local branch of that name is reused, not
+      # reset, so commits only it has are kept (and `rebuild`'s ff-only pull
+      # stops on them rather than dropping them).
+      worktree_for() {
+        local number=$1 branch dir
+        branch=$(awk -F '\t' -v n="$number" '$2 == n { print $1; exit }' "$prs")
+        [ -n "$branch" ] || { echo "PR #$number is not in the open PR list"; return 1; }
+        dir="$repo/.claude/worktrees/pr-$number"
+        [ ! -e "$dir" ] || { echo "$dir already exists"; return 1; }
+        timeout 30 git -C "$repo" fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>&1 || return 1
+        if g show-ref -q --verify "refs/heads/$branch"; then
+          g worktree add -q "$dir" "$branch" 2>&1 || return 1
+          g branch -q --set-upstream-to "origin/$branch" "$branch" 2>&1 || return 1
+        else
+          g worktree add -q --track -b "$branch" "$dir" "origin/$branch" 2>&1 || return 1
+        fi
+        printf '%s\n' "$dir"
       }
 
       # The fetch, `gh pr list` and the tidy-up; prints how many worktrees
@@ -178,6 +213,13 @@ let
       fi
 
       dir=$(rows | pick --prompt "rebuild ›" --refresh "$(printf '%q --refresh' "$0")") || exit 0
+      if [[ $dir == pr:* ]]; then
+        if ! out=$(worktree_for "''${dir#pr:}"); then
+          notify-send -a "Rebuild menu" "Couldn't add a worktree for PR #''${dir#pr:}" "$out"
+          exit 1
+        fi
+        dir=''${out##*$'\n'}
+      fi
       [ -d "$dir" ] || exit 0
 
       exec xdg-terminal-exec env REBUILD_REPO="$dir" zsh -c "rebuild; print; read -sk '?Done. Press any key to close.'"
