@@ -139,7 +139,7 @@ binds {
     Mod+Shift+N hotkey-overlay-title="Notifications and status" { spawn "qs" "-c" "desk" "ipc" "call" "panel" "toggle"; }
     // Pick a worktree of ~/natb1/nix-config (main first), then pull and
     // switch to it in a terminal — hosts/desk/rebuild-menu.nix.
-    Mod+Shift+R hotkey-overlay-title="Rebuild (pick worktree, pull + switch)" { spawn "rebuild-menu"; }
+    Mod+Shift+R hotkey-overlay-title="Rebuild (pick worktree or PR, pull + switch)" { spawn "rebuild-menu"; }
 
     Mod+Q { close-window; }
 
