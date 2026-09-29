@@ -237,6 +237,45 @@
               ''}
               touch "$out"
             '';
+          # desk's claude-remote-control units, for every user that has one.
+          # Sessions inherit the unit's PATH: unless the setuid wrappers come
+          # first, `sudo` is the plain copy in /run/current-system/sw/bin and
+          # `rebuild` fails from a session. A store path in it would change the
+          # unit on unrelated switches and restart rc, killing its sessions.
+          # With stdout sent to null, stderr must name the journal, or it
+          # follows stdout and rc's startup errors are lost too.
+          claude-remote-control-unit =
+            let
+              lib = nixpkgs.lib;
+              units = lib.filterAttrs (_: s: s != null) (lib.mapAttrs
+                (_: u: u.systemd.user.services.claude-remote-control or null)
+                self.nixosConfigurations.desk.config.home-manager.users);
+              problems = lib.concatLists (lib.mapAttrsToList (user: s:
+                let
+                  env = lib.toList (s.Service.Environment or [ ]);
+                  path = lib.findFirst (lib.hasPrefix "PATH=") "" env;
+                in
+                lib.optional (!lib.hasPrefix "PATH=/run/wrappers/bin:" path)
+                  "${user}: PATH does not start with /run/wrappers/bin: ${path}"
+                ++ lib.optional (lib.hasInfix "/nix/store/" path)
+                  "${user}: PATH has a store path: ${path}"
+                ++ lib.optional ((s.Service.StandardOutput or null) == "null"
+                  && (s.Service.StandardError or null) != "journal")
+                  "${user}: StandardOutput is null but StandardError is not journal"
+              ) units);
+            in
+            pkgs.runCommand "claude-remote-control-unit" { } ''
+              ${lib.optionalString (units == { }) ''
+                echo "no claude-remote-control unit on desk" >&2
+                exit 1
+              ''}
+              ${lib.optionalString (problems != [ ]) ''
+                printf '%s\n' ${lib.escapeShellArgs problems} >&2
+                exit 1
+              ''}
+              echo "checked: ${lib.concatStringsSep " " (lib.attrNames units)}"
+              touch "$out"
+            '';
           niri-config =pkgs.runCommand "niri-config-valid" { } ''
             ${pkgs.niri}/bin/niri validate -c ${./hosts/desk/home/niri.kdl}
             touch "$out"
