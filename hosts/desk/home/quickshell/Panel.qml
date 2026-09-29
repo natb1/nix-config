@@ -24,9 +24,10 @@ PanelWindow {
         open = false;
     }
 
-    // Launch something from the panel, and get out of its way.
+    // Launch something from the panel, and get out of its way. In a scope of
+    // its own, so a shell restart doesn't kill it (see Launcher.qml).
     function launch(cmd) {
-        Quickshell.execDetached(cmd);
+        Quickshell.execDetached(["systemd-run", "--user", "--scope", "--collect", "--quiet", "--", ...cmd]);
         close();
     }
 
