@@ -330,6 +330,55 @@ class Group(unittest.TestCase):
             self.assertEqual(sorted(p.relative_to(st).as_posix() for p in st.rglob("*.mp3")), [
                 "Greatest Hits (Queen)/a.mp3", "Greatest Hits/b.mp3"])
 
+    def test_table_follows_and_filed_audio_is_done(self):
+        # A mixed batch, drafted before group: the table follows the audio
+        # into its album folder, and once beets has filed it (moved it out
+        # of staging) its row is done, so the rest of the batch can be filed.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "mix"
+            st.mkdir(parents=True)
+            make_mp3(st / "a1.mp3", album="Nocturnal", title="One", track="1")
+            make_pdf(st / "rules.pdf", title="x")
+            run_cli("scan", str(st), "--hash", "--library", d)
+            run_cli("draft", str(st), "--library", d)
+            table = Path(str(st) + ".tsv")
+            table.write_text(table.read_text().replace("\t\t\tclassify", "\trpg/Game/Rules.pdf\thigh\tclassify"))
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)
+            self.assertIn("Nocturnal/a1.mp3\tbeets\t", table.read_text())
+            self.assertFalse(any(r.get("gone") for r in ms.load_manifest(st).values()))  # moved, not gone
+            code, out = run_cli("check", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            (st / "Nocturnal" / "a1.mp3").unlink()  # beets filed it
+            (st / "Nocturnal").rmdir()
+            code, out = run_cli("check", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertIn("already done 1", out)
+            code, out = run_cli("apply", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertTrue((lib / "rpg/Game/Rules.pdf").exists())
+
+    def test_rescan_keeps_the_hashes(self):
+        # group rescans without reading every byte again: the files it
+        # didn't change keep their hashes, and with them check's refusal to
+        # file content that is already filed.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            (lib / "rpg/Game").mkdir(parents=True)
+            make_pdf(lib / "rpg/Game/Rules.pdf", title="x")
+            st = lib / "staging" / "mix"
+            st.mkdir(parents=True)
+            (st / "rules.pdf").write_bytes((lib / "rpg/Game/Rules.pdf").read_bytes())
+            make_mp3(st / "a1.mp3", album="Nocturnal", title="One", track="1")
+            run_cli("scan", str(st), "--hash", "--library", d)
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)
+            recs = ms.load_manifest(st)
+            self.assertEqual(sorted(p for p, r in recs.items() if r.get("sha256")), ["Nocturnal/a1.mp3", "rules.pdf"])
+            Path(str(st) + ".tsv").write_text("old\tnew\nNocturnal/a1.mp3\tbeets\nrules.pdf\trpg/Game/Rules again.pdf\n")
+            code, out = run_cli("check", str(st), "--library", d)
+            self.assertEqual(code, 1)
+            self.assertIn("already filed as rpg/Game/Rules.pdf", out)
+
     def test_split_disc(self):
         self.assertEqual(ms.split_disc("Ballads CD2"), ("Ballads", 2))
         self.assertEqual(ms.split_disc("Ballads (Disc 1)"), ("Ballads", 1))
@@ -360,6 +409,28 @@ class Close(unittest.TestCase):
             code, out = run_cli("close", str(st), "--library", d)
             self.assertEqual(code, 0, out)
             self.assertEqual(sorted(p.name for p in staging.iterdir()), ["audio-2.tsv", "audio.applied.jsonl"])
+
+    def test_rescan_keeps_what_beets_filed(self):
+        # beets moves what it files out of staging. A rescan after that keeps
+        # those files' records, the only ones of what they said they were:
+        # the audit checks against them, and close still waits for it.
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "mix"
+            (st / "Album").mkdir(parents=True)
+            make_mp3(st / "Album" / "01.mp3", album="Album", title="No. 3", track="1")
+            make_pdf(st / "doc.pdf")
+            run_cli("scan", str(st), "--library", d)
+            (st / "Album" / "01.mp3").unlink()  # filed by beets
+            for _ in range(2):
+                code, out = run_cli("scan", str(st), "--library", d)
+                self.assertEqual(code, 0, out)
+                rec = ms.load_manifest(st).get("Album/01.mp3", {})
+                self.assertEqual((rec.get("meta", {}).get("tags", {}).get("title"), rec.get("gone")), ("No. 3", True))
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)  # passes it over
+            (st / "doc.pdf").unlink()
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertNotEqual(code, 0)
+            self.assertIn("not audited", out)
 
     def test_hidden_folder_blocks(self):
         with tempfile.TemporaryDirectory() as d:
@@ -499,6 +570,8 @@ class Pipeline(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertTrue((lib / "movies/The Matrix (1999)/The Matrix (1999).mkv").exists())
             self.assertTrue((st / "song.mp3").exists())      # beets' job
+            self.assertIn(f"then `beet stage-review {st}`", out)
+            self.assertNotIn("beet import", out)
             self.assertTrue((st / "IMG_4211.mov").exists())  # skipped
             self.assertFalse((st / "sub").exists())          # emptied dirs are removed
 

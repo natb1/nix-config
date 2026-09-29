@@ -723,25 +723,45 @@ def cmd_scan(a):
         scan(a)
 
 
-def scan(a):
+def scan(a, moved=None):
+    """`moved` is {old path: new path} from `group`, whose rescan hashes
+    nothing: each earlier record follows its file, and a file unchanged
+    since keeps its hash, so the checks for content already filed still
+    see it."""
     staging = Path(a.staging)
     manifest, _, _ = sidecar_paths(staging)
+    earlier = {(moved or {}).get(p, p): r for p, r in (load_manifest(staging) or {}).items()}
     files, ignored = walk(staging)
     kinds, recs = {}, []
     tmp = manifest.with_name(f".{manifest.name}.{os.getpid()}")
     with open(tmp, "w") as out:
         for i, rel in enumerate(files, 1):
             rec = scan_file(staging / rel, rel, a.hash)
+            was = earlier.get(rel)
+            if moved is not None and was and was.get("sha256") and "sha256" not in rec \
+                    and not changed_since_scan(was, (staging / rel).stat()):
+                rec["sha256"] = was["sha256"]
             recs.append(rec)
             kinds[rec["kind"]] = kinds.get(rec["kind"], 0) + 1
             out.write(json.dumps(rec, ensure_ascii=False) + "\n")
             if sys.stderr.isatty():
                 print(f"\r{i}/{len(files)}", end="", file=sys.stderr)
+        # Audio that has left staging (beets moves what it files) keeps its
+        # record, marked gone: the only one of what the file said it was
+        # before beets retagged it. `beet stage-audit` checks the filed track
+        # against it, and close waits for that.
+        scanned = set(files)
+        gone = [{**r, "path": p, "gone": True} for p, r in earlier.items()
+                if r["kind"] == "audio" and p not in scanned]
+        for r in gone:
+            out.write(json.dumps(r, ensure_ascii=False) + "\n")
     os.replace(tmp, manifest)  # a concurrent check reads the old or the new, never half
     if sys.stderr.isatty():
         print(file=sys.stderr)
     print(f"{len(files)} files -> {manifest}")
     print("  by kind: " + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items())))
+    if gone:
+        print(f"  audio no longer in staging (filed by beets?): {len(gone)} — records kept for `beet stage-audit`")
     if ignored:
         print(f"  ignored (dotfiles, OS junk): {len(ignored)} — e.g. {ignored[0]}")
     audio = [r for r in recs if r["kind"] == "audio"]
@@ -1345,14 +1365,15 @@ def group(a):
     sibling folders named like discs ("… CD1", "… CD2") whatever they hold;
     `beet stage-review` imports each folder by itself, so this is the only
     place albums are merged, and each merge is logged to STAGING.group.json
-    for the review page to show."""
+    for the review page to show. The table, if drafted already, follows the
+    files it moves."""
     staging = Path(a.staging)
     recs = load_manifest(staging)
     if recs is None:
         sys.exit(f"{staging}: no manifest; run `media-stage scan` first")
     groups = {}  # (album artist, album) -> {"base", "artist", "files": [(rel, disc)]}
     for rel, r in sorted(recs.items()):
-        if r["kind"] != "audio":
+        if r["kind"] != "audio" or r.get("gone"):
             continue
         tags = (r.get("meta") or {}).get("tags", {})
         name = AUDIO_NAME.match(Path(rel).name)
@@ -1375,7 +1396,7 @@ def group(a):
 
     log_path = Path(str(staging).rstrip("/") + ".group.json")
     log = json.loads(log_path.read_text()) if log_path.exists() else {}
-    moved, stuck = 0, []
+    moved, stuck = {}, []
     for g in groups.values():
         discs = sorted({d for _, d in g["files"]})
         origins = sorted({str(Path(rel).parent) for rel, _ in g["files"]})
@@ -1389,7 +1410,7 @@ def group(a):
             (staging / g["folder"]).mkdir(exist_ok=True)
             try:
                 move_noclobber(staging / rel, staging / dst)
-                moved += 1
+                moved[rel] = dst.as_posix()
             except FileExistsError:
                 stuck.append(rel)
         if len(origins) > 1 or len(discs) > 1:
@@ -1406,15 +1427,24 @@ def group(a):
                 shutil.rmtree(p)
     if log:
         log_path.write_text(json.dumps(log, indent=1, ensure_ascii=False))
+    # A table drafted before group names the files where they were: its
+    # rows follow them, so check still finds every file in it.
+    _, table, _ = sidecar_paths(staging)
+    if moved and table.exists():
+        header, rows = read_table_full(table)
+        for r in rows:
+            if r.get("old") in moved:
+                r["old"] = moved[r["old"]]
+        write_table(table, header, rows)
     merged = [f for f, v in log.items() if len(v["from"]) > 1]
-    print(f"grouped {moved} files into {len(groups)} album folders; "
+    print(f"grouped {len(moved)} files into {len(groups)} album folders; "
           f"{len(merged)} made from more than one folder (-> {log_path.name})")
     for f in merged:
         print(f"  {f}: " + ", ".join(log[f]["from"]))
     for rel in stuck:
         print(f"  not moved, a file of that name is already there: {rel}")
     a.hash = False
-    scan(a)
+    scan(a, moved)
 
 
 # --------------------------------------------------------------------------
@@ -1784,8 +1814,8 @@ def validate(staging, library):
             if new == "beets" and kind_of(old) != "audio":
                 errors.append(f"{where}: `beets` is for audio only")
             if old not in present:
-                if new in ("discard", "trash"):
-                    counts["done"] += 1  # set aside by an earlier apply
+                if new in ("beets", "discard", "trash"):
+                    counts["done"] += 1  # filed by beets (it moves what it imports), or set aside by an earlier apply
                     continue
                 errors.append(f"{where}: not in staging")
             if new == "trash" and (trash_dir(staging) / old).exists():
@@ -1912,7 +1942,8 @@ def apply_locked(a, staging, library):
                     pass
     left, _ = walk(staging)
     print(f"moved {counts['move']}, discarded {counts['discard']}, trashed {counts['trash']}; left in staging: {len(left)}"
-          + (f" (beets {counts['beets']}: `beet import {staging}`)" if counts.get("beets") else ""))
+          + (f" (beets {counts['beets']}: `media-stage group {staging}`, then `beet stage-review {staging}`)"
+             if counts.get("beets") else ""))
 
 
 # --------------------------------------------------------------------------
@@ -2126,7 +2157,8 @@ def tag_paths(a, library):
 # --------------------------------------------------------------------------
 # close: the batch's records go only once the batch is filed and audited.
 # The manifest is the one record of what each file said it was before beets
-# renamed it: an audio batch keeps it until `beet stage-audit` passes.
+# renamed it (a rescan keeps the records of audio beets has taken): an audio
+# batch keeps it until `beet stage-audit` passes.
 
 def cmd_close(a):
     with batch_lock(a.staging, "close"):
@@ -2337,7 +2369,7 @@ def main(argv=None):
     s.add_argument("--lookup", action="store_true",
                    help="films and shows: title, year, TMDB id and original language from Wikidata (network)")
     s.set_defaults(fn=cmd_draft)
-    s = sub.add_parser("group", help="move audio into one folder per album, by its tags (then rescans)")
+    s = sub.add_parser("group", help="move audio into one folder per album, by its tags (the table follows; then rescans)")
     s.add_argument("staging")
     s.set_defaults(fn=cmd_group)
     s = sub.add_parser("review", help="export the rows a person must decide; import their answers")
