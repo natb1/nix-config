@@ -262,6 +262,12 @@ let
         else
           "echo 'FAIL: WSL config missing wsl.exe tailscale invocation' && exit 1"
       }
+      ${
+        if lib.hasInfix "local tailscale_status_cmd = { 'tailscale', 'status', '--json' }" luaConfig then
+          "echo 'PASS: WSL config runs tailscale from PATH outside Windows'"
+        else
+          "echo 'FAIL: WSL config should run tailscale from PATH outside Windows' && exit 1"
+      }
       touch $out
     '';
 
@@ -353,6 +359,15 @@ let
           "echo 'PASS: macOS config includes tailscale'"
         else
           "echo 'FAIL: macOS config missing tailscale' && exit 1"
+      }
+      ${
+        # A Dock-launched WezTerm.app has launchd's PATH, without nix-darwin's.
+        if
+          lib.hasInfix "local tailscale_status_cmd = { '/run/current-system/sw/bin/tailscale', 'status', '--json' }" luaConfig
+        then
+          "echo 'PASS: macOS config runs tailscale from the nix-darwin system profile'"
+        else
+          "echo 'FAIL: macOS config should run tailscale by its /run/current-system path' && exit 1"
       }
       touch $out
     '';

@@ -17,6 +17,21 @@
   ...
 }:
 
+let
+  # The tailscale CLI the ssh_domains discovery runs. On macOS, WezTerm.app
+  # started from the Dock, Finder or Spotlight gets launchd's minimal PATH
+  # (/usr/bin:/bin:/usr/sbin:/sbin), which lacks /run/current-system/sw/bin,
+  # where modules/darwin/tailscale.nix installs the CLI — a bare `tailscale`
+  # fails there and ssh_domains comes up empty. So name the system profile's
+  # CLI, which also matches the running tailscaled. Linux sessions have that
+  # directory on PATH.
+  tailscaleCli =
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      "/run/current-system/sw/bin/tailscale"
+    else
+      "tailscale";
+in
+
 {
   programs.wezterm = {
     enable = true;
@@ -49,7 +64,7 @@
         -- On Windows, tailscale runs inside WSL so invoke it via a login shell
         -- to get the NixOS PATH (a non-login shell won't have tailscale on PATH).
         local is_windows = wezterm.target_triple:find('windows')
-        local tailscale_status_cmd = { 'tailscale', 'status', '--json' }
+        local tailscale_status_cmd = { '${tailscaleCli}', 'status', '--json' }
         if is_windows then
           tailscale_status_cmd = { 'wsl.exe', '-d', 'NixOS', '--', 'bash', '-lc', 'tailscale status --json' }
         end
