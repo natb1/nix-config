@@ -33,6 +33,11 @@ except ImportError:
     sr = None
 
 
+def setUpModule():
+    # Never desk's own Kavita: these tests run there too, beside a real key.
+    unittest.enterModuleContext(mock.patch.object(ms, "KAVITA_KEY", "/nonexistent/kavita-api-key"))
+
+
 def run_cli(*args):
     out = io.StringIO()
     code = 0
@@ -1631,6 +1636,101 @@ class Copies(unittest.TestCase):
                                                         "value": "discard"}))
             run_cli("review", "import", str(st), "--answers", str(Path(d) / "a.json"))
             self.assertIn("x.mkv\tdiscard\treviewed", (Path(d) / "b.tsv").read_text())
+
+
+class Kavita(unittest.TestCase):
+    """Once a command changes books/ or rpg/, Kavita is asked to scan the
+    library that holds the change, rather than wait for its folder watcher."""
+
+    def setUp(self):
+        d = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.lib = d / "media"
+        self.key = d / "api-key"
+        self.key.write_text("sekrit\n")
+        self.calls, self.down, self.batches = [], None, 0
+        self.enterContext(mock.patch.object(ms, "KAVITA_KEY", str(self.key)))
+        self.enterContext(mock.patch.object(ms, "kavita_api", self.api))
+
+    def api(self, method, path, token=None, **query):
+        if self.down:
+            raise self.down
+        self.calls.append((method, path, token, query))
+        if path == "/api/Plugin/authenticate":
+            return {"token": "jwt", "username": "admin"}
+        if path == "/api/Library/libraries":
+            return [{"id": 1, "name": "RPG", "folders": [str(self.lib / "rpg")]},
+                    {"id": 2, "name": "Book", "folders": [f"{self.lib}/books/"]}]
+        return None
+
+    def scans(self):
+        return [(path, token, query) for _, path, token, query in self.calls if path.startswith("/api/Library/scan")]
+
+    def apply(self, files):
+        """File `files` ({library path: maker}) through a batch of their own; apply's output."""
+        self.batches += 1
+        st = self.lib / "staging" / f"b{self.batches}"
+        st.mkdir(parents=True)
+        for n, (new, make) in enumerate(files.items()):
+            make(st / f"{n}{Path(new).suffix}")
+        run_cli("scan", str(st), "--library", str(self.lib))
+        Path(str(st) + ".tsv").write_text("old\tnew\n" + "".join(
+            f"{n}{Path(new).suffix}\t{new}\n" for n, new in enumerate(files)))
+        code, out = run_cli("apply", str(st), "--library", str(self.lib))
+        self.assertEqual(code, 0, out)
+        return out
+
+    def test_apply_asks_for_a_scan_of_the_library_it_filed_into(self):
+        out = self.apply({"rpg/Game/Game - Rules.pdf": make_pdf})
+        self.assertEqual(self.calls[0][1:], ("/api/Plugin/authenticate", None,
+                                             {"apiKey": "sekrit", "pluginName": "media-stage"}))
+        self.assertEqual(self.scans(), [("/api/Library/scan", "jwt", {"libraryId": 1})])
+        self.assertIn("Kavita: asked to rescan RPG", out)
+        # Books and RPGs at once: one scan of all. Kavita puts a scan asked
+        # for while another runs off by three hours.
+        self.calls.clear()
+        out = self.apply({"rpg/Game/Game - Map.pdf": make_pdf,
+                          "books/Someone/Some Book/Some Book.pdf": make_pdf})
+        self.assertEqual(self.scans(), [("/api/Library/scan-all", "jwt", {})])
+        self.assertIn("Kavita: asked to rescan RPG, Book", out)
+
+    def test_what_kavita_does_not_read_asks_for_nothing(self):
+        out = self.apply({"rpg/Game/extras/Handout.pdf": make_pdf})
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("Kavita", out)
+        with redirect_stdout(io.StringIO()) as out:
+            ms.kavita_rescan(self.lib, ["movies/Heat (1995)/Heat (1995).mkv", "music/A/B/01 C.mp3"])
+        self.assertEqual((self.calls, out.getvalue()), ([], ""))
+        # A library Kavita doesn't have.
+        with redirect_stdout(io.StringIO()) as out:
+            ms.kavita_rescan(Path(self.key.parent) / "elsewhere", ["rpg/Game/Game - Rules.pdf"])
+        self.assertEqual(self.scans(), [])
+        self.assertIn("none of its libraries holds", out.getvalue())
+
+    def test_tag_lint_fix_and_restage_ask_too(self):
+        pdf = self.lib / "rpg/Game/Game - Rules.pdf"
+        pdf.parent.mkdir(parents=True)
+        make_pdf(pdf, title="x")
+        code, out = run_cli("lint", "--library", str(self.lib))
+        self.assertEqual((code, self.calls), (1, []))  # only looks
+        code, out = run_cli("lint", "--fix", "--library", str(self.lib))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.scans(), [("/api/Library/scan", "jwt", {"libraryId": 1})])
+        self.calls.clear()
+        code, out = run_cli("tag", str(pdf), "--library", str(self.lib))
+        self.assertEqual((code, self.calls), (0, []))  # nothing to write, nothing changed
+        code, out = run_cli("restage", str(self.lib / "staging" / "again"), "rpg/Game", "--library", str(self.lib))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.scans(), [("/api/Library/scan", "jwt", {"libraryId": 1})])
+
+    def test_no_key_or_no_kavita_is_a_note(self):
+        self.down = OSError("refused apiKey=sekrit")
+        out = self.apply({"rpg/Game/Game - Rules.pdf": make_pdf})
+        self.assertTrue((self.lib / "rpg/Game/Game - Rules.pdf").exists())
+        self.assertIn("Kavita: no rescan (refused apiKey=…); its folder watcher finds the change", out)
+        self.assertNotIn("sekrit", out)
+        self.key.unlink()
+        out = self.apply({"rpg/Game/Game - Map.pdf": make_pdf})
+        self.assertIn(f"Kavita: no API key in {self.key}, so no rescan", out)
 
 
 if __name__ == "__main__":

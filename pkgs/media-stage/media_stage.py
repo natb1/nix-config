@@ -21,6 +21,11 @@ staging/print/ has staging/print.manifest.jsonl and staging/print.tsv. The
 library share is read-only from the Mac, so apply, tag and lint --fix run
 on desk (`ssh desk media-stage apply /srv/media/staging/<batch>`).
 
+Once apply, tag, restage or lint --fix has changed books/ or rpg/, Kavita is
+asked to scan the library, with an admin's auth key in
+~/.config/kavita/api-key; without one, its folder watcher finds the change
+minutes later.
+
 The table (TSV, header row) needs `old` and `new` columns; `confidence` and
 `note` are optional. `old` is relative to STAGING, `new` to the library root.
 Special values of `new`: `beets` (music, imported by beets instead), `skip`
@@ -2056,7 +2061,8 @@ def cmd_apply(a):
         return apply_locked(a, staging, library)
     # Batch first, then library: every caller takes them in this order.
     with batch_lock(staging, f"apply {staging.name}"), library_lock(library, f"apply {staging.name}"):
-        apply_locked(a, staging, library)
+        filed = apply_locked(a, staging, library)
+    kavita_rescan(library, filed)
 
 
 def apply_locked(a, staging, library):
@@ -2107,6 +2113,7 @@ def apply_locked(a, staging, library):
     print(f"moved {counts['move']}, discarded {counts['discard']}, trashed {counts['trash']}; left in staging: {len(left)}"
           + (f" (beets {counts['beets']}: `media-stage group {staging}`, then `beet stage-review {staging}`)"
              if counts.get("beets") else ""))
+    return [new for _, new in moves if new not in ("discard", "trash")]
 
 
 # --------------------------------------------------------------------------
@@ -2315,7 +2322,8 @@ def cmd_tag(a):
     if a.dry_run:
         return tag_paths(a, library)
     with library_lock(library, "tag"):
-        tag_paths(a, library)
+        tagged = tag_paths(a, library)
+    kavita_rescan(library, tagged)
 
 
 def library_arg(library, arg):
@@ -2338,9 +2346,13 @@ def tag_paths(a, library):
         if rel is None or rel.split("/")[0] not in LIBRARY_DIRS:
             sys.exit(f"not in the library: {arg}")
         rels.append(rel)
+    tagged = []
     for rel in rels:
         changes = tag_file(library, rel, a.dry_run)
         print(f"{rel}: {'; '.join(changes) if changes else 'ok'}")
+        if changes:
+            tagged.append(rel)
+    return tagged
 
 
 # --------------------------------------------------------------------------
@@ -2396,7 +2408,8 @@ def cmd_restage(a):
     staging, library = Path(a.staging), Path(a.library) if a.library else default_library()
     staging.parent.mkdir(parents=True, exist_ok=True)
     with batch_lock(staging, f"restage {staging.name}"), library_lock(library, f"restage {staging.name}"):
-        restage(a, staging, library)
+        restaged = restage(a, staging, library)
+    kavita_rescan(library, restaged)
 
 
 def restage(a, staging, library):
@@ -2415,7 +2428,7 @@ def restage(a, staging, library):
             files.append(p)
         else:
             sys.exit(f"no such file: {arg}")
-    moved = 0
+    moved = []
     log = restaged_path(staging)
     for f in files:
         rel = str(f.relative_to(library))
@@ -2429,13 +2442,14 @@ def restage(a, staging, library):
         dst = staging / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         move_noclobber(f, dst)
-        moved += 1
+        moved.append(rel)
         d = f.parent
         while d != library and d.parent != library and not any(d.iterdir()):
             d.rmdir()
             d = d.parent
-    print(f"restaged {moved} files -> {staging}\n"
+    print(f"restaged {len(moved)} files -> {staging}\n"
           f"next: scan --hash, draft, fill the table's `new` column, check, apply")
+    return moved
 
 
 def restaged_path(staging):
@@ -2451,6 +2465,59 @@ def restaged_sources(staging):
 
 def glob_escape(s):
     return re.sub(r"([*?\[])", r"[\1]", s)
+
+
+# --------------------------------------------------------------------------
+# Kavita: a scan as soon as a command has changed what it reads (books/ and
+# rpg/, a game's extras/ aside), rather than when its folder watcher gets to
+# it: five minutes after a change, then a minute more. Scans are an admin's
+# to ask for, so the key is an admin's auth key (Kavita's user settings, 3rd
+# Party Clients; README, step 4). Best effort: the files are filed either
+# way, so no key, or no Kavita, is a note and never a failure.
+
+KAVITA_URL = "http://127.0.0.1:5000"  # desk's (hosts/desk/kavita.nix), where apply, tag, restage and lint --fix run
+KAVITA_KEY = "~/.config/kavita/api-key"
+
+
+def kavita_api(method, path, token=None, **query):
+    import urllib.parse
+    import urllib.request
+    req = urllib.request.Request(KAVITA_URL + path + ("?" + urllib.parse.urlencode(query) if query else ""),
+                                 method=method, headers={"Authorization": f"Bearer {token}"} if token else {})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        raw = r.read()
+    return json.loads(raw) if raw else None
+
+
+def kavita_rescan(library, rels):
+    """Ask Kavita to scan the libraries that hold `rels`, the library paths
+    a command added, rewrote or removed."""
+    paths = [Path(os.path.realpath(Path(library) / rel)) for rel in rels
+             if rel.split("/")[0] in ("books", "rpg") and not is_extra(rel)]
+    if not paths:
+        return
+    key_file, key = Path(KAVITA_KEY).expanduser(), ""
+    later = "its folder watcher finds the change, minutes later"
+    if not key_file.exists():
+        print(f"Kavita: no API key in {key_file}, so no rescan; {later}")
+        return
+    try:
+        key = key_file.read_text().strip()
+        token = kavita_api("POST", "/api/Plugin/authenticate", apiKey=key, pluginName="media-stage")["token"]
+        libs = [lib for lib in kavita_api("GET", "/api/Library/libraries", token)
+                if any(Path(os.path.realpath(f)) in (p, *p.parents) for f in lib.get("folders") or [] for p in paths)]
+        if len(libs) == 1:
+            kavita_api("POST", "/api/Library/scan", token, libraryId=libs[0]["id"])
+        elif libs:
+            # One job for them all: a library scan asked for while another
+            # runs is put off by three hours.
+            kavita_api("POST", "/api/Library/scan-all", token)
+    except Exception as e:  # Kavita down, a key it doesn't know: the files are filed all the same
+        why = str(e).replace(key, "…") if key else str(e)
+        print(f"Kavita: no rescan ({why}); {later}")
+        return
+    print(f"Kavita: asked to rescan {', '.join(lib['name'] for lib in libs)}" if libs
+          else f"Kavita: none of its libraries holds {paths[0].parent}, so no rescan")
 
 
 # --------------------------------------------------------------------------
@@ -2472,14 +2539,16 @@ def shelf_problems(rel, have):
 
 def cmd_lint(a):
     library = Path(a.library) if a.library else default_library()
+    fixed = []  # what --fix rewrote
     if not a.fix:
-        sys.exit(lint(a, library))
+        sys.exit(lint(a, library, fixed))
     with library_lock(library, "lint --fix"):
-        code = lint(a, library)
+        code = lint(a, library, fixed)
+    kavita_rescan(library, fixed)
     sys.exit(code)
 
 
-def lint(a, library):
+def lint(a, library, fixed):
     roots = []
     for d in a.dirs:
         p, rel = library_arg(library, d)
@@ -2537,6 +2606,7 @@ def lint(a, library):
                     todo = shelf_problems(rel, have)
                     if todo and a.fix and "error" not in have:
                         changes = tag_file(library, rel)
+                        fixed.append(rel)
                         left = shelf_problems(rel, current_meta(path))  # read back: a write can fail
                         problems += bool(left)
                         print(f"{'FAILED' if left else 'FIXED '} {rel}: {'; '.join(changes) or ', '.join(left)}")
@@ -2562,6 +2632,7 @@ def lint(a, library):
                     bad = off(have)
                     if bad and a.fix:
                         changes = tag_file(library, rel)
+                        fixed.append(rel)
                         # Read back: a write can fail, and some containers have no title we write.
                         have = current_meta(path)
                         bad = off(have)

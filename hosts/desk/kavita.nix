@@ -17,6 +17,9 @@
 # volume and title into every file, since Kavita takes them from a file's
 # metadata (docs/desktop-migration.md, "Books and RPGs in Kavita").
 # Kavita reads, never writes: covers and progress stay in /var/lib/kavita.
+# Both libraries watch their folders, but the watcher scans only minutes
+# after a change, so media-stage asks for a scan as soon as it has filed,
+# with an admin's auth key in ~/.config/kavita/api-key (README, step 4).
 #
 # Tailnet and home Wi-Fi, unlike Navidrome and Jellyfin, which are
 # tailnet-only. It listens on every interface; tailscale0 is trusted

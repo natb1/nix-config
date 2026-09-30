@@ -200,7 +200,11 @@ agent or person per batch.
    It re-checks, moves, writes standard metadata, deletes `discard` rows,
    moves `trash` rows to `staging/trash/<batch>/`, and logs each file with its
    original sha256 to `<batch>.applied.jsonl` (kept after `close`: it is how
-   a later batch knows the content is filed). It can be rerun.
+   a later batch knows the content is filed). It can be rerun. For books and
+   RPGs it ends by asking Kavita to scan (`Kavita: asked to rescan RPG`), as
+   `tag`, `restage` and `lint --fix` do; the files show in Kavita a moment
+   later. `Kavita: no rescan …` or `no API key …` is not an error: Kavita's
+   folder watcher finds them minutes later. Don't work around it.
 10. **Lint and close**: `media-stage lint`. Then take the filed batch off
    the review page, so the page shows only reviews still waiting: every
    `reviews` document of the batch (`<batch>`, `<batch>-2` and later
