@@ -8,7 +8,13 @@
 # fetched at the next session start, installs the enabled plugins from it, and
 # with autoUpdate refreshes the clone in the background after each session
 # starts. The plugin's manifest pins no version, so an install's version is the
-# commit it came from and updates track CanonDB's main.
+# commit it came from and updates track CanonDB's main. A session loads the
+# update at its next start, so the plugin runs one session behind main.
+#
+# FORCE_AUTOUPDATE_PLUGINS is what makes autoUpdate do anything here: the
+# claude-code-nix wrapper sets DISABLE_AUTOUPDATER=1 (Nix, not Claude Code,
+# updates the binary), and that also stops plugin auto-updates unless this is
+# set. Without it the install stays on the commit it was first cloned at.
 #
 # Why an activation script and not home.file: Claude Code writes to
 # ~/.claude/settings.json itself (marketplace add, /plugin toggles, auto-update
@@ -33,6 +39,7 @@ let
       autoUpdate: true
     }
     | .enabledPlugins["principal@canondb"] = true
+    | .env.FORCE_AUTOUPDATE_PLUGINS = "1"
   '';
 in
 {

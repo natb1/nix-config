@@ -1,12 +1,21 @@
 # The rebuild menu: Mod+Shift+R in niri (hosts/desk/home/niri.kdl) opens
-# `rebuild-menu`, a list of every worktree of ~/natb1/nix-config and every open
-# pull request, and runs
+# `rebuild-menu`, a list of the worktrees of ~/natb1/nix-config and the open
+# pull requests that change its config, and runs
 # `rebuild` (modules/home/rebuild.nix) against the one picked — pull, then
 # switch — in a terminal for the sudo prompt, held open to read the result.
 #
 # git lists the main checkout first, so it is the entry already selected: Enter
 # alone rebuilds main, as the binding did before there was a menu. Worktrees
 # whose directory is gone (prunable) are left out.
+#
+# So are worktrees and pull requests that change nothing a rebuild would pick
+# up: every session starts in a worktree of its own, most never touch the
+# config, and a menu of those buries the few worth switching to. A worktree
+# counts if its tracked files, committed or not, differ from where it left
+# origin/main (untracked files are not in the flake); a pull request if one of
+# its files does. Only the paths in `notConfig` below don't count, and an
+# answer not to be had — no merge base, a pull request list from before this
+# rule — shows the entry. The main checkout is always listed.
 #
 # The list is `pick` (./pick), three lines per entry: the open pull
 # request's number and title (from gh, which is already logged in), the last
@@ -42,10 +51,28 @@
 # commit is still on GitHub, in the closed PR. This also removes the work of
 # a PR closed to abandon it — deliberately, since abandoning it is the point.
 
-{ pkgs, ... }:
+{ pkgs, lib, ... }:
 
 let
   pick = pkgs.callPackage ./pick { };
+
+  # Paths no host's configuration reads, as globs from the repository root
+  # (`*` stays within a directory, `**` doesn't): a change confined to these
+  # leaves every rebuild the same. tests/ is `nix flake check`'s, not a
+  # system's; the top level's Markdown is notes and plans.
+  notConfig = [
+    "docs/**"
+    ".github/**"
+    "scripts/**"
+    "tests/**"
+    "*.md"
+    ".gitignore"
+    "hosts/desk/bios.md"
+    "hosts/desk/bios/**"
+  ];
+  # The same globs for git (pathspecs) and for jq (anchored regexes).
+  notConfigPathspecs = lib.concatMapStringsSep " " (g: lib.escapeShellArg ":(top,glob,exclude)${g}") notConfig;
+  notConfigRegexes = map (g: "^${lib.replaceStrings [ "." "**" "*" ] [ "\\." ".*" "[^/]*" ] g}$") notConfig;
   flock = "${pkgs.util-linux}/bin/flock";
 
   rebuildMenu = pkgs.writeShellApplication {
@@ -66,24 +93,29 @@ let
       repo="$HOME/natb1/nix-config"
       g() { git -C "$repo" "$@"; }
 
-      # Open PRs as "branch<TAB>number<TAB>title", kept between runs.
+      # Open PRs as "branch<TAB>number<TAB>title<TAB>config", kept between
+      # runs; config is 1 when the PR touches a path outside notConfig.
       prs="''${XDG_CACHE_HOME:-$HOME/.cache}/rebuild-menu/prs"
       mkdir -p "''${prs%/*}"
       touch "$prs"
 
       # One row per live worktree, main checkout first: the worktree's path
       # (what pick answers with), then the three lines shown. Then one per
-      # open PR with no worktree, keyed "pr:<number>".
+      # open PR with no worktree, keyed "pr:<number>". Both only if they
+      # change the config (see the top), but the main checkout.
       rows() {
         local -A pr_number=() pr_title=() has_worktree=()
-        local branch number title path ref first
-        while IFS=$'\t' read -r branch number title; do
+        local branch number title config path ref first main=1
+        while IFS=$'\t' read -r branch number title config; do
           pr_number[$branch]=$number
           pr_title[$branch]=$title
         done <"$prs"
 
         while IFS=$'\t' read -r path ref; do
           [ -z "$ref" ] || has_worktree[$ref]=1
+          if [ -n "$main" ]; then main=
+          elif ! changes_config "$path"; then continue
+          fi
           if [ -n "''${pr_number[$ref]:-}" ]; then
             first="#''${pr_number[$ref]} ''${pr_title[$ref]}"
           else
@@ -98,10 +130,19 @@ let
           /^$/         { if (!gone) print path "\t" ref }
         ')
 
-        while IFS=$'\t' read -r branch number title; do
+        while IFS=$'\t' read -r branch number title config; do
           [ -n "$branch" ] && [ -z "''${has_worktree[$branch]:-}" ] || continue
+          [ "$config" != 0 ] || continue
           printf 'pr:%s\t#%s %s\t%s\t%s\n' "$number" "$number" "$title" "no worktree yet — picking adds one" "$branch"
         done <"$prs"
+      }
+
+      # changes_config PATH: the worktree's tracked files, committed or not,
+      # differ from its merge base with origin/main outside notConfig.
+      changes_config() {
+        local base
+        base=$(git -C "$1" merge-base origin/main HEAD 2>/dev/null) || return 0
+        ! git -C "$1" diff --quiet "$base" -- ${notConfigPathspecs}
       }
 
       # worktree_for NUMBER: add a worktree for an open PR's branch, tracking
@@ -133,11 +174,14 @@ let
 
         # Offline or slow, the tidy-up runs against the origin/main last
         # fetched: anything in that is merged all the same. An offline gh
-        # leaves the last run's PRs.
+        # leaves the last run's PRs. The $ in the jq are jq's (SC2016).
+        # shellcheck disable=SC2016
         (cd "$repo" && new=$(mktemp "$prs.XXXXXX") &&
           if timeout 15 gh pr list --state open --limit 100 \
-            --json number,title,headRefName \
-            --jq '.[] | "\(.headRefName)\t\(.number)\t\(.title)"' >"$new" 2>/dev/null; then
+            --json number,title,headRefName,files \
+            --jq 'def config: . as $p | all(${builtins.toJSON notConfigRegexes}[]; . as $re | $p | test($re) | not);
+                  .[] | "\(.headRefName)\t\(.number)\t\(.title)\t\(if any(.files[].path; config) then 1 else 0 end)"' \
+            >"$new" 2>/dev/null; then
             mv "$new" "$prs"
           else
             rm -f "$new"
