@@ -7,7 +7,7 @@
 # daemon onto the new binary on every version bump, while Environment must use
 # only stable anchors so unrelated activations do NOT restart it. These tests
 # guard the "symlink-only" and "no Environment" regressions, a store path in
-# PATH, and a PATH that puts the plain sudo ahead of the setuid wrapper.
+# PATH, and a unit that would let a background session use sudo.
 #
 # Follows tests/wezterm.test.nix's mock-eval convention: the module is called as
 # a plain function against a mock config + mock pkgs. flake.nix builds `checks`
@@ -105,7 +105,7 @@ let
 
   # Assertion 2: Environment is a non-empty PATH list built from the stable
   # profile/system anchors (guards the "no Environment" / symlink-only regression),
-  # with no per-generation store path, and with the setuid wrappers first.
+  # with no per-generation store path and no setuid wrappers.
   test-environment-stable-anchors =
     let
       env = linuxSvc.Service.Environment;
@@ -143,10 +143,16 @@ let
           "echo 'FAIL: PATH contains a /nix/store/ path — unrelated activations would restart the daemon (got: ${pathEntry})' && exit 1"
       }
       ${
-        if lib.hasPrefix "PATH=/run/wrappers/bin:" pathEntry then
-          "echo 'PASS: PATH puts the setuid wrappers first'"
+        if !(lib.hasInfix "/run/wrappers" pathEntry) then
+          "echo 'PASS: PATH leaves out the setuid wrappers'"
         else
-          "echo 'FAIL: PATH does not start with /run/wrappers/bin — sessions would get the non-setuid sudo (got: ${pathEntry})' && exit 1"
+          "echo 'FAIL: PATH has /run/wrappers — background sessions would find a working sudo (got: ${pathEntry})' && exit 1"
+      }
+      ${
+        if (linuxSvc.Service.NoNewPrivileges or false) == true then
+          "echo 'PASS: NoNewPrivileges is set'"
+        else
+          "echo 'FAIL: NoNewPrivileges is not set — a session could run /run/wrappers/bin/sudo' && exit 1"
       }
       touch $out
     '';

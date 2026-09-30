@@ -34,7 +34,17 @@
 # run from inside a background session kills its own shell. Switch from a plain
 # interactive shell (`cat /proc/self/cgroup` should not name this unit).
 #
-# tests/claude-daemon.test.nix locks the ExecStart and PATH invariants above;
+# ── No root from a session ────────────────────────────────────────────────────
+#
+# NoNewPrivileges makes setuid and file capabilities no-ops for the daemon and
+# everything it forks, so a background session cannot use sudo, su or mount
+# even where sudo needs no password (desk's wheel). PATH also leaves out
+# /run/wrappers/bin, so the sudo a session finds is the plain one, which fails
+# at once rather than half-running. Switching belongs in a terminal you are
+# watching, which the restart note above asks for anyway.
+#
+# tests/claude-daemon.test.nix locks the ExecStart, PATH and NoNewPrivileges
+# invariants above;
 # the KillMode note describes a consequence and is not tested.
 
 {
@@ -59,12 +69,12 @@
       # The systemd USER manager's own PATH is minimal (systemd's bin only) — it
       # does NOT contain git/jq/gh/claude. The daemon forks sessions that run
       # those, and they inherit the SERVICE env, so PATH must be set here. Stable
-      # anchors only — see the header. The setuid wrappers come first, as in a
-      # login shell: /run/current-system/sw/bin also has sudo, mount and su,
-      # without the setuid bit, and ahead of the wrappers they fail.
+      # anchors only — see the header. No /run/wrappers/bin: see "No root from
+      # a session".
       Environment = [
-        "PATH=/run/wrappers/bin:${config.home.profileDirectory}/bin:/etc/profiles/per-user/${config.home.username}/bin:/run/current-system/sw/bin"
+        "PATH=${config.home.profileDirectory}/bin:/etc/profiles/per-user/${config.home.username}/bin:/run/current-system/sw/bin"
       ];
+      NoNewPrivileges = true;
       Restart = "always";
       RestartSec = 1;
     };

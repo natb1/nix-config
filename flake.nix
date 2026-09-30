@@ -243,9 +243,9 @@
               touch "$out"
             '';
           # desk's claude-remote-control units, for every user that has one.
-          # Sessions inherit the unit's PATH: unless the setuid wrappers come
-          # first, `sudo` is the plain copy in /run/current-system/sw/bin and
-          # `rebuild` fails from a session. A store path in it would change the
+          # Sessions get no root (see the module's "No root from a session"):
+          # NoNewPrivileges must be set and PATH must leave out
+          # /run/wrappers/bin. A store path in PATH would change the
           # unit on unrelated switches and restart rc, killing its sessions.
           # With stdout sent to null, stderr must name the journal, or it
           # follows stdout and rc's startup errors are lost too.
@@ -260,8 +260,10 @@
                   env = lib.toList (s.Service.Environment or [ ]);
                   path = lib.findFirst (lib.hasPrefix "PATH=") "" env;
                 in
-                lib.optional (!lib.hasPrefix "PATH=/run/wrappers/bin:" path)
-                  "${user}: PATH does not start with /run/wrappers/bin: ${path}"
+                lib.optional ((s.Service.NoNewPrivileges or false) != true)
+                  "${user}: NoNewPrivileges is not set"
+                ++ lib.optional (lib.hasInfix "/run/wrappers" path)
+                  "${user}: PATH has /run/wrappers: ${path}"
                 ++ lib.optional (lib.hasInfix "/nix/store/" path)
                   "${user}: PATH has a store path: ${path}"
                 ++ lib.optional ((s.Service.StandardOutput or null) == "null"
