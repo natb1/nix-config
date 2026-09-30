@@ -1313,6 +1313,42 @@ class Copies(unittest.TestCase):
             m = ms.epub_meta(book)
             self.assertEqual((m["title"], m["series"], m["volume"], m["source"]), ("The Stranger", "Absurd", "1", "0" * 64))
 
+    def test_epub2_written_bare_is_mended(self):
+        # As the ElementTree version left a book: the attributes bare, no
+        # opf: prefix declared, and its sha256 already in a dc:source, so
+        # nothing else about it would make `tag` write it.
+        with tempfile.TemporaryDirectory() as d:
+            book = Path(d) / "stranger.epub"
+            make_epub(book, "The Stranger", None)
+            ms.rewrite_zip(book, {"OEBPS/content.opf": ("""<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" unique-identifier="PrimaryID" version="2.0">
+  <metadata>
+    <dc:identifier id="PrimaryID" scheme="ISBN">978-0-307-82766-1</dc:identifier>
+    <dc:creator file-as="Camus, Albert" role="aut">Albert Camus</dc:creator>
+    <dc:date event="publication">2012-07-18</dc:date>
+    <meta content="cover-image" name="cover" />
+  <dc:title>The Stranger</dc:title><dc:source>sha256:%s</dc:source></metadata>
+  <manifest/><spine/>
+</package>""" % ("0" * 64)).encode()})
+            rel = "books/Albert Camus/The Stranger/The Stranger.epub"
+            self.assertEqual(ms.shelf_todo(rel, ms.current_meta(book)).get("opf"), "event,file-as,role,scheme")
+            ms.epub_write(book, {"title": "The Stranger", "author": "Albert Camus"}, source="0" * 64)
+            self.assertNotIn("opf", ms.shelf_todo(rel, ms.current_meta(book)))
+            with zipfile.ZipFile(book) as z:
+                raw = z.read("OEBPS/content.opf")
+            md = ms.ET.fromstring(raw).find("opf:metadata", ms.NS)
+            opf = "{%s}" % ms.NS["opf"]
+            creator, ident, date = (md.find(f"dc:{t}", ms.NS) for t in ("creator", "identifier", "date"))
+            self.assertEqual((creator.get(opf + "file-as"), creator.get(opf + "role"),
+                              ident.get(opf + "scheme"), date.get(opf + "event")),
+                             ("Camus, Albert", "aut", "ISBN", "publication"))
+            self.assertNotIn(b' role="', raw)
+            self.assertIn(b"opf:role=", raw)
+            self.assertEqual(ident.get("id"), "PrimaryID")
+            self.assertIsNotNone(md.find("opf:meta[@name='cover']", ms.NS))
+            m = ms.epub_meta(book)
+            self.assertEqual((m["title"], m["source"]), ("The Stranger", "0" * 64))
+
     def test_one_file_per_volume(self):
         with tempfile.TemporaryDirectory() as d:
             lib = Path(d)

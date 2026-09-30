@@ -289,6 +289,8 @@ NS = {
     "opf": "http://www.idpf.org/2007/opf",
     "dc": "http://purl.org/dc/elements/1.1/",
 }
+# EPUB2's attributes on dc: elements, in the OPF namespace.
+OPF_ATTRS = ("role", "file-as", "scheme", "event")
 
 
 def _opf_path(z):
@@ -318,6 +320,9 @@ def epub_meta(path):
         "series": series,
         "volume": volume,
         "source": next((s[len(SOURCE):] for s in all_("source") if s.startswith(SOURCE)), ""),
+        # EPUB2 attributes left out of the OPF namespace (see epub_write)
+        "bare": sorted({a for e in md if isinstance(e.tag, str) and e.tag.startswith("{%s}" % NS["dc"])
+                        for a in OPF_ATTRS if a in e.attrib}) if root.get("version", "").startswith("2") else [],
     }
 
 
@@ -389,6 +394,20 @@ def epub_write(path, want, source=None):
     md = root.find("opf:metadata", NS)
     dc = lambda t: f"{{{NS['dc']}}}{t}"
     meta = f"{{{NS['opf']}}}meta"
+    # Mend an EPUB2 that the ElementTree version wrote: its dc: elements'
+    # role, file-as, scheme and event bare, with no opf: prefix declared.
+    bare = [(e, a) for e in md if isinstance(e.tag, str) and e.tag.startswith(dc(""))
+            for a in OPF_ATTRS if a in e.attrib]
+    if bare and root.get("version", "").startswith("2"):
+        if md.nsmap.get("opf") != NS["opf"]:
+            # Declared on the root: lxml drops a declaration put on an inner
+            # element whose namespace is already the default.
+            mended = etree.Element(root.tag, dict(root.attrib), nsmap={**root.nsmap, "opf": NS["opf"]})
+            mended.text = root.text
+            mended.extend(list(root))
+            root = mended
+        for e, a in bare:
+            e.set(f"{{{NS['opf']}}}{a}", e.attrib.pop(a))
     for t in md.findall("dc:title", NS):
         if (t.text or "").strip() == want["title"]:
             md.remove(t)
@@ -2088,7 +2107,7 @@ def current_meta(path):
         series, volume = (m.get("series"), m.get("volume")) if m.get("series") and m.get("volume") else ("", "")
         return {"title": m.get("title", ""), "author": (m.get("creators") or [""])[0],
                 "series": series or m.get("title", ""), "volume": volume, "source": m.get("source", ""),
-                **({"error": m["error"]} if "error" in m else {})}
+                "bare": m.get("bare", []), **({"error": m["error"]} if "error" in m else {})}
     if k == "cbz":
         return cbz_meta(path)
     if k == "video":
@@ -2108,6 +2127,8 @@ def shelf_todo(rel, have):
             and not (x == "author" and k == "epub" and have.get("author"))}
     if k == "pdf" and not have.get("plain", True) and not have.get("encrypted"):
         todo["structure"] = "plain"  # see pdf_plain
+    if k == "epub" and have.get("bare"):
+        todo["opf"] = ",".join(have["bare"])  # see epub_write
     return todo
 
 
