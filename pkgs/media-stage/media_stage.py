@@ -79,12 +79,13 @@ _SIDE = rf"(\.[A-Za-z]{{2,3}}(-[A-Za-z]{{2}})?)?(\.(forced|sdh|cc|default))?\.({
 _ID = r"( \{tmdb-\d+\})?"
 
 # Books and RPGs are read in Kavita, which groups files into series: one
-# folder is one series (books/<author>/<series>/, rpg/<game>/). See "Books and
-# RPGs: what Kavita reads" below for the rest of what its layout needs.
+# folder is one series (books/<author>/<series>/, rpg/<game>/). A game's
+# extras/ holds what Kavita does not read (is_extra). See "Books and RPGs:
+# what Kavita reads" below for the rest of what its layout needs.
 LAYOUT = {
     "music": re.compile(r"^music/[^/]+/[^/]+/[^/]+\.[A-Za-z0-9]+$"),
     "books": re.compile(r"^books/[^/]+/[^/]+/[^/]+\.(epub|pdf|mobi|azw3|cbz|cbr|djvu)$"),
-    "rpg": re.compile(r"^rpg/[^/]+/[^/]+\.[A-Za-z0-9]+$"),
+    "rpg": re.compile(r"^rpg/[^/]+/(extras/)?[^/]+\.[A-Za-z0-9]+$"),
     "movies": re.compile(
         rf"^movies/(?P<m>[^/]+ \(\d{{4}}\){_ID})/"
         rf"((?P=m)( - [^/]+)?(\.({_V})|{_SIDE})|extras/[^/]+)$"),
@@ -112,6 +113,8 @@ def kind_of(p):
         return "subtitle"
     if e in AUDIO_EXT:
         return "audio"
+    if e == "zip":
+        return "zip"  # an archive: Kavita shows its images, and reads nothing else from it
     if e in ("pdf", "epub", "cbz", "cbr", "mobi", "azw3", "djvu"):
         return e if e in ("pdf", "epub", "cbz") else "document"
     if e in IMAGE_EXT:
@@ -140,9 +143,25 @@ def layout_error(rel):
         return f"top directory must be one of {', '.join(LIBRARY_DIRS)}"
     if not LAYOUT[top].match(rel):
         return f"does not fit the {top}/ layout"
-    if top in ("books", "rpg"):
+    if top in ("books", "rpg") and not is_extra(rel):
         return shelf_error(rel)
     return None
+
+
+def is_extra(rel):
+    """In a game's extras/ (rpg/<game>/extras/<file>): what Kavita does not
+    read, kept beside the game (an app, a virtual tabletop's assets). The RPG
+    library's exclude pattern, `**/extras/*`, keeps Kavita out of it, so no
+    metadata is written into these files and no Kavita naming rule applies."""
+    p = Path(rel).parts
+    return len(p) == 4 and p[0] == "rpg" and p[2] == "extras"
+
+
+def imageless(rel):
+    """Why an archive with no images is misplaced in books/ or rpg/."""
+    p = Path(rel).parts
+    return ("no images in it, so nothing for Kavita to show"
+            + (f": a game's other files go in rpg/{p[1]}/extras/" if p[0] == "rpg" and len(p) > 2 else ""))
 
 
 # --------------------------------------------------------------------------
@@ -158,14 +177,24 @@ def layout_error(rel):
 #         update, a /Length by reference) loses all of it, and so does a
 #         catalog kept in a compressed object stream, which it cannot reach
 #   CBZ   ComicInfo.xml's Series, Volume and Title
+#   ZIP   nothing: its images are shown as a CBZ's, but its ComicInfo.xml is
+#         not read. The series is its folder's name and the title its own
+#         name, so in rpg/<game>/ it lands in the game's series as it came,
+#         unless the name has a digit in it: then Kavita takes a series from
+#         the name ("Tokens (version 2)" made "Tokens (version", "Maps (1999)"
+#         made "Maps"), so a zip's name spells its numbers out
 # From the name it takes only a volume number, and it finds one in any "v2",
 # "vol 2", "volume 2", "tome 2", "t12 " or "S01" (KAVITA_VOLUME).
+# One series holds one format: a game's PDFs and its image archives are two
+# series of the game's name.
 #
 # So the folder is the series: apply writes it, with the volume and title
 # the name gives, into each file (shelf_meta), and a PDF is written out as
 # one plain revision (pdf_plain). A name gives a volume only as "<series> Vol. <N>",
 # and a version is "version 1.1", never "v1.1". An EPUB with no volume
 # number is a series of its own, named by its title: its folder is its title.
+# An archive with no images is a book of 0 pages and a media error: it belongs
+# in its game's extras/, which Kavita is told to pass over (is_extra).
 
 # Kavita's Latin-script volume patterns (Kavita.Services/Scanner/Parser.cs,
 # MangaVolumeRegex, which Book libraries use), in its order.
@@ -206,7 +235,7 @@ def volume_clashes(rels):
     seen, out = {}, []
     for rel in rels:
         p = Path(rel)
-        if p.parts[0] not in ("books", "rpg") or len(p.parts) < 3:
+        if p.parts[0] not in ("books", "rpg") or len(p.parts) < 3 or is_extra(rel):
             continue
         m = VOL_NAME.match(split_variant(p.stem)[0])
         if m:
@@ -221,6 +250,10 @@ def shelf_error(rel):
     """Why a books/ or rpg/ path would come out wrong in Kavita, or None."""
     p = Path(rel)
     stem, series = p.stem, p.parts[-2]
+    if ext_of(rel) == "zip" and re.search(r"\d", stem):
+        return ("a zip's name takes no digits: Kavita reads nothing from a zip but its images, so a number "
+                "in its name makes a series of it ('Tokens (version 2)' became 'Tokens (version'); "
+                "spell it out ('version two')")
     base, _ = split_variant(stem)
     m = VOL_NAME.match(base)
     said = kavita_volume(stem)
@@ -608,6 +641,41 @@ def cbz_meta(path):
             "volume": get("Volume"), "source": m.group(1) if m else ""}
 
 
+def zip_meta(path):
+    """What a .zip or .cbz holds: its images and audio, what else by
+    extension ('3 png, 1 txt'), and its ComicInfo.xml's fields."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+            by = {}
+            for n in names:
+                if not n.endswith("/"):
+                    e = ext_of(n) or "no extension"
+                    by[e] = by.get(e, 0) + 1
+            top = sorted(by.items(), key=lambda t: (-t[1], t[0]))
+            m = {"images": sum(c for e, c in top if e in IMAGE_EXT), "audio": sum(c for e, c in top if e in AUDIO_EXT),
+                 "contents": ", ".join(f"{c} {e}" for e, c in top[:6]) + (", …" if len(top) > 6 else "")}
+            ci = next((n for n in names if n.lower().endswith("comicinfo.xml")), None)
+            if ci:
+                m["comicinfo"] = {c.tag: c.text for c in ET.fromstring(z.read(ci)) if c.text}
+            return m
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
+def archive_note(m):
+    """draft's note for a .zip, or a .cbz with no images: where what it holds goes."""
+    if "error" in m:
+        return f"unreadable archive ({m['error'][:120]}): classify, or `skip`"
+    if m.get("images"):
+        return (f"archive of images ({m['contents']}): Kavita shows it as it came beside a game's books "
+                "(rpg/<game>/, no digits in its name); classify, or `skip`")
+    if m.get("audio"):
+        return f"archive of audio ({m['contents']}): unpack it into a batch of its own for beets, or `skip`"
+    return (f"archive with no images ({m.get('contents') or 'empty'}), so not for Kavita: "
+            "a game's rpg/<game>/extras/, or `skip`")
+
+
 def cbz_write(path, want, source=None):
     with zipfile.ZipFile(path) as z:
         name = _comicinfo_name(z) or "ComicInfo.xml"
@@ -665,17 +733,8 @@ def scan_file(path, rel, want_hash):
         rec["text"] = pdftext(path)
     elif k == "epub":
         rec["meta"] = epub_meta(path)
-    elif k == "cbz":
-        try:
-            with zipfile.ZipFile(path) as z:
-                names = z.namelist()
-                rec["meta"] = {"images": sum(ext_of(n) in IMAGE_EXT for n in names)}
-                ci = next((n for n in names if n.lower().endswith("comicinfo.xml")), None)
-                if ci:
-                    root = ET.fromstring(z.read(ci))
-                    rec["meta"]["comicinfo"] = {c.tag: c.text for c in root if c.text}
-        except Exception as e:
-            rec["meta"] = {"error": str(e)[:300]}
+    elif k in ("cbz", "zip"):
+        rec["meta"] = zip_meta(path)
     elif k in ("audio", "video"):
         p = ffprobe(path)
         fmt = p.get("format", {})
@@ -1306,13 +1365,15 @@ def draft(a, lookup=None):
                 conf, note = "medium", "from EPUB metadata"
             else:
                 note = "EPUB has no title/creator: " + json.dumps(m, ensure_ascii=False)[:200]
+        elif k == "zip" or (k == "cbz" and r.get("meta", {}).get("images") == 0):
+            note = archive_note(r.get("meta") or {})
         elif k in ("pdf", "cbz", "document"):
             m = r.get("meta", {})
             bits = [f"{x}={m[x]}" for x in ("Title", "Author", "Creator", "Pages", "Page size") if m.get(x)]
             text = r.get("text", "")
             note = "classify (books/ or rpg/): " + "; ".join(bits) + (f"; text: {text[:160]}" if text else "")
         else:
-            note = f"{k}: classify, or `skip`"
+            note = f"{k}: classify (a game's own file that Kavita doesn't read: rpg/<game>/extras/), or `skip`"
         rows[p] = [new, conf, note]
     # Content already in the library is not filed twice.
     for p, r in recs.items():
@@ -1572,10 +1633,12 @@ def needs_review(row):
 def evidence(rec):
     ev = [{"label": "Size", "value": f"{rec.get('size', 0) / 1e6:.1f} MB"}]
     m = rec.get("meta") or {}
-    if rec["kind"] in ("pdf", "cbz", "document"):
+    if rec["kind"] in ("pdf", "cbz", "zip", "document"):
         for k in ("Title", "Author", "Creator", "Producer", "Pages", "Page size"):
             if m.get(k):
                 ev.append({"label": k, "value": str(m[k])})
+        if m.get("contents"):
+            ev.append({"label": "Contents", "value": m["contents"]})
     elif rec["kind"] == "epub":
         for k in ("title", "creators", "publisher", "language", "identifiers"):
             if m.get(k):
@@ -1659,6 +1722,7 @@ LAYOUT_HELP = [
     "books/<author>/<series or title>/<title>[ (<variant>)].<ext>",
     "books/<author>/<series>/<series> Vol. <N>[ - <title>].<ext>",
     "rpg/<game>/<title>[ (<variant>)].<ext>  (a version is 'version 1.1', never 'v1.1')",
+    "rpg/<game>/extras/<file>  (what Kavita doesn't read: an app, a virtual tabletop's assets)",
 ]
 
 
@@ -1929,6 +1993,9 @@ def validate(staging, library):
         why = layout_error(new)
         if why:
             errors.append(f"{where}: {new}: {why}")
+        elif kind_of(old) in ("cbz", "zip") and new.split("/")[0] in ("books", "rpg") and not is_extra(new) \
+                and ((manifest.get(old) or {}).get("meta") or {}).get("images") == 0:
+            errors.append(f"{where}: {new}: {imageless(new)}")
         if new in seen_new:
             errors.append(f"{where}: same target as line {seen_new[new]}: {new}")
         elif new.casefold() in seen_fold:
@@ -2081,7 +2148,7 @@ def standard(rel):
     p = Path(rel)
     top, stem = p.parts[0], p.name[: -len(p.suffix)] if p.suffix else p.name
     if top in ("books", "rpg") and len(p.parts) > 2:
-        return shelf_meta(rel)
+        return {} if is_extra(rel) else shelf_meta(rel)
     if top == "movies":
         stem = re.sub(r" \{tmdb-\d+\}", "", stem)
         return {"title": stem if "extras" not in p.parts else strip_variants(stem)}
@@ -2448,7 +2515,20 @@ def lint(a, library):
                     problems += 1
                     print(f"LAYOUT {rel}: {why}")
                     continue
+                if is_extra(rel):
+                    continue  # Kavita passes over it: no metadata to check
                 k = kind_of(rel)
+                if k in ("cbz", "zip") and rel.split("/")[0] in ("books", "rpg"):
+                    m = zip_meta(path)
+                    if m.get("images") == 0:
+                        problems += 1
+                        print(f"LAYOUT {rel}: {imageless(rel)}")
+                        continue
+                    if k == "zip":  # Kavita reads nothing from it but its images
+                        if "error" in m:
+                            problems += 1
+                            print(f"META   {rel}: unreadable: {m['error']}")
+                        continue
                 if rel.split("/")[0] in ("books", "rpg") and k in SHELF_KINDS:
                     have = current_meta(path)
                     if have.get("encrypted"):

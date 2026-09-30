@@ -84,8 +84,9 @@ short name `desk` works everywhere through MagicDNS.
    add the server `http://localhost:8096`. Check: Dashboard → Playback →
    Transcoding shows VAAPI on the `12:00.0` render node.
 4. **Book server (Kavita):** open `http://desk:5000`, create the admin, and add
-   two libraries of type **Book**: `/srv/media/books` and `/srv/media/rpg`
-   ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)).
+   two libraries of type **Book**: `/srv/media/books` and `/srv/media/rpg`,
+   the second with the exclude pattern `**/extras/*` in its settings, so
+   each game's `extras/` stays out ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)).
 5. **Soulseek (slskd):** write `/etc/slskd/credentials` (root, 0600) with
    the Soulseek account and a web UI login, then `sudo systemctl restart
    slskd` ([`hosts/desk/soulseek.nix`](hosts/desk/soulseek.nix)):

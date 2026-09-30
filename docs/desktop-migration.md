@@ -3550,6 +3550,7 @@ each file's own metadata instead.
   music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.mp3   # disc only if multi-disc
   books/<author>/<series or title>/<title> (<variant>).<ext>      # <series> Vol. <N> - <title> in a series
   rpg/<game or line>/<title> (<variant>).<ext>
+  rpg/<game or line>/extras/<file>                                # what Kavita doesn't read
   movies/<title> (<year>) {tmdb-<id>}/<title> (<year>) {tmdb-<id>}.<ext>
   tv/<show> (<year>) {tmdb-<id>}/Season <NN>/<show> (<year>) - S<NN>E<NN> - <episode>.<ext>
   youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
@@ -3599,6 +3600,14 @@ is dropped (`(1)`, `OEF2025_11_12`, `_DTHKOw`, `pdfcoffee.com_`). A later
 re-download from a storefront arrives under the publisher's name and is renamed
 by hand to match.
 
+*Added 2026-09-30:* a module's other downloads. An archive of images (maps,
+art, handouts) sits beside the books as it came, `.zip` or `.cbz`: Kavita
+shows either, a zip only while its name has no digits (below). What Kavita
+can't show goes in the game's `extras/`, one level deep: an app (Warped
+Beyond Recognition's in-fiction terminal), a virtual tabletop's assets, an
+archive with no images. A soundtrack is music: unpacked into a batch of its
+own and filed by beets.
+
 **Books** — `books/<author>/<series>/<title>.<ext>`: a book in a series is
 `<series> Vol. <N> - <title>`; a book on its own is its own series, in a
 folder of its title (`books/Albert Camus/The Stranger/The Stranger.epub`).
@@ -3647,6 +3656,25 @@ that title goes first in its OPF (the publisher's is kept after it).
 `check` and `lint` refuse a name Kavita would misread and two files numbering
 one volume; `lint` reports a file whose metadata Kavita would read otherwise,
 and `lint --fix` rewrites it.
+
+*Added 2026-09-30:* **archives**, from two scans in a throwaway 0.9.1. Kavita
+shows a `.zip`'s images as it does a `.cbz`'s, but reads **no
+`ComicInfo.xml` from a zip**: the series is the folder's name and the title
+the file's, which `rpg/<game>/` already makes the game's and the title. So a
+zip is filed as it came, nothing written into it, and not in `books/`, where
+the folder is not the series. But a digit in a zip's name makes Kavita take
+the series from the name (`Tokens (version 2)` became a series
+`Tokens (version`, `Maps (1999)` one of `Maps`), so `check` and `lint` want
+a zip's numbers spelled out. **One series holds one format**: a game's image
+archives are a second series of the game's name beside its PDFs, as
+Mythic Bastionland's art already is. An archive with no images is a book of
+0 pages and a media error, so `check` and `lint` refuse one beside the books
+and point to the game's **`extras/`**, which the RPG library leaves out with
+the exclude pattern `**/extras/*` (Kavita's library settings, as the
+libraries are its own, [`kavita.nix`](../hosts/desk/kavita.nix); 0.9 has no
+`.kavitaignore`). Scanned with it, nothing in `extras/` was read; without
+it, `extras/` became series of its own. Nothing is written into a file in
+`extras/`, and no naming rule of Kavita's applies there.
 
 **Video** — files named after the title, not after the source:
 

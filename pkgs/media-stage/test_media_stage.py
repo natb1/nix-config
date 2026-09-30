@@ -212,6 +212,9 @@ class Layout(unittest.TestCase):
         "rpg/Stonetop/Stonetop - Book II - The Wider World (spreads).pdf",
         "rpg/A Thousand Thousand Islands/A Thousand Thousand Islands 3 - Upper Heleng.pdf",
         "rpg/Partizan/Partizan - One-Page Character Sheet (2026-04-25).pdf",
+        "rpg/Mothership/Warped Beyond Recognition - Maps.zip",  # its series is its folder's name
+        "rpg/Mothership/extras/Warped Beyond Recognition - Remote Desktop (Windows).zip",
+        "rpg/Mothership/extras/Tokens (v2).zip",  # Kavita passes over extras/: no volume to misread
         "movies/Heat (1995)/Heat (1995).mkv",
         "movies/Heat (1995)/Heat (1995) - Director's Cut.mkv",
         "movies/Heat (1995)/Heat (1995).en.srt",
@@ -244,6 +247,15 @@ class Layout(unittest.TestCase):
         ("rpg/Tower/Tower S01 Map.pdf", "volume 01"),
         ("books/Terry Pratchett/Discworld/Equal Rites.epub", "series of its own"),
         ("books/Terry Pratchett/Discworld/Mort Vol. 4.epub", "named for its folder"),
+        # extras/ is a game's, one level deep
+        ("rpg/Mothership/extras/Maps/Deck 1.png", "rpg/ layout"),
+        ("books/Someone/Some Book/extras/Notes.pdf", "books/ layout"),
+        # Kavita reads no ComicInfo.xml from a .zip, so no series: a comic is a .cbz
+        ("books/Someone/Some Comic/Some Comic Vol. 1.zip", "books/ layout"),
+        # ... and makes a series of a zip's name with a number in it (Kavita 0.9.1, sandbox scan)
+        ("rpg/Mothership/Tokens (version 2).zip", "a zip's name takes no digits"),
+        ("rpg/Mothership/Warped Beyond Recognition - Maps (1999).zip", "a zip's name takes no digits"),
+        ("rpg/Mothership/Tokens (version two).zip", None),
         ("rpg/Game/Title..pdf", None),  # legal: the dot is not trailing on the component
         # Hidden: Jellyfin ignores it, lint and the filed index pass over it.
         ("movies/...And Justice for All (1979)/...And Justice for All (1979).mkv", "leading dot"),
@@ -304,6 +316,7 @@ class Helpers(unittest.TestCase):
                          {"series": "Cairn", "volume": "", "title": "The Drops of St Jerome (pages)"})
         self.assertEqual(ms.standard("rpg/Game/Game Vol. 2 (spreads).pdf"),
                          {"series": "Game", "volume": "2", "title": "Game Vol. 2 (spreads)"})
+        self.assertEqual(ms.standard("rpg/Game/extras/Remote Desktop (Windows).zip"), {})
         self.assertEqual(ms.standard("movies/Heat (1995)/Heat (1995).mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("tv/The Wire (2002) {tmdb-1438}/Season 01/The Wire (2002) - S01E01.mkv"),
@@ -1262,6 +1275,70 @@ class Copies(unittest.TestCase):
             self.assertEqual(len(c["source"]), 64)
             code, out = run_cli("lint", "--library", str(lib))
             self.assertEqual(code, 0, out)
+
+    def test_zip_is_filed_as_it_came_and_extras_are_left_alone(self):
+        # A module's zips, as itch.io has them. Kavita shows a zip's images
+        # and reads nothing else from it (its series is its folder's name,
+        # while its name has no digits), so the maps go beside the books as
+        # they came. An app has no images: it goes in the game's extras/,
+        # which Kavita passes over. A soundtrack is for beets.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "zips"
+            st.mkdir(parents=True)
+            with zipfile.ZipFile(st / "Maps.zip", "w") as z:
+                z.writestr("Maps/deck-1.png", b"not really")
+                z.writestr("Maps/deck-2.png", b"not really")
+            with zipfile.ZipFile(st / "App WIN.zip", "w") as z:
+                z.writestr("App/App.exe", b"MZ")
+                z.writestr("App/readme.txt", b"run it")
+            with zipfile.ZipFile(st / "Soundtrack.zip", "w") as z:
+                z.writestr("OST/01 Intro.mp3", b"not really")
+                z.writestr("OST/02 Outro.mp3", b"not really")
+            make_pdf(st / "handout.pdf", title="x")
+            maps, app, handout = ((st / n).read_bytes() for n in ("Maps.zip", "App WIN.zip", "handout.pdf"))
+            run_cli("scan", str(st), "--hash", "--library", str(lib))
+            run_cli("draft", str(st), "--library", str(lib))
+            table = Path(str(st) + ".tsv")
+            notes = {r.split("\t")[0]: r.split("\t")[3] for r in table.read_text().splitlines()[1:]}
+            self.assertIn("archive of images (2 png)", notes["Maps.zip"])
+            self.assertIn("archive with no images (1 exe, 1 txt)", notes["App WIN.zip"])
+            self.assertIn("archive of audio (2 mp3): unpack it into a batch of its own for beets", notes["Soundtrack.zip"])
+            # Beside the books, an archive with no images is refused.
+            rows = {"Maps.zip": "rpg/Game/Game - Maps.zip", "App WIN.zip": "rpg/Game/App (Windows).zip",
+                    "Soundtrack.zip": "skip", "handout.pdf": "rpg/Game/extras/Handout (v2).pdf"}
+            write = lambda: table.write_text("old\tnew\n" + "".join(f"{o}\t{n}\n" for o, n in rows.items()))
+            write()
+            code, out = run_cli("check", str(st), "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("rpg/Game/App (Windows).zip: no images in it, so nothing for Kavita to show: "
+                          "a game's other files go in rpg/Game/extras/", out)
+            rows["App WIN.zip"] = "rpg/Game/extras/App (Windows).zip"
+            write()
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            # All as they came: nothing is written into a zip, or into extras/.
+            self.assertEqual((lib / "rpg/Game/Game - Maps.zip").read_bytes(), maps)
+            self.assertEqual((lib / "rpg/Game/extras/App (Windows).zip").read_bytes(), app)
+            self.assertEqual((lib / "rpg/Game/extras/Handout (v2).pdf").read_bytes(), handout)
+            code, out = run_cli("lint", "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            # The maps, downloaded again: the same bytes as the filed zip's.
+            Path(str(st) + ".applied.jsonl").unlink()
+            again = lib / "staging" / "again"
+            again.mkdir()
+            (again / "maps.zip").write_bytes(maps)
+            run_cli("scan", str(again), "--hash", "--library", str(lib))
+            run_cli("draft", str(again), "--library", str(lib))
+            row = Path(str(again) + ".tsv").read_text().splitlines()[1].split("\t")
+            self.assertEqual(row[1], "discard")
+            self.assertIn("already filed as rpg/Game/Game - Maps.zip", row[3])
+            # One with no images, beside the books all the same: lint says where it goes.
+            with zipfile.ZipFile(lib / "rpg/Game/Stray.zip", "w") as z:
+                z.writestr("notes.txt", b"x")
+            code, out = run_cli("lint", "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("LAYOUT rpg/Game/Stray.zip: no images in it", out)
 
     def test_damaged_book_is_filed_and_logged(self):
         # Its OPF reads, one chapter doesn't (a bad CRC-32): apply files and

@@ -19,12 +19,17 @@ youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
 books/<author>/<series or title>/<title>[ (<variant>)].<ext>
 books/<author>/<series>/<series> Vol. <N>[ - <title>].<ext>
 rpg/<game>/<title>[ (<variant>)].<ext>
+rpg/<game>/extras/<file>
 music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.<ext>
 ```
 
 In `books/` and `rpg/` each folder is one series in Kavita. A book on its own
 is in a folder of its title. A version is written `version 1.1`, not `v1.1`,
-which Kavita would read as volume 1.1.
+which Kavita would read as volume 1.1. An archive of images (`.zip` or `.cbz`)
+is shown in Kavita as a second series of the game's name, beside its PDFs; a
+zip's name spells its numbers out, since Kavita makes a series of a number in
+it. A game's files Kavita can't show (an app, a virtual tabletop's assets) go
+in its `extras/`, which Kavita leaves out.
 
 ## Adding files
 
