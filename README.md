@@ -170,9 +170,9 @@ shows `brother` enabled and default.
 
 The Kobo cannot run Tailscale, so it reaches Kavita over the home Wi-Fi,
 where desk opens port 5000 for it
-([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)). Beyond that, only SSH
-(22, keys only), mDNS (5353/udp) and Tailscale's own port (41641/udp) are
-open there, as on every interface. It works only at home.
+([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)). Beyond that, only mDNS
+(5353/udp) and Tailscale's own port (41641/udp) are open there, as on every
+interface; SSH is tailnet-only. It works only at home.
 
 1. **Fix desk's LAN address.** The Kobo cannot resolve `desk`, so it needs
    an address that does not move. If the gateway offers a DHCP reservation,

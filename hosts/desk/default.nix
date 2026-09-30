@@ -98,6 +98,12 @@
   hardware.enableRedistributableFirmware = true;
   networking.networkmanager.enable = true;
 
+  # SSH over the tailnet only, like everything else desk serves: tailscale0 is
+  # trusted (modules/nixos/tailscale.nix), so `ssh desk` needs no port rule,
+  # and nothing on the Wi-Fi reaches 22. With Tailscale down, the way in is
+  # desk's own keyboard. Here, not in modules/nixos, which wsl shares.
+  services.openssh.openFirewall = false;
+
   # networkmanager: nmcli/nmtui without sudo.
   # The remaining groups (libvirtd, kvm, input) arrive with the phases that
   # need them, so a group this host does not yet create cannot warn on switch.
