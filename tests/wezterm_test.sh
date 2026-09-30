@@ -1,938 +1,322 @@
 #!/usr/bin/env bash
-# Tests for the copyWeztermToWindows activation script
-# (hosts/wsl/home/wezterm-windows-config.nix)
-# Tests Windows user detection and config copy logic on WSL
-# Shell unit tests for activation script logic (user detection, file copy, error handling).
+# Runtime tests for the WSL host's copy-to-Windows activation steps:
+# resolveWindowsUser (hosts/wsl/home/windows-user.nix), then
+# copyWeztermToWindows (hosts/wsl/home/wezterm-windows-config.nix).
+#
+# tests/wezterm.test.nix hands over the real text of both steps, as the modules
+# generate it, in $COPY_SCRIPT, and the home directory it was generated for in
+# $MOCK_HOME. Each case builds a temp tree standing in for /mnt/c and the home
+# directory, points a copy of the text at it, and runs that the way
+# home-manager's activation script runs its steps: at top level, under
+# `set -eu` and `set -o pipefail`, after an EXIT trap of home-manager's own,
+# with DRY_RUN_CMD and VERBOSE_ARG exported and no Windows directory on PATH.
+# It then checks the exit code, the output and the files left behind.
+#
+# Run with:  nix build .#checks.x86_64-linux.test-activation-script-runtime
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -z "${COPY_SCRIPT:-}" || ! -f "$COPY_SCRIPT" || -z "${MOCK_HOME:-}" ]]; then
+  echo "COPY_SCRIPT and MOCK_HOME are set by tests/wezterm.test.nix; run" >&2
+  echo "  nix build .#checks.x86_64-linux.test-activation-script-runtime" >&2
+  exit 2
+fi
+
 FAILURES=0
 PASSES=0
 CLEANUP_DIRS=()
-CLEANUP_FAILURES=0
 
-# Cleanup function to remove all temp directories
 cleanup() {
-  local failed=0
   for dir in "${CLEANUP_DIRS[@]}"; do
-    if ! rm -rf "$dir" 2>/dev/null; then
-      echo "WARNING: Failed to cleanup directory: $dir" >&2
-      ((CLEANUP_FAILURES++))
-      failed=1
-    fi
+    chmod -R u+rwx "$dir" 2>/dev/null
+    rm -rf "$dir" 2>/dev/null || echo "WARNING: Failed to cleanup directory: $dir" >&2
   done
-  return 0  # Don't fail the trap
+  return 0 # Don't fail the trap
 }
 trap cleanup EXIT
 
-# Helper to report test results
 report_pass() {
-  local description="$1"
-  echo "PASS: $description"
+  echo "PASS: $1"
   ((PASSES++))
 }
 
 report_fail() {
-  local description="$1"
-  local details="${2:-}"
-  echo "FAIL: $description"
-  if [[ -n "$details" ]]; then
-    echo "  $details"
+  echo "FAIL: $1"
+  if [[ -n "${2:-}" ]]; then
+    echo "$2"
   fi
   ((FAILURES++))
 }
 
-echo "Running wezterm-windows-config.nix activation script tests..."
-echo ""
-
-# Test 1: Windows user detection with valid user directories
-echo "=== Test 1: Windows user detection filters system directories ==="
-TEMP_MOUNT=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT")
-
-mkdir -p "$TEMP_MOUNT/c/Users"/{alice,bob,Public,Default,"Default User","All Users"}
-touch "$TEMP_MOUNT/c/Users/desktop.ini"
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" =~ ^(alice|bob)$ ]] && [[ "$WINDOWS_USER" != "Public" ]] && [[ "$WINDOWS_USER" != "Default" ]]; then
-  report_pass "User detection correctly filters system directories"
-else
-  report_fail "User detection failed to filter system directories" "Got: $WINDOWS_USER"
-fi
-
-# Test 2: Windows user detection with no valid users
-echo ""
-echo "=== Test 2: Windows user detection with only system directories ==="
-TEMP_MOUNT2=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT2")
-
-mkdir -p "$TEMP_MOUNT2/c/Users"/{Public,Default}
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT2/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ -z "$WINDOWS_USER" ]]; then
-  report_pass "User detection correctly returns empty when no valid users"
-else
-  report_fail "User detection should return empty for system-only directories" "Got: $WINDOWS_USER"
-fi
-
-# Test 3: Windows user detection with spaces in username
-echo ""
-echo "=== Test 3: Windows username with spaces ==="
-TEMP_MOUNT3=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT3")
-
-mkdir -p "$TEMP_MOUNT3/c/Users/John Doe"
-mkdir -p "$TEMP_MOUNT3/c/Users/Public"
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT3/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" == "John Doe" ]]; then
-  report_pass "User detection handles usernames with spaces"
-else
-  report_fail "User detection failed on username with spaces" "Got: '$WINDOWS_USER'"
-fi
-
-# Test 3b: Windows username with shell metacharacters
-echo ""
-echo "=== Test 3b: Windows username with shell metacharacters ==="
-TEMP_MOUNT_SPECIAL=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT_SPECIAL")
-
-test_metachar_passed=true
-for username in "user&name" "user;name" 'user`name' 'user$name'; do
-  mkdir -p "$TEMP_MOUNT_SPECIAL/c/Users/$username"
-  mkdir -p "$TEMP_MOUNT_SPECIAL/c/Users/Public"
-
-  WINDOWS_USER=$(ls "$TEMP_MOUNT_SPECIAL/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-  TARGET_DIR="/mnt/c/Users/$WINDOWS_USER"
-  if [[ "$TARGET_DIR" != "/mnt/c/Users/$username" ]]; then
-    report_fail "Username with special chars caused incorrect expansion" "Expected: $username, Got: $WINDOWS_USER"
-    test_metachar_passed=false
-    break
-  fi
-
-  rm -rf "$TEMP_MOUNT_SPECIAL/c/Users/$username"
-done
-
-if $test_metachar_passed; then
-  report_pass "User detection handles shell metacharacters safely"
-fi
-
-# Test 4: Config file copy operation (dry run simulation)
-echo ""
-echo "=== Test 4: Config file copy operation ==="
-TEMP_SOURCE=$(mktemp)
-TEMP_TARGET_DIR=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_TARGET_DIR")
-
-echo "-- Test WezTerm Config" > "$TEMP_SOURCE"
-TEMP_TARGET="$TEMP_TARGET_DIR/.wezterm.lua"
-
-if ! cp "$TEMP_SOURCE" "$TEMP_TARGET" 2>&1; then
-  report_fail "Config file copy operation" "cp command failed"
-  rm -f "$TEMP_SOURCE"
-else
-  rm -f "$TEMP_SOURCE"
-  if [[ -f "$TEMP_TARGET" ]] && grep -q "Test WezTerm Config" "$TEMP_TARGET"; then
-    report_pass "Config file copy succeeds"
+# check DESCRIPTION COMMAND...: passes when COMMAND succeeds. A failure shows
+# the case's exit code and output.
+check() {
+  local description="$1"
+  shift
+  if "$@"; then
+    report_pass "$description"
   else
-    report_fail "Config file copy failed"
-  fi
-fi
-
-# Test 5: Missing /mnt/c/Users directory (non-WSL environment)
-echo ""
-echo "=== Test 5: Non-WSL environment detection ==="
-TEMP_NO_WSL=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_NO_WSL")
-
-if [[ ! -d "$TEMP_NO_WSL/mnt/c/Users" ]]; then
-  report_pass "Non-WSL environment correctly detected"
-else
-  report_fail "Should detect non-WSL environment"
-fi
-
-# Test 5b: Native Linux (not WSL) gracefully skips Windows copy with message
-echo ""
-echo "=== Test 5b: Native Linux graceful skip with message ==="
-TEMP_NATIVE_LINUX=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_NATIVE_LINUX")
-
-SKIP_MESSAGE=""
-EXIT_CODE=0
-if [[ ! -d "$TEMP_NATIVE_LINUX/mnt/c/Users" ]]; then
-  SKIP_MESSAGE="Not running on WSL, skipping Windows config copy"
-  EXIT_CODE=0
-else
-  EXIT_CODE=1
-fi
-
-if [[ $EXIT_CODE -eq 0 ]] && [[ "$SKIP_MESSAGE" == "Not running on WSL, skipping Windows config copy" ]]; then
-  report_pass "Native Linux gracefully skips Windows copy with correct message"
-else
-  report_fail "Native Linux should skip gracefully with message" "Exit code: $EXIT_CODE, Message: $SKIP_MESSAGE"
-fi
-
-# Test 6: Heuristic fallback picks alphabetically-first non-system directory (last-resort role)
-echo ""
-echo "=== Test 6: Fallback heuristic picks first user when no override and no interop ==="
-TEMP_MOUNT4=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT4")
-
-mkdir -p "$TEMP_MOUNT4/c/Users"/{charlie,alice,bob,Public}
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT4/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" == "alice" ]]; then
-  report_pass "Heuristic fallback picks alphabetically-first valid user when no override and no interop"
-else
-  report_fail "Heuristic fallback priority incorrect" "Expected: alice, Got: $WINDOWS_USER"
-fi
-
-# Test 7: Permission denied on /mnt/c/Users (error handling)
-echo ""
-echo "=== Test 7: Permission denied error handling ==="
-TEMP_MOUNT5=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT5")
-
-mkdir -p "$TEMP_MOUNT5/c/Users/testuser"
-chmod 000 "$TEMP_MOUNT5/c/Users"
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT5/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1 || true)
-
-chmod 755 "$TEMP_MOUNT5/c/Users"
-
-if [[ -z "$WINDOWS_USER" ]]; then
-  report_pass "Permission denied handled gracefully"
-else
-  report_fail "Should handle permission denied gracefully"
-fi
-
-# Test 8: Special characters in Windows username
-echo ""
-echo "=== Test 8: Special characters in username ==="
-TEMP_MOUNT6=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT6")
-
-mkdir -p "$TEMP_MOUNT6/c/Users/test-user_123"
-mkdir -p "$TEMP_MOUNT6/c/Users/Public"
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT6/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" == "test-user_123" ]]; then
-  report_pass "User detection handles special characters"
-else
-  report_fail "User detection failed on special characters" "Got: '$WINDOWS_USER'"
-fi
-
-# Test 9: Empty /mnt/c/Users directory
-echo ""
-echo "=== Test 9: Empty /mnt/c/Users directory ==="
-TEMP_MOUNT7=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT7")
-
-mkdir -p "$TEMP_MOUNT7/c/Users"
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT7/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ -z "$WINDOWS_USER" ]]; then
-  report_pass "Empty Users directory handled correctly"
-else
-  report_fail "Should return empty for empty Users directory" "Got: '$WINDOWS_USER'"
-fi
-
-# Test 10: Case sensitivity in system directory filtering
-echo ""
-echo "=== Test 10: Case-sensitive filtering of system directories ==="
-TEMP_MOUNT8=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT8")
-
-mkdir -p "$TEMP_MOUNT8/c/Users"/{public,default,alice}
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT8/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" =~ ^(alice|default|public)$ ]]; then
-  report_pass "Case-sensitive filtering works as expected"
-else
-  report_fail "Unexpected filtering result" "Got: '$WINDOWS_USER'"
-fi
-
-# Test 11: Desktop.ini file should be filtered out
-echo ""
-echo "=== Test 11: Desktop.ini file filtering ==="
-TEMP_MOUNT9=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT9")
-
-mkdir -p "$TEMP_MOUNT9/c/Users/validuser"
-touch "$TEMP_MOUNT9/c/Users/desktop.ini"
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT9/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" == "validuser" ]]; then
-  report_pass "desktop.ini file correctly filtered"
-else
-  report_fail "desktop.ini filtering failed" "Got: '$WINDOWS_USER'"
-fi
-
-# Test 12: 'All Users' directory filtering
-echo ""
-echo "=== Test 12: 'All Users' directory filtering ==="
-TEMP_MOUNT10=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT10")
-
-mkdir -p "$TEMP_MOUNT10/c/Users/All Users"
-mkdir -p "$TEMP_MOUNT10/c/Users/realuser"
-
-WINDOWS_USER=$(ls "$TEMP_MOUNT10/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" == "realuser" ]]; then
-  report_pass "'All Users' directory correctly filtered"
-else
-  report_fail "'All Users' filtering failed" "Got: '$WINDOWS_USER'"
-fi
-
-# Test 13: Config copy with target directory creation
-echo ""
-echo "=== Test 13: Target directory creation during copy ==="
-TEMP_SOURCE2=$(mktemp)
-TEMP_BASE_DIR=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_BASE_DIR")
-
-echo "-- Config content" > "$TEMP_SOURCE2"
-TEMP_NESTED_TARGET="$TEMP_BASE_DIR/nested/path/.wezterm.lua"
-
-if ! mkdir -p "$(dirname "$TEMP_NESTED_TARGET")" 2>&1; then
-  report_fail "Target directory creation" "mkdir -p failed"
-  rm -f "$TEMP_SOURCE2"
-elif ! cp "$TEMP_SOURCE2" "$TEMP_NESTED_TARGET" 2>&1; then
-  report_fail "Config copy to nested path" "cp command failed"
-  rm -f "$TEMP_SOURCE2"
-elif [[ -f "$TEMP_NESTED_TARGET" ]]; then
-  rm -f "$TEMP_SOURCE2"
-  report_pass "Target directory creation and copy succeeds"
-else
-  rm -f "$TEMP_SOURCE2"
-  report_fail "Target directory creation failed" "File not created despite no error"
-fi
-
-# Test 14: Verify actual activation script logic flow
-echo ""
-echo "=== Test 14: Activation script logic flow simulation ==="
-
-simulate_activation() {
-  local mount_point="$1"
-  local config_source="$2"
-
-  if [[ -d "$mount_point/c/Users" ]]; then
-    local windows_user
-    windows_user=$(ls "$mount_point/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-    if [[ -n "$windows_user" ]] && [[ -d "$mount_point/c/Users/$windows_user" ]]; then
-      local target_dir="$mount_point/c/Users/$windows_user"
-      local target_file="$target_dir/.wezterm.lua"
-
-      if cp "$config_source" "$target_file" 2>/dev/null; then
-        echo "copied"
-        return 0
-      else
-        echo "copy_failed"
-        return 1
-      fi
-    else
-      echo "no_user_detected"
-      return 0
-    fi
-  else
-    echo "not_wsl"
-    return 0
+    report_fail "$description" "  exit $RC; output:"$'\n'"$(sed 's/^/    /' <<<"$OUT")"
   fi
 }
+rc_is() { [[ $RC -eq $1 ]]; }
+has_out() { [[ "$OUT" == *"$1"* ]]; }
+lacks_out() { [[ "$OUT" != *"$1"* ]]; }
+same_file() { cmp -s "$1" "$2"; }
 
-ACTIVATION_MOUNT=$(mktemp -d)
-ACTIVATION_CONFIG=$(mktemp)
-CLEANUP_DIRS+=("$ACTIVATION_MOUNT")
+# new_case: a fresh tree — $MNT standing in for /mnt/c (with no Users yet),
+# $SOURCE for the generated config, read-only like the store file home-manager
+# links there — and $SCRIPT, the activation text pointed at them.
+new_case() {
+  ROOT=$(mktemp -d)
+  CLEANUP_DIRS+=("$ROOT")
+  MNT="$ROOT/mnt/c"
+  HOME_DIR="$ROOT/home"
+  SOURCE="$HOME_DIR/.config/wezterm/wezterm.lua"
+  mkdir -p "$MNT" "$(dirname "$SOURCE")"
+  printf -- '-- generated wezterm config\n' > "$SOURCE"
+  chmod 444 "$SOURCE"
+  SCRIPT="$ROOT/activate.sh"
+  sed -e "s#/mnt/c#$MNT#g" -e "s#$MOCK_HOME#$HOME_DIR#g" "$COPY_SCRIPT" > "$SCRIPT"
+}
 
-if ! mkdir -p "$ACTIVATION_MOUNT/c/Users/testuser" 2>&1; then
-  report_fail "Test 14 setup" "Failed to create test directory structure"
-  rm -f "$ACTIVATION_CONFIG"
-else
-  echo "-- activation test" > "$ACTIVATION_CONFIG"
-
-  result=$(simulate_activation "$ACTIVATION_MOUNT" "$ACTIVATION_CONFIG")
-  rm -f "$ACTIVATION_CONFIG"
-
-  if [[ "$result" == "copied" ]]; then
-    report_pass "Full activation script logic simulation succeeds"
-  else
-    report_fail "Activation script simulation failed" "Got: $result"
-  fi
-fi
-
-# Test 15: Source file missing error handling (simulated)
-echo ""
-echo "=== Test 15: Source file missing error handling ==="
-TEMP_TARGET15=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_TARGET15")
-MISSING_SOURCE="/nonexistent/path/wezterm.lua"
-
-if [[ ! -f "$MISSING_SOURCE" ]]; then
-  report_pass "Source file existence check works correctly"
-else
-  report_fail "Should detect missing source file"
-fi
-
-# Test 16: Directory creation failure handling (simulated)
-echo ""
-echo "=== Test 16: Target directory creation failure handling ==="
-TEMP_PARENT16=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_PARENT16")
-chmod 555 "$TEMP_PARENT16"
-
-if ! mkdir -p "$TEMP_PARENT16/nested/dir" 2>/dev/null; then
-  report_pass "Directory creation failure detected correctly"
-else
-  report_fail "Should detect mkdir failure with read-only parent"
-fi
-
-chmod 755 "$TEMP_PARENT16"
-
-# Test 17: Copy failure handling (read-only target)
-echo ""
-echo "=== Test 17: Copy failure with read-only target ==="
-TEMP_SOURCE17=$(mktemp)
-TEMP_TARGET_DIR17=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_TARGET_DIR17")
-echo "test config" > "$TEMP_SOURCE17"
-TARGET_FILE17="$TEMP_TARGET_DIR17/.wezterm.lua"
-touch "$TARGET_FILE17"
-chmod 444 "$TARGET_FILE17"
-chmod 555 "$TEMP_TARGET_DIR17"
-
-if ! cp "$TEMP_SOURCE17" "$TARGET_FILE17" 2>/dev/null; then
-  report_pass "Copy failure detected correctly"
-else
-  report_fail "Should detect copy failure with read-only target"
-fi
-
-rm -f "$TEMP_SOURCE17"
-chmod 755 "$TEMP_TARGET_DIR17"
-
-# Test 18: Failed to list /mnt/c/Users directory error path
-echo ""
-echo "=== Test 18: Failed to list /mnt/c/Users directory (warning path) ==="
-TEMP_MOUNT_NOPERM=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT_NOPERM")
-mkdir -p "$TEMP_MOUNT_NOPERM/c/Users"
-chmod 000 "$TEMP_MOUNT_NOPERM/c/Users"
-
-WARNING_OUTPUT=""
-if ! ls "$TEMP_MOUNT_NOPERM/c/Users/" >/dev/null 2>&1; then
-  WARNING_OUTPUT="WARNING: Failed to list /mnt/c/Users/ directory"$'\n'"This may indicate a WSL mount or permission issue"
-fi
-
-if [[ "$WARNING_OUTPUT" =~ "WARNING:" ]] && [[ "$WARNING_OUTPUT" =~ "/mnt/c/Users/" ]] && [[ "$WARNING_OUTPUT" =~ "WSL mount or permission" ]]; then
-  report_pass "Failed /mnt/c/Users listing generates descriptive warning message"
-else
-  report_fail "Warning message lacks required context" "Got: $WARNING_OUTPUT"
-fi
-
-chmod 755 "$TEMP_MOUNT_NOPERM/c/Users"
-
-# Test 19: Source WezTerm config not found (ERROR and exit 1)
-echo ""
-echo "=== Test 19: Source config not found error path ==="
-MISSING_SOURCE19="/nonexistent/home/.config/wezterm/wezterm.lua"
-
-ERROR_OUTPUT=""
-EXIT_CODE=0
-if [[ ! -f "$MISSING_SOURCE19" ]]; then
-  ERROR_OUTPUT="ERROR: Source WezTerm config not found at $MISSING_SOURCE19"$'\n'"Home-Manager may have failed to generate the configuration"
-  EXIT_CODE=1
-fi
-
-if [[ $EXIT_CODE -eq 1 ]]; then
-  if [[ "$ERROR_OUTPUT" =~ "ERROR:" ]] && [[ "$ERROR_OUTPUT" =~ "$MISSING_SOURCE19" ]] && [[ "$ERROR_OUTPUT" =~ "Home-Manager" ]]; then
-    report_pass "Missing source config triggers exit 1 with descriptive error message"
-  else
-    report_fail "Error message lacks required context" "Got: $ERROR_OUTPUT"
-  fi
-else
-  report_fail "Missing source config should trigger exit 1"
-fi
-
-# Test 20: DRY_RUN_CMD support (dry run mode)
-echo ""
-echo "=== Test 20: Dry run mode support with DRY_RUN_CMD ==="
-TEMP_SOURCE_DRY=$(mktemp)
-TEMP_TARGET_DRY=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_TARGET_DRY")
-echo "test content" > "$TEMP_SOURCE_DRY"
-
-DRY_RUN_CMD="echo"
-VERBOSE_ARG=""
-TARGET_FILE_DRY="$TEMP_TARGET_DRY/.wezterm.lua"
-
-eval "$DRY_RUN_CMD cp $VERBOSE_ARG $TEMP_SOURCE_DRY $TARGET_FILE_DRY" >/dev/null 2>&1
-
-rm -f "$TEMP_SOURCE_DRY"
-
-if [[ ! -f "$TARGET_FILE_DRY" ]]; then
-  report_pass "Dry run mode (DRY_RUN_CMD=echo) prevents actual file copy"
-else
-  report_fail "Dry run mode should not create file" "File exists at: $TARGET_FILE_DRY"
-fi
-
-# Test 21: Verbose mode support with VERBOSE_ARG
-echo ""
-echo "=== Test 21: Verbose mode support with VERBOSE_ARG ==="
-TEMP_SOURCE_VERBOSE=$(mktemp)
-TEMP_TARGET_VERBOSE=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_TARGET_VERBOSE")
-echo "verbose test" > "$TEMP_SOURCE_VERBOSE"
-
-DRY_RUN_CMD=""
-VERBOSE_ARG="-v"
-TARGET_FILE_VERBOSE="$TEMP_TARGET_VERBOSE/.wezterm.lua"
-
-VERBOSE_OUTPUT=$(eval "$DRY_RUN_CMD cp $VERBOSE_ARG $TEMP_SOURCE_VERBOSE $TARGET_FILE_VERBOSE" 2>&1)
-
-rm -f "$TEMP_SOURCE_VERBOSE"
-
-if [[ -f "$TARGET_FILE_VERBOSE" ]]; then
-  report_pass "Verbose mode (VERBOSE_ARG=-v) accepted by cp command"
-else
-  report_fail "Verbose mode command failed" "Output: $VERBOSE_OUTPUT"
-fi
-
-# Test 22: Empty source file handling
-echo ""
-echo "=== Test 22: Empty source file error handling ==="
-TEMP_SOURCE22=$(mktemp)
-TEMP_TARGET_DIR22=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_TARGET_DIR22")
-
-touch "$TEMP_SOURCE22"
-
-readonly ERR_SOURCE_EMPTY=15
-
-ERROR_OUTPUT=""
-EXIT_CODE=0
-if [ ! -f "$TEMP_SOURCE22" ]; then
-  ERROR_OUTPUT="ERROR: Source WezTerm config not found"
-  EXIT_CODE=13
-elif [ ! -s "$TEMP_SOURCE22" ]; then
-  ERROR_OUTPUT="ERROR: Source WezTerm config is empty at $TEMP_SOURCE22"$'\n'"This may indicate:"$'\n'"  - Home-Manager configuration has empty extraConfig"
-  EXIT_CODE=$ERR_SOURCE_EMPTY
-fi
-
-rm -f "$TEMP_SOURCE22"
-
-if [[ $EXIT_CODE -eq $ERR_SOURCE_EMPTY ]]; then
-  if [[ "$ERROR_OUTPUT" =~ "ERROR: Source WezTerm config is empty" ]] && [[ "$ERROR_OUTPUT" =~ "extraConfig" ]]; then
-    report_pass "Empty source file detected with descriptive error message (exit code $ERR_SOURCE_EMPTY)"
-  else
-    report_fail "Error message lacks diagnostic guidance" "Got: $ERROR_OUTPUT"
-  fi
-else
-  report_fail "Empty source file should trigger exit $ERR_SOURCE_EMPTY" "Got exit code: $EXIT_CODE"
-fi
-
-# Test 23: User directory race condition detection
-echo ""
-echo "=== Test 23: User directory race condition detection ==="
-TEMP_RACE=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_RACE")
-
-mkdir -p "$TEMP_RACE/c/Users/raceuser"
-mkdir -p "$TEMP_RACE/c/Users/Public"
-
-WINDOWS_USER=$(ls "$TEMP_RACE/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-if [[ "$WINDOWS_USER" == "raceuser" ]]; then
-  rm -rf "$TEMP_RACE/c/Users/raceuser"
-
-  ERROR_OUTPUT=""
-  EXIT_CODE=0
-  if [[ ! -d "$TEMP_RACE/c/Users/$WINDOWS_USER" ]]; then
-    ERROR_OUTPUT="ERROR: Detected Windows username '$WINDOWS_USER' but directory does not exist"$'\n'"  Expected directory: /mnt/c/Users/$WINDOWS_USER"
-    EXIT_CODE=1
-  fi
-
-  if [[ $EXIT_CODE -eq 1 ]]; then
-    if [[ "$ERROR_OUTPUT" =~ "Detected Windows username" ]] && [[ "$ERROR_OUTPUT" =~ "directory does not exist" ]]; then
-      report_pass "Race condition detection produces correct diagnostic error"
+# users NAME...: entries in the stand-in C:\Users; a name ending in .ini is a
+# file, anything else a directory.
+users() {
+  local name
+  mkdir -p "$MNT/Users"
+  for name in "$@"; do
+    if [[ "$name" == *.ini ]]; then
+      touch "$MNT/Users/$name"
     else
-      report_fail "Race condition error message incorrect" "Got: $ERROR_OUTPUT"
+      mkdir -p "$MNT/Users/$name"
     fi
-  else
-    report_fail "Race condition should trigger error" "Expected exit 1, got: $EXIT_CODE"
-  fi
-else
-  report_fail "Test setup failed - user detection" "Expected 'raceuser', got: '$WINDOWS_USER'"
-fi
+  done
+}
 
-# Tests 24-26: Three-tier detection chain precedence tests
-#
-# These tests exercise the full three-tier Windows-user detection chain from
-# wezterm-windows-config.nix (override env var > cmd.exe/wslpath interop > ls/grep/head
-# heuristic) using PATH-stubbed executables and a temp mount that stands in
-# for /mnt/c.
-#
-# Setup shared by Tests 24-26: stub dir, stubs, and temp mount with two user dirs
-echo ""
-echo "=== Tests 24-26 setup: stub dir and temp mount ==="
-STUBDIR=$(mktemp -d)
-CLEANUP_DIRS+=("$STUBDIR")
-TEMP_MOUNT_CHAIN=$(mktemp -d)
-CLEANUP_DIRS+=("$TEMP_MOUNT_CHAIN")
-RESULT_DIR=$(mktemp -d)
-CLEANUP_DIRS+=("$RESULT_DIR")
-
-# Populate two user directories: alice (alphabetically first) and bob.
-# The heuristic alone would pick alice; interop will pick bob — proving tier order.
-mkdir -p "$TEMP_MOUNT_CHAIN/c/Users/alice"
-mkdir -p "$TEMP_MOUNT_CHAIN/c/Users/bob"
-
-# cmd.exe stub: emits a Windows path with a trailing \r (exercises tr -d '\r')
-cat > "$STUBDIR/cmd.exe" <<'STUB_EOF'
+# fake_cmd_exe: a cmd.exe at the full path the resolver calls. It answers with
+# $FAKE_PROFILE (when set) ended by the CRLF Windows prints, then exits
+# $FAKE_STATUS. It is not on PATH, just as activation's PATH has no Windows
+# directories.
+fake_cmd_exe() {
+  mkdir -p "$MNT/Windows/System32"
+  cat > "$MNT/Windows/System32/cmd.exe" <<'EOF'
 #!/bin/sh
-printf 'C:\\Users\\bob\r\n'
-STUB_EOF
-chmod +x "$STUBDIR/cmd.exe"
+if [ -n "${FAKE_PROFILE:-}" ]; then printf '%s\r\n' "$FAKE_PROFILE"; fi
+exit "${FAKE_STATUS:-0}"
+EOF
+  chmod +x "$MNT/Windows/System32/cmd.exe"
+}
 
-# wslpath stub: maps the Windows C:\Users\bob path to the temp mount.
-# Reads TEMP_MOUNT_CHAIN from the environment so it doesn't need to be
-# baked in at stub-creation time.
-# Real wslpath is called as: wslpath -u <windows-path>
-# so $1 is the flag (-u) and $2 is the path.
-cat > "$STUBDIR/wslpath" <<'STUB_EOF'
+# run_case [VAR=VALUE...]: runs $SCRIPT as described at the top and sets RC and
+# OUT (stdout and stderr together). The arguments go to env, so a case can set
+# DRY_RUN_CMD, VERBOSE_ARG, PATH or the fake cmd.exe's answer.
+run_case() {
+  OUT=$(env DRY_RUN_CMD= VERBOSE_ARG= "$@" "$BASH" -c '
+    set -eu
+    set -o pipefail
+    trap "echo HM_EXIT_TRAP_RAN" EXIT
+    source "$1"
+  ' activate "$SCRIPT" 2>&1)
+  RC=$?
+}
+
+echo "Running the copyWeztermToWindows activation text..."
+
+echo ""
+echo "=== Not WSL: no /mnt/c/Users ==="
+new_case
+run_case
+check "exits 0 off WSL" rc_is 0
+check "says it is skipping the copy" has_out "Not running on WSL, skipping Windows config copy"
+
+echo ""
+echo "=== No interop: the first non-system profile gets the config ==="
+new_case
+users alice bob Public Default "Default User" "All Users" desktop.ini
+run_case
+check "exits 0" rc_is 0
+check "copies the config into alice's profile" same_file "$SOURCE" "$MNT/Users/alice/.wezterm.lua"
+check "leaves bob's profile alone" test ! -e "$MNT/Users/bob/.wezterm.lua"
+check "reports the copy" has_out "Copied WezTerm config to Windows location: $MNT/Users/alice/.wezterm.lua"
+check "keeps home-manager's own EXIT trap" has_out "HM_EXIT_TRAP_RAN"
+
+echo ""
+echo "=== No interop: a profile name with spaces ==="
+new_case
+users "John Doe" Public
+run_case
+check "copies into 'John Doe'" same_file "$SOURCE" "$MNT/Users/John Doe/.wezterm.lua"
+
+echo ""
+echo "=== Interop: Windows' %USERPROFILE% wins over the first profile ==="
+new_case
+users alice bob
+fake_cmd_exe
+run_case 'FAKE_PROFILE=C:\Users\bob'
+check "exits 0" rc_is 0
+check "copies into bob's profile, the one Windows names" same_file "$SOURCE" "$MNT/Users/bob/.wezterm.lua"
+check "leaves alice's profile alone" test ! -e "$MNT/Users/alice/.wezterm.lua"
+check "does not warn" lacks_out "WARNING"
+
+echo ""
+echo "=== Interop fails: falls back to the first profile ==="
+new_case
+users alice bob
+fake_cmd_exe
+run_case FAKE_STATUS=1
+check "exits 0" rc_is 0
+check "copies into alice's profile" same_file "$SOURCE" "$MNT/Users/alice/.wezterm.lua"
+
+echo ""
+echo "=== Interop names a profile outside C:\\Users: warns and falls back ==="
+new_case
+users alice bob
+fake_cmd_exe
+run_case 'FAKE_PROFILE=D:\Profiles\bob'
+check "exits 0" rc_is 0
+check "copies into alice's profile" same_file "$SOURCE" "$MNT/Users/alice/.wezterm.lua"
+check "warns about the unusable answer" has_out 'WARNING: Windows reports %USERPROFILE% as '"'"'D:\Profiles\bob'"'"
+
+echo ""
+echo "=== Interop names a missing profile: warns and falls back ==="
+new_case
+users alice bob
+fake_cmd_exe
+run_case 'FAKE_PROFILE=C:\Users\ghost'
+check "exits 0" rc_is 0
+check "copies into alice's profile" same_file "$SOURCE" "$MNT/Users/alice/.wezterm.lua"
+check "warns about the unusable answer" has_out "WARNING: Windows reports %USERPROFILE%"
+
+echo ""
+echo "=== Only system directories: exit 12 with the listing ==="
+new_case
+users Public Default desktop.ini
+run_case
+check "exits 12" rc_is 12
+check "explains the failure" has_out "ERROR: Failed to detect Windows username"
+check "lists what it found" has_out "    Public"
+check "keeps home-manager's own EXIT trap on failure" has_out "HM_EXIT_TRAP_RAN"
+
+echo ""
+echo "=== Empty C:\\Users: exit 12 ==="
+new_case
+users
+run_case
+check "exits 12" rc_is 12
+check "explains the failure" has_out "ERROR: Failed to detect Windows username"
+
+echo ""
+echo "=== First entry is not a directory: exit 12 ==="
+new_case
+users bob
+touch "$MNT/Users/aaa-stray-file"
+run_case
+check "exits 12" rc_is 12
+check "names the entry" has_out "ERROR: Detected Windows username 'aaa-stray-file'"
+
+echo ""
+echo "=== C:\\Users not readable: exit 11 ==="
+new_case
+users alice
+chmod 000 "$MNT/Users"
+if [[ -r "$MNT/Users" ]]; then
+  echo "SKIP: running as root, which reads a mode-000 directory"
+else
+  run_case
+  check "exits 11" rc_is 11
+  check "explains the failure" has_out "ERROR: Permission denied accessing"
+fi
+chmod 755 "$MNT/Users"
+
+echo ""
+echo "=== Listing C:\\Users fails after the readable check: exit 11 ==="
+new_case
+users alice
+mkdir -p "$ROOT/bin"
+cat > "$ROOT/bin/ls" <<'EOF'
 #!/bin/sh
-# Accept wslpath -u <path> form; $1 is the flag, $2 is the Windows path.
-WIN_PATH="$2"
-if [ "$WIN_PATH" = "C:\\Users\\bob" ] || [ "$WIN_PATH" = "C:/Users/bob" ]; then
-  printf '%s/c/Users/bob' "$TEMP_MOUNT_CHAIN"
-else
-  printf '%s' "$WIN_PATH"
-fi
-STUB_EOF
-chmod +x "$STUBDIR/wslpath"
+echo "ls: reading directory '$1': Input/output error" >&2
+exit 2
+EOF
+chmod +x "$ROOT/bin/ls"
+run_case PATH="$ROOT/bin:$PATH"
+check "exits 11" rc_is 11
+check "explains the failure" has_out "ERROR: Failed to list $MNT/Users/ directory"
+check "shows ls's own error" has_out "Input/output error"
 
-# Build a PATH that has the stubs but excludes /mnt/c/Windows/System32 so
-# that cmd.exe/wslpath always resolve to the stubs — not to real WSL interop
-# binaries on a live WSL host — and so the sanitized PATH (no stubs, no
-# System32) used by Test 26 still has coreutils (ls, head, tr).
-INTEROP_FREE_PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vF '/mnt/c/Windows' | paste -sd:)
-STUB_PATH="$STUBDIR:$INTEROP_FREE_PATH"
-
-# Test 24: Override (Tier 1) wins over interop (Tier 2)
 echo ""
-echo "=== Test 24: Override env var wins over interop ==="
+echo "=== Source config missing: exit 13 ==="
+new_case
+users alice
+chmod u+w "$SOURCE" && rm -f "$SOURCE"
+run_case
+check "exits 13" rc_is 13
+check "explains the failure" has_out "ERROR: Source WezTerm config not found at $SOURCE"
 
-# Sub-test 24a: override names an existing dir → WINDOWS_USER comes from override
-(
-  export TEMP_MOUNT_CHAIN
-  WEZTERM_WINDOWS_USER=alice
-
-  TARGET_DIR=""
-  WINDOWS_USER=""
-
-  # Tier 1
-  if [ -n "${WEZTERM_WINDOWS_USER:-}" ]; then
-    if [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER" ]; then
-      WINDOWS_USER="$WEZTERM_WINDOWS_USER"
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    else
-      echo "WARNING: WEZTERM_WINDOWS_USER='$WEZTERM_WINDOWS_USER' set but $TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER does not exist; falling back to auto-detection" >&2
-    fi
-  fi
-
-  # Tier 2 (stubs available, but Tier 1 already set TARGET_DIR)
-  if [ -z "$TARGET_DIR" ] && PATH="$STUB_PATH" command -v cmd.exe >/dev/null 2>&1 && PATH="$STUB_PATH" command -v wslpath >/dev/null 2>&1; then
-    WIN_PROFILE=$(PATH="$STUB_PATH" cmd.exe /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
-    CAND=$(PATH="$STUB_PATH" wslpath -u "$WIN_PROFILE" 2>/dev/null)
-    if [ -n "$CAND" ] && [ -d "$CAND" ]; then
-      TARGET_DIR="$CAND"
-      WINDOWS_USER=$(basename "$CAND")
-    fi
-  fi
-
-  # Tier 3
-  if [ -z "$TARGET_DIR" ]; then
-    WINDOWS_USER=$(ls "$TEMP_MOUNT_CHAIN/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-    if [ -n "$WINDOWS_USER" ] && [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER" ]; then
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    fi
-  fi
-
-  printf '%s' "$WINDOWS_USER"
-) > "$RESULT_DIR/wezterm_test24a_result" 2>"$RESULT_DIR/wezterm_test24a_warn"
-RESULT_24A=$(cat "$RESULT_DIR/wezterm_test24a_result")
-rm -f "$RESULT_DIR/wezterm_test24a_result" "$RESULT_DIR/wezterm_test24a_warn"
-
-if [[ "$RESULT_24A" == "alice" ]]; then
-  report_pass "Test 24a: override (existing dir) wins over interop — got alice"
-else
-  report_fail "Test 24a: override should win over interop" "Expected: alice, Got: $RESULT_24A"
-fi
-
-# Sub-test 24b: override names a MISSING dir → warns and falls through to interop (bob)
-(
-  export TEMP_MOUNT_CHAIN
-  WEZTERM_WINDOWS_USER=nosuchuser
-
-  TARGET_DIR=""
-  WINDOWS_USER=""
-
-  # Tier 1
-  if [ -n "${WEZTERM_WINDOWS_USER:-}" ]; then
-    if [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER" ]; then
-      WINDOWS_USER="$WEZTERM_WINDOWS_USER"
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    else
-      echo "WARNING: WEZTERM_WINDOWS_USER='$WEZTERM_WINDOWS_USER' set but $TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER does not exist; falling back to auto-detection" >&2
-    fi
-  fi
-
-  # Tier 2 (stubs available, Tier 1 missed → fall through)
-  if [ -z "$TARGET_DIR" ] && PATH="$STUB_PATH" command -v cmd.exe >/dev/null 2>&1 && PATH="$STUB_PATH" command -v wslpath >/dev/null 2>&1; then
-    WIN_PROFILE=$(PATH="$STUB_PATH" cmd.exe /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
-    CAND=$(PATH="$STUB_PATH" wslpath -u "$WIN_PROFILE" 2>/dev/null)
-    if [ -n "$CAND" ] && [ -d "$CAND" ]; then
-      if [[ "$CAND" == "$TEMP_MOUNT_CHAIN/c/Users/"* ]]; then
-        TARGET_DIR="$CAND"
-        WINDOWS_USER=$(basename "$CAND")
-      else
-        echo "WARNING: wslpath returned '$CAND' which is not under $TEMP_MOUNT_CHAIN/c/Users/; falling back to heuristic" >&2
-      fi
-    fi
-  fi
-
-  # Tier 3
-  if [ -z "$TARGET_DIR" ]; then
-    WINDOWS_USER=$(ls "$TEMP_MOUNT_CHAIN/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-    if [ -n "$WINDOWS_USER" ] && [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER" ]; then
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    fi
-  fi
-
-  printf '%s' "$WINDOWS_USER"
-) > "$RESULT_DIR/wezterm_test24b_result" 2>"$RESULT_DIR/wezterm_test24b_warn"
-RESULT_24B=$(cat "$RESULT_DIR/wezterm_test24b_result")
-WARN_24B=$(cat "$RESULT_DIR/wezterm_test24b_warn")
-rm -f "$RESULT_DIR/wezterm_test24b_result" "$RESULT_DIR/wezterm_test24b_warn"
-
-if [[ "$RESULT_24B" == "bob" ]] && [[ "$WARN_24B" =~ "WARNING:" ]]; then
-  report_pass "Test 24b: override missing dir → warns and falls through to interop (bob)"
-else
-  report_fail "Test 24b: missing override should warn and fall through to interop" \
-    "Expected bob + WARNING, Got: result=$RESULT_24B warn=$WARN_24B"
-fi
-
-# Test 25: Interop (Tier 2) wins over heuristic (Tier 3) when no override is set
 echo ""
-echo "=== Test 25: Interop wins over heuristic when no override ==="
+echo "=== Source config empty: exit 15 ==="
+new_case
+users alice
+chmod u+w "$SOURCE" && : > "$SOURCE"
+run_case
+check "exits 15" rc_is 15
+check "explains the failure" has_out "ERROR: Source WezTerm config is empty"
 
-(
-  export TEMP_MOUNT_CHAIN
-  unset WEZTERM_WINDOWS_USER 2>/dev/null || true
-
-  TARGET_DIR=""
-  WINDOWS_USER=""
-
-  # Tier 1 (no override)
-  if [ -n "${WEZTERM_WINDOWS_USER:-}" ]; then
-    if [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER" ]; then
-      WINDOWS_USER="$WEZTERM_WINDOWS_USER"
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    else
-      echo "WARNING: WEZTERM_WINDOWS_USER='$WEZTERM_WINDOWS_USER' set but $TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER does not exist; falling back to auto-detection" >&2
-    fi
-  fi
-
-  # Tier 2 (stubs in PATH → cmd.exe and wslpath found)
-  if [ -z "$TARGET_DIR" ] && PATH="$STUB_PATH" command -v cmd.exe >/dev/null 2>&1 && PATH="$STUB_PATH" command -v wslpath >/dev/null 2>&1; then
-    WIN_PROFILE=$(PATH="$STUB_PATH" cmd.exe /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
-    CAND=$(PATH="$STUB_PATH" wslpath -u "$WIN_PROFILE" 2>/dev/null)
-    if [ -n "$CAND" ] && [ -d "$CAND" ]; then
-      if [[ "$CAND" == "$TEMP_MOUNT_CHAIN/c/Users/"* ]]; then
-        TARGET_DIR="$CAND"
-        WINDOWS_USER=$(basename "$CAND")
-      else
-        echo "WARNING: wslpath returned '$CAND' which is not under $TEMP_MOUNT_CHAIN/c/Users/; falling back to heuristic" >&2
-      fi
-    fi
-  fi
-
-  # Tier 3
-  if [ -z "$TARGET_DIR" ]; then
-    WINDOWS_USER=$(ls "$TEMP_MOUNT_CHAIN/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-    if [ -n "$WINDOWS_USER" ] && [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER" ]; then
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    fi
-  fi
-
-  printf '%s' "$WINDOWS_USER"
-) > "$RESULT_DIR/wezterm_test25_result" 2>/dev/null
-RESULT_25=$(cat "$RESULT_DIR/wezterm_test25_result")
-rm -f "$RESULT_DIR/wezterm_test25_result"
-
-if [[ "$RESULT_25" == "bob" ]]; then
-  report_pass "Test 25: interop wins over heuristic — got bob, not alphabetically-first alice"
-else
-  report_fail "Test 25: interop should win over heuristic" "Expected: bob, Got: $RESULT_25"
-fi
-
-# Test 26: Heuristic fallback (Tier 3) when interop binaries are absent from PATH
 echo ""
-echo "=== Test 26: Heuristic fallback when interop binaries absent from PATH ==="
-# Build a PATH that has coreutils but no cmd.exe/wslpath (no stubs, no System32).
-# This is deterministic on both Linux CI and WSL dev hosts.
-NO_INTEROP_PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vF '/mnt/c/Windows' | grep -vF "$STUBDIR" | paste -sd:)
+echo "=== A read-only copy an older generation left is replaced ==="
+new_case
+users alice
+printf -- '-- old config\n' > "$MNT/Users/alice/.wezterm.lua"
+chmod 444 "$MNT/Users/alice/.wezterm.lua"
+run_case
+check "exits 0" rc_is 0
+check "replaces its content" same_file "$SOURCE" "$MNT/Users/alice/.wezterm.lua"
+check "leaves it writable" test -w "$MNT/Users/alice/.wezterm.lua"
 
-(
-  export TEMP_MOUNT_CHAIN
-  unset WEZTERM_WINDOWS_USER 2>/dev/null || true
-
-  TARGET_DIR=""
-  WINDOWS_USER=""
-
-  # Tier 1 (no override)
-  if [ -n "${WEZTERM_WINDOWS_USER:-}" ]; then
-    if [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER" ]; then
-      WINDOWS_USER="$WEZTERM_WINDOWS_USER"
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    else
-      echo "WARNING: WEZTERM_WINDOWS_USER='$WEZTERM_WINDOWS_USER' set but $TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER does not exist; falling back to auto-detection" >&2
-    fi
-  fi
-
-  # Tier 2: cmd.exe not found on NO_INTEROP_PATH → skip
-  if [ -z "$TARGET_DIR" ] && PATH="$NO_INTEROP_PATH" command -v cmd.exe >/dev/null 2>&1 && PATH="$NO_INTEROP_PATH" command -v wslpath >/dev/null 2>&1; then
-    WIN_PROFILE=$(PATH="$NO_INTEROP_PATH" cmd.exe /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
-    CAND=$(PATH="$NO_INTEROP_PATH" wslpath -u "$WIN_PROFILE" 2>/dev/null)
-    if [ -n "$CAND" ] && [ -d "$CAND" ]; then
-      TARGET_DIR="$CAND"
-      WINDOWS_USER=$(basename "$CAND")
-    fi
-  fi
-
-  # Tier 3 (heuristic last resort)
-  if [ -z "$TARGET_DIR" ]; then
-    WINDOWS_USER=$(ls "$TEMP_MOUNT_CHAIN/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-    if [ -n "$WINDOWS_USER" ] && [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER" ]; then
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    fi
-  fi
-
-  printf '%s' "$WINDOWS_USER"
-) > "$RESULT_DIR/wezterm_test26_result" 2>/dev/null
-RESULT_26=$(cat "$RESULT_DIR/wezterm_test26_result")
-rm -f "$RESULT_DIR/wezterm_test26_result"
-
-if [[ "$RESULT_26" == "alice" ]]; then
-  report_pass "Test 26: heuristic fallback picks alphabetically-first user when interop absent"
-else
-  report_fail "Test 26: heuristic should pick alice when interop absent" "Expected: alice, Got: $RESULT_26"
-fi
-
-# Test 27: Prefix guard — wslpath returning a path outside /mnt/c/Users/ falls through to heuristic
-#
-# Guards against a manipulated Windows environment returning a %USERPROFILE% that,
-# after wslpath translation, resolves to a path outside /mnt/c/Users/. Without the
-# guard the activation script would use it as TARGET_DIR; with the guard it warns
-# and falls through to the heuristic, which selects alice from the temp mount.
 echo ""
-echo "=== Test 27: Tier 2 prefix guard rejects path outside /mnt/c/Users/ ==="
+echo "=== The copy from a read-only source is writable, so the next switch works ==="
+new_case
+users alice
+run_case
+check "first switch exits 0" rc_is 0
+check "the new copy is writable" test -w "$MNT/Users/alice/.wezterm.lua"
+run_case
+check "second switch exits 0" rc_is 0
 
-# Build a wslpath stub that returns a path OUTSIDE /mnt/c/Users/ — pointing at
-# STUBDIR itself (which is an existing directory but not under /mnt/c/Users/).
-STUBDIR_T27=$(mktemp -d)
-CLEANUP_DIRS+=("$STUBDIR_T27")
-
-cat > "$STUBDIR_T27/cmd.exe" <<'STUB_EOF'
-#!/bin/sh
-printf 'C:\\Users\\bob\r\n'
-STUB_EOF
-chmod +x "$STUBDIR_T27/cmd.exe"
-
-# wslpath stub: returns STUBDIR_T27 (an existing dir, but not under /mnt/c/Users/)
-cat > "$STUBDIR_T27/wslpath" <<STUB_EOF
-#!/bin/sh
-printf '%s' "$STUBDIR_T27"
-STUB_EOF
-chmod +x "$STUBDIR_T27/wslpath"
-
-STUB_PATH_T27="$STUBDIR_T27:$INTEROP_FREE_PATH"
-
-(
-  export TEMP_MOUNT_CHAIN
-  unset WEZTERM_WINDOWS_USER 2>/dev/null || true
-
-  TARGET_DIR=""
-  WINDOWS_USER=""
-
-  # Tier 1 (no override)
-  if [ -n "${WEZTERM_WINDOWS_USER:-}" ]; then
-    if [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER" ]; then
-      WINDOWS_USER="$WEZTERM_WINDOWS_USER"
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    else
-      echo "WARNING: WEZTERM_WINDOWS_USER='$WEZTERM_WINDOWS_USER' set but $TEMP_MOUNT_CHAIN/c/Users/$WEZTERM_WINDOWS_USER does not exist; falling back to auto-detection" >&2
-    fi
-  fi
-
-  # Tier 2: stub returns a path outside /mnt/c/Users/ — prefix guard must reject it
-  if [ -z "$TARGET_DIR" ] && PATH="$STUB_PATH_T27" command -v cmd.exe >/dev/null 2>&1 && PATH="$STUB_PATH_T27" command -v wslpath >/dev/null 2>&1; then
-    WIN_PROFILE=$(PATH="$STUB_PATH_T27" cmd.exe /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
-    CAND=$(PATH="$STUB_PATH_T27" wslpath -u "$WIN_PROFILE" 2>/dev/null)
-    if [ -n "$CAND" ] && [ -d "$CAND" ]; then
-      case "$CAND" in
-        /mnt/c/Users/*)
-          TARGET_DIR="$CAND"
-          WINDOWS_USER=$(basename "$CAND")
-          ;;
-        *)
-          echo "WARNING: wslpath returned '$CAND' which is not under /mnt/c/Users/; falling back to heuristic" >&2
-          ;;
-      esac
-    fi
-  fi
-
-  # Tier 3 (heuristic last resort — should pick alice from TEMP_MOUNT_CHAIN)
-  if [ -z "$TARGET_DIR" ]; then
-    WINDOWS_USER=$(ls "$TEMP_MOUNT_CHAIN/c/Users/" 2>/dev/null | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-    if [ -n "$WINDOWS_USER" ] && [ -d "$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER" ]; then
-      TARGET_DIR="$TEMP_MOUNT_CHAIN/c/Users/$WINDOWS_USER"
-    fi
-  fi
-
-  printf '%s' "$WINDOWS_USER"
-) > "$RESULT_DIR/wezterm_test27_result" 2>"$RESULT_DIR/wezterm_test27_warn"
-RESULT_27=$(cat "$RESULT_DIR/wezterm_test27_result")
-WARN_27=$(cat "$RESULT_DIR/wezterm_test27_warn")
-rm -f "$RESULT_DIR/wezterm_test27_result" "$RESULT_DIR/wezterm_test27_warn"
-
-if [[ "$RESULT_27" == "alice" ]] && [[ "$WARN_27" =~ "WARNING:" ]]; then
-  report_pass "Test 27: prefix guard rejects out-of-/mnt/c/Users/ path, warns, falls through to heuristic (alice)"
+echo ""
+echo "=== Profile not writable: exit 14 ==="
+new_case
+users alice
+chmod 555 "$MNT/Users/alice"
+if [[ -w "$MNT/Users/alice" ]]; then
+  echo "SKIP: running as root, which writes a mode-555 directory"
 else
-  report_fail "Test 27: prefix guard should reject non-/mnt/c/Users/ path and fall through" \
-    "Expected alice + WARNING, Got: result=$RESULT_27 warn=$WARN_27"
+  run_case
+  check "exits 14" rc_is 14
+  check "explains the failure" has_out "ERROR: Failed to copy WezTerm config to $MNT/Users/alice/.wezterm.lua"
 fi
+chmod 755 "$MNT/Users/alice"
 
-# Summary
+echo ""
+echo "=== Dry run: nothing is written ==="
+new_case
+users alice
+run_case DRY_RUN_CMD=echo
+check "exits 0" rc_is 0
+check "writes no file" test ! -e "$MNT/Users/alice/.wezterm.lua"
+
+echo ""
+echo "=== Verbose: cp takes home-manager's VERBOSE_ARG ==="
+new_case
+users alice
+run_case VERBOSE_ARG=--verbose
+check "exits 0" rc_is 0
+check "copies the config" same_file "$SOURCE" "$MNT/Users/alice/.wezterm.lua"
+
 echo ""
 echo "================================"
 echo "Passed: $PASSES"
 echo "Failed: $FAILURES"
 echo "================================"
-
-if [[ $CLEANUP_FAILURES -gt 0 ]]; then
-  echo ""
-  echo "WARNING: $CLEANUP_FAILURES cleanup operations failed"
-  echo "Temporary directories may have been left behind"
-fi
 
 if [[ $FAILURES -eq 0 ]]; then
   echo "All tests passed!"

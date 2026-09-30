@@ -7,7 +7,8 @@
 # the Quickshell panel (Mod+Shift+N) while it runs.
 #
 # Unfree: steam and steam-unwrapped are allowed by name in flake.nix's
-# unfreePredicate, which is the only place nixpkgs.config can be set.
+# unfreePredicate. A second allowUnfreePredicate here would silently replace
+# that one (or be replaced by it), not add to it.
 
 { ... }:
 

@@ -7,7 +7,7 @@
 #   /var/lib/media-fetch  media-fetch's results and jobs, which its pump
 #                         service (hosts/desk/soulseek.nix) serves
 #   /var/lib/beets        beets' library database and import log
-#                         (hosts/desk/home/beets.nix)
+#                         (hosts/desk/home/media-tools.nix)
 # and, read-only, the API keys media-fetch uses: slskd's (/etc/slskd/api.env)
 # and itch.io's (/etc/itch/api.env, written by hand: README.md), each 0440
 # n8:media.
@@ -23,7 +23,9 @@
 # so anything that sets a mode narrows the group's access. The tools that
 # rewrite a file (media-stage's tagging, SQLite's journal) copy the old
 # file's mode, mask included, so they keep it; the tmpfiles modes here and in
-# media.nix / soulseek.nix are 0775 / 0770 so a boot doesn't take write away.
+# media.nix, soulseek.nix and the library folders' modules (jellyfin.nix,
+# kavita.nix, music.nix) are 0775 / 0770 so a boot or a switch doesn't take
+# write away (a flake check, media-acl-mask, holds /srv/media to that).
 # What does narrow it — rsync -a of a 0644 source, say — the service below
 # fixes at the next boot (or `systemctl restart media-acl`); until then the
 # group can still read the file, and move it, which needs only the folder.

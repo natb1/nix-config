@@ -28,7 +28,10 @@
   services.tailscale = {
     enable = true;
 
-    # Use routing features for subnet routing and exit nodes
+    # Use routing features for subnet routing and exit nodes. "both" already
+    # turns on IPv4 and IPv6 forwarding (net.ipv{4,6}.conf.all.forwarding)
+    # and loose reverse-path filtering; advertising routes or an exit node
+    # still takes `tailscale up --advertise-...`.
     useRoutingFeatures = "both";
 
     # Port for Tailscale (default: 41641)
@@ -48,11 +51,4 @@
     # This might be needed in some network configurations
     checkReversePath = "loose";
   };
-
-  # Optional: Enable IP forwarding if you want to use this as a subnet router
-  # Uncomment if you want to route traffic through this machine
-  # boot.kernel.sysctl = {
-  #   "net.ipv4.ip_forward" = 1;
-  #   "net.ipv6.conf.all.forwarding" = 1;
-  # };
 }

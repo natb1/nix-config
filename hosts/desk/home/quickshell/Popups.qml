@@ -38,8 +38,12 @@ PanelWindow {
         spacing: 8
 
         Repeater {
-            // Five at most; the rest are in the panel.
-            model: Notifs.popups.slice(0, 5)
+            // Five at most; the rest are in the panel. A ScriptModel, not the
+            // array itself: a new array would recreate every card, and so
+            // restart every pop-up's timer, at each arrival or hide.
+            model: ScriptModel {
+                values: Notifs.popups.slice(0, 5)
+            }
 
             NotificationCard {
                 required property var modelData

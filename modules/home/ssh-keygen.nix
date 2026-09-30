@@ -11,8 +11,9 @@
 #
 # After key generation:
 #   1. View your public key: cat ~/.ssh/id_ed25519.pub
-#   2. Add it to services.sshAuthorizedKeys.keys in your instance flake
-#   3. Commit to your instance flake to enable SSH access from other machines
+#   2. Add it to services.sshAuthorizedKeys.keys in modules/home/default.nix
+#   3. Commit, push, and run `rebuild` on the other hosts so they accept this
+#      machine's key
 #
 # Security:
 #   - Keys are generated locally on each machine
@@ -34,13 +35,14 @@ let
 
 in
 {
-  # Generate primary SSH key if it doesn't exist
+  # Generate primary SSH key if it doesn't exist. The key's comment takes the
+  # host from `uname -n` (coreutils): activation's PATH has no `hostname`.
   home.activation.generatePrimarySshKey = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     if [ ! -f "${primaryKeyFile}" ]; then
       echo "Generating SSH key at ${primaryKeyFile}..."
       $DRY_RUN_CMD ${pkgs.openssh}/bin/ssh-keygen \
         -t ed25519 \
-        -C "$(whoami)@$(hostname)" \
+        -C "$(whoami)@$(uname -n)" \
         -N "" \
         -f "${primaryKeyFile}"
 
@@ -54,8 +56,8 @@ in
       echo ""
       echo "Next steps:"
       echo "  1. Copy the public key above"
-      echo "  2. Add it to services.sshAuthorizedKeys.keys in your instance flake"
-      echo "  3. Commit and push your instance flake to enable SSH access from other machines"
+      echo "  2. Add it to services.sshAuthorizedKeys.keys in modules/home/default.nix (natb1/nix-config)"
+      echo "  3. Commit, push, and run 'rebuild' on the other hosts so this machine can SSH into them"
       echo ""
     fi
   '';

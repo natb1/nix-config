@@ -52,10 +52,12 @@ came from.
    only), or `--ext all` for every type. `--min-files` drops singles.
    `rpg` searches itch.io as well as the corpus.
 3. **Check the library**: the media share table is the check. Its query
-   is the search's, so when the search named more than the title (an
-   artist and album, say) and the table is empty, search again on the
-   title's most distinctive words alone: the library writes a `:` as ` - `
-   and drops `* ? " < > | \`. For music, also ask beets, which matches
+   is the search's, and a row's path holds every word of it (punctuation
+   aside), so when the search named more than the title (an artist and
+   album, say) and the table is empty, search again on the title's most
+   distinctive words alone: a filed path can lack some of the words asked
+   for (an album under another album artist, a book without its
+   subtitle). For music, also ask beets, which matches
    the tags rather than the path, on desk (from the Mac, `ssh desk …`):
    `beet ls -a -f '$albumartist - $album ($year) · $path' '<artist>'`. For
    a TV show, `show` its media share row for the seasons and episodes
@@ -110,6 +112,13 @@ came from.
      busy ("try again later", "overwhelmed", "too many files") and
      media-fetch asked it for nothing more. Don't retry it: `cancel` the
      job and pick a candidate from another source.
+   - "not delivered: …": every file arrived, but the job couldn't be moved
+     into the batch; the other jobs carry on. "… already exists": the
+     batch has a folder of the job's title with a file of that name, most
+     often another job's, from another source. If it is a second copy of
+     what the batch holds, `cancel` the job; otherwise ask the user, and
+     once what is in the way is gone, `get <id>` moves it in. Any other
+     reason: `cancel` the job and pick another candidate.
    - Anything else: `get <id>` again retries the failed files, or `cancel`
      the job and pick another candidate.
    Replacing a failed candidate with an equivalent one (same album, same

@@ -17,7 +17,7 @@
 # from RAM to the new disk without ever passing through git.
 #
 # Idempotent: safe to re-run. Existing files at the destination are left alone
-# unless FORCE=1.
+# unless FORCE=1, which replaces them.
 
 set -euo pipefail
 
@@ -73,6 +73,16 @@ seed_home() {
   local src="$1" rel="$2" mode="${3:-}"
   local dst="$TARGET$HOME_N/$rel"
   [ -e "$src" ] || { skip "$rel — not present on this live session"; return 0; }
+  # FORCE=1 deletes $dst before copying, so $dst must never be $src or hold
+  # it: the script run from a repo it seeded earlier, or TARGET=/, would
+  # otherwise delete the source and then have nothing to copy.
+  local rs rd
+  rs=$(realpath -- "$src")
+  rd=$(realpath -m -- "$dst")
+  case "$rs/" in "$rd/"*)
+    skip "$rel — the source is the destination, or inside it"
+    return 0 ;;
+  esac
   if [ -e "$dst" ] && [ "$FORCE" != "1" ]; then
     skip "$rel — already at the destination (FORCE=1 to overwrite)"
     return 0
@@ -90,6 +100,10 @@ seed_home() {
     [ -d "$d" ] || install -d -o "$UID_N" -g "$GID_N" "$d"
   done
   unset IFS
+  # FORCE=1 replaces, so remove what is there first: `cp -a dir existing-dir`
+  # copies INTO it, which left the repo and ~/.claude stale with a nested
+  # nix-config/nix-config and .claude/.claude beside them.
+  [ -e "$dst" ] && rm -rf -- "$dst"
   cp -a "$src" "$dst"
   chown -R "$UID_N:$GID_N" "$dst"
   [ -n "$mode" ] && chmod "$mode" "$dst"
@@ -127,8 +141,13 @@ say "This repo"
 seed_home "$SRC_REPO" "natb1/nix-config"
 
 # ------------------------------------------------------------------ Claude
-# Not managed by home-manager (checked: ~/.claude appears nowhere in
-# home.file), so these are ours to place and nothing will contest them.
+# The session (credentials, projects, history) is not managed by
+# home-manager, so it is ours to place. home-manager does own
+# ~/.claude/CLAUDE.md and ~/.claude/skills/media-{share,fetch}/SKILL.md
+# (modules/home/media-skills.nix): if this live session has any of those, the
+# first switch moves them aside to *.backup, which is harmless.
+# modules/home/claude-plugins.nix merges its keys into ~/.claude/settings.json
+# and keeps the rest of the file.
 say "Claude Code session"
 seed_home "$SRC_HOME/.claude"      ".claude"      700
 seed_home "$SRC_HOME/.claude.json" ".claude.json" 600

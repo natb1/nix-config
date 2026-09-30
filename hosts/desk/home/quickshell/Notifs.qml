@@ -56,12 +56,14 @@ Singleton {
         return n.urgency === NotificationUrgency.Critical;
     }
 
-    // How long a pop-up stays, in ms; 0 is "until dismissed". The sender's
-    // expire_timeout is honoured when it sets one.
+    // How long a pop-up stays, in ms; 0 is "until dismissed". A sender's
+    // positive expire_timeout is honoured, and is already in ms: Quickshell
+    // passes the D-Bus value through, though its docs say seconds. -1 (the
+    // server's choice) and 0 get 6 s.
     function popupTimeout(n) {
         if (isCritical(n) || n.resident)
             return 0;
-        return n.expireTimeout > 0 ? n.expireTimeout * 1000 : 6000;
+        return n.expireTimeout > 0 ? n.expireTimeout : 6000;
     }
 
     function hide(n) {

@@ -329,7 +329,6 @@ Everything lives in RAM, so all of this repeats on every boot.
    ```sh
    nix-shell -p git gh
    git clone https://github.com/natb1/nix-config.git && cd nix-config   # public: no auth
-   git switch claude/sweet-hypatia-03wf7f
    git config user.name 'Nathan Buesgens'; git config user.email nathan@natb1.com
    gh auth login                        # only if you intend to push over HTTPS
    NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features 'nix-command flakes' \
@@ -2056,8 +2055,10 @@ creates a new WinRE loader, and points `{current}`'s `recoverysequence` at it.
 **Disko gets a whole drive again, and the awkwardness of the previous draft
 disappears with it.** No hand-partitioning, no hand-written `fileSystems`, no
 100 MB ESP shared with Windows, no `configurationLimit = 3`. NixOS gets a 1 GiB
-ESP of its own and as many generations as it likes, because nothing else is
-competing for the space.
+ESP of its own, big enough for a generous limit (15) rather than a tight one.
+Not an unlimited one: nothing else competes for the space, but the generations
+do — each new kernel and initrd is ~43 MB, and systemd-boot frees none while
+it keeps every generation.
 
 The fast drive is absent from `disko.nix` for the same reason it was before —
 disko would recreate its table — but the danger is much lower now: there is no
@@ -2248,7 +2249,7 @@ target the four things a public repo cannot carry:
 | --- | --- | --- |
 | The Wi-Fi profile | `/etc/NetworkManager/system-connections/` (600, root) | Contains the PSK. NetworkManager keeps profiles as mutable state, so copying the file *is* the whole job, and it already pins `interface-name=wlp14s0` — the same NIC |
 | This repo | `~/natb1/nix-config` | `nixos-install` copies the store closure, not the working tree. Seeding the tree rather than cloning means the branch and anything unpushed come along, and first boot needs no network to start work |
-| `~/.claude`, `~/.claude.json` | `~` | A session token. **Not** managed by home-manager — checked, it appears nowhere in `home.file` — so nothing contests it |
+| `~/.claude`, `~/.claude.json` | `~` | A session token. The session is not managed by home-manager, so nothing contests it. Only `CLAUDE.md` and `skills/media-{share,fetch}/SKILL.md` are (`modules/home/media-skills.nix`): seeded copies of those are backed up to `.backup` on the first switch. `modules/home/claude-plugins.nix` merges its keys into `settings.json` and keeps the rest |
 | `~/.config/gh/hosts.yml` | `~/.config/gh/` | The gh token. **Only `hosts.yml`:** `config.yml` *is* managed by `modules/home/gh.nix`, so copying that one would just be backed up and replaced on the first switch |
 
 **No secret is in the script.** It is a list of copy operations; the values are
@@ -2873,8 +2874,11 @@ Two surprises from the first switch, both fixed in `iphone.nix`:
   publishes `_tether._tcp` over mDNS. It was reachable from the whole tailnet
   (tailscale0 is trusted) and advertised on Wi-Fi. Now fenced from outside:
   avahi's `publish.userServices` is off on `desk` (only Tether used it —
-  `desk.local` still resolves), and 5134 is dropped on `tailscale0` ahead of
-  the trusted-interface accept.
+  `desk.local` still resolves), and 5134 is dropped on `tailscale0` in the
+  raw table. (First it was refused in `nixos-fw`, ahead of the
+  trusted-interface accept, which never matched: tailscaled's own `ts-input`
+  chain, at the top of INPUT, accepts all `tailscale0` traffic before
+  `nixos-fw` sees it.)
 
 **Pairing, once, after the switch:** `tether --bt-status` should report full
 mode (MAP + PBAP + ANCS). Then pair from the GTK app (`tether-gtk`, Devices) or
@@ -3417,8 +3421,11 @@ A backup is a claim until it is restored. All four, before trusting it:
       Wi-Fi), and `cmp` against `/srv/media/takeout/` was identical. The switch
       installs `restic-media`, which is restic with the unit's repository,
       password and ssh. Repeat on the full set before the retirement gate*
-- [ ] Simulate the real failure: unplug the bulk SSD, boot, and confirm Samba
-      refuses to serve rather than exposing an empty share, **and** that
+- [ ] Simulate the real failure: make only the media volume fail to mount (a
+      bogus `subvol=` in a test generation — the bulk SSD also holds `/` and
+      `/boot`, so it cannot be pulled), boot, confirm SSH and Tailscale still
+      come up, and confirm Samba refuses to serve rather than exposing an
+      empty share, **and** that
       `restic-backups-media` fails (and alerts) rather than snapshotting an empty
       directory — then restore into a fresh filesystem and time it
 - [ ] `systemctl list-timers restic-backups-media` after a week, and confirm a
@@ -3568,7 +3575,7 @@ unreliable: `…Shoemaker's Wife.mp3` and `…Shoemaker's Wife_1.mp3` are two
 different pieces from two different CDs by their tags, and the 34 `_N`
 suffixes (33 of them Liszt) are flattened disc collisions, not duplicates.
 [`beets`](https://beets.io) with MusicBrainz, configured in
-[`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix): `move` and
+[`hosts/desk/home/media-tools.nix`](../hosts/desk/home/media-tools.nix): `move` and
 `write` on, compilations filed like any other album (not beets' top-level
 `Compilations/`), plugins `chroma` (AcoustID), `duplicates`, `info`:
 
@@ -3693,7 +3700,7 @@ Music is the exception at step 4: beets files it.
 | 5′. Review | `media-stage review export staging/<batch>`, then the review page | The rows a person must decide go to `staging/<batch>.review.json` (music's is already there). Claude loads it into the **Media Filing Review** page (source [`review.html`](../pkgs/media-stage/review.html), one Claude artifact for every batch, audio and video included): each item shows its evidence and the suggestions, and the user picks one, types a path or tags, or leaves it in staging. Answers are saved as they are made. When the user says the batch is reviewed, Claude exports the answers to `staging/<batch>.answers/` and applies them: `media-stage review import … --answers …` into the table, or `beet stage-review --answers …` for music |
 | 5. Check | `media-stage check staging/<batch>` | Refuses the batch on: a blank row; a staged file missing from the table, or a row whose file is gone; a path that is not the layout (`LAYOUT` in the script is the layout above, as regexes); a character SMB cannot carry; a changed extension; two rows with one target; a target that already exists (and says so if it is byte-identical — a duplicate to `discard`); content that is **already filed under another name** (below) |
 | 6. Apply | `media-stage apply staging/<batch>` | Checks again, moves each file, **writes its standard metadata**, deletes `discard` rows, moves `trash` rows to `staging/trash/<batch>/` (writable from the Mac, for the user to look through and empty), logs every row with the **source's sha256** to `staging/<batch>.applied.jsonl`, removes emptied folders. Rerunnable: moved rows count as done |
-| 6′. Audit music | `beet stage-audit staging/<batch>` | Every track filed from the batch against its original's record in the manifest: a **real length** that doesn't fit the release slot it was given (more than 7 s, or 4% of long tracks), or a **new title naming another number** than the original's (`Prelude No. 3` filed as `No. 5`, `BWV 999` as `998`, movement `II.` as `III.`). beets assigns files to slots mostly by title and then stores the *release's* length, so neither shows up afterwards without the original. Flags go to the review page as batch `<batch>-audit`, with the release's slots and the one that fits suggested; `beet stage-audit --answers …` re-slots, retitles or accepts, and audits again. Writes `staging/<batch>.audit.json` |
+| 6′. Audit music | `beet stage-audit staging/<batch>` | Every track filed from the batch against its original's record in the manifest: a **real length** that doesn't fit the release slot it was given (more than 7 s, or 4% of long tracks), or a **new title naming another number** than the original's (`Prelude No. 3` filed as `No. 5`, `BWV 999` as `998`, movement `II.` as `III.`). beets assigns files to slots mostly by title and then stores the *release's* length, so neither shows up afterwards without the original. It also flags two tracks in one slot, and a track whose original the manifest no longer has (rescanned since), which it could not compare. Flags go to the review page as batch `<batch>-audit`, with the release's slots that fit, one suggested only when the file already in it is misfiled too; `beet stage-audit --answers …` re-slots, retitles or accepts, and audits again. Writes `staging/<batch>.audit.json` |
 | 7. Lint | `media-stage lint [--fix]` | Audits the whole library: every file against the layout, and its metadata against the standard below. `--fix` rewrites what differs (not music). Then Claude marks the batch filed on the review page |
 | 8. Close | `media-stage close staging/<batch>` | Removes the batch's records (manifest, table, review and audit files, answers) and its emptied folder; keeps `<batch>.applied.jsonl`. Refuses while files are still in staging, and for a music batch until `stage-audit` has passed: the manifest is the only record of what each file said it was |
 
@@ -3715,7 +3722,7 @@ paths…>` moves filed files back into a batch, under their library paths, and
 records each book's or RPG's original sha256 for `apply`; the batch is then
 filed like any other, its table reading old name → new name.
 
-Steps 1–5 and 6–8 are Claude's to run. Step 5′ is the one place the procedure waits for a person, and nothing in the batch is applied before it. beets 2.x needs `musicbrainz` in its plugin list to match anything at all ([`hosts/desk/home/media.nix`](../hosts/desk/home/media.nix)).
+Steps 1–5 and 6–8 are Claude's to run. Step 5′ is the one place the procedure waits for a person, and nothing in the batch is applied before it. beets 2.x needs `musicbrainz` in its plugin list to match anything at all ([`hosts/desk/home/media-tools.nix`](../hosts/desk/home/media-tools.nix)).
 
 **Standard metadata** — what `apply` writes and `lint` expects, derived from
 the library path so the two cannot drift apart:
@@ -4187,7 +4194,9 @@ which keeps the Apple IDs out of this public repo:
 
 ```sh
 APPLE_ID=someone@example.com
-LIBRARY=PrimarySync            # or SharedSync-<UUID>, as icloudpd-login prints it
+# PrimarySync, or SharedSync-<UUID> as icloudpd-login prints it. Comments go
+# on their own line: systemd's EnvironmentFile keeps one after a value.
+LIBRARY=PrimarySync
 ```
 
 | Instance | Apple ID | `LIBRARY` | Lands in | Runs |
@@ -5528,7 +5537,8 @@ which nothing in Phase 4 sets up for it — do not plan on it there.
 
 Still to do, after Phase 8:
 
-- [ ] README: replace the "A future native NixOS host" section with the real one
+- [x] README: replace the "A future native NixOS host" section with the real one
+      — *2026-09-29: now "Adding a NixOS host", with desk as the example*
 - [ ] Update the "State this repo does not manage" list. The Windows-side
       WezTerm install and the `G:` volume **stay** (WSL still uses them). New
       entries are the Microsoft
@@ -5615,8 +5625,10 @@ Still to do, after Phase 8:
     this list it is the likeliest to be discovered too late.
 13. **Samba serving an empty share.** If the bulk SSD does not mount, an
     unguarded smbd exports `/srv/media` on the root filesystem and clients write
-    into it. The `requires=srv-media.mount` binding prevents it; verify by
-    booting once with the drive pulled.
+    into it. The `requires=srv-media.mount` binding prevents it, and `nofail`
+    on the mount lets the host boot far enough for it to matter; verify by
+    booting once with only the media volume failing to mount (the drive also
+    holds `/`, so it cannot be pulled).
 14. **Secure Boot keys lost to a firmware update.** A BIOS flash or CMOS clear
     restores factory keys; NixOS stops booting, Windows does not, which makes
     it look like NixOS broke. Re-enroll per

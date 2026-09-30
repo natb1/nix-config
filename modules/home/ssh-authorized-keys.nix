@@ -11,7 +11,7 @@
 # Usage:
 #   1. Set `services.sshAuthorizedKeys.keys` to a list of public-key strings
 #      in the shared home configuration (modules/home/default.nix).
-#   2. Run: home-manager switch
+#   2. Commit, push, and run `rebuild` on each host (modules/home/rebuild.nix)
 #   3. Your authorized_keys file is updated automatically!
 #
 # The option defaults to null (unset), which is inert: no key material, no

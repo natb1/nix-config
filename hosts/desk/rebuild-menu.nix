@@ -46,6 +46,7 @@
 
 let
   pick = pkgs.callPackage ./pick { };
+  flock = "${pkgs.util-linux}/bin/flock";
 
   rebuildMenu = pkgs.writeShellApplication {
     name = "rebuild-menu";
@@ -141,7 +142,8 @@ let
           else
             rm -f "$new"
           fi) &
-        timeout 15 git -C "$repo" fetch -q origin main || true
+        # origin/main only: FETCH_HEAD is rebuild's pull's (see the end).
+        timeout 15 git -C "$repo" fetch -q --no-write-fetch-head origin main || true
 
         merged() { g merge-base --is-ancestor "$1" origin/main 2>/dev/null; }
 
@@ -214,7 +216,9 @@ let
 
       dir=$(rows | pick --prompt "rebuild ›" --refresh "$(printf '%q --refresh' "$0")") || exit 0
       if [[ $dir == pr:* ]]; then
-        if ! out=$(worktree_for "''${dir#pr:}"); then
+        # Under the tidy-up's lock: its fetch would race this one, as it would
+        # rebuild's pull below.
+        if ! out=$(exec 9>"''${prs%/*}/lock"; flock 9; worktree_for "''${dir#pr:}"); then
           notify-send -a "Rebuild menu" "Couldn't add a worktree for PR #''${dir#pr:}" "$out"
           exit 1
         fi
@@ -222,7 +226,15 @@ let
       fi
       [ -d "$dir" ] || exit 0
 
-      exec xdg-terminal-exec env REBUILD_REPO="$dir" zsh -c "rebuild; print; read -sk '?Done. Press any key to close.'"
+      # The tidy-up carries on after the pick, and its fetch of origin/main
+      # would race rebuild's pull in the same repository: the pull fails
+      # ("Cannot rebase onto multiple branches", "cannot lock ref"). So the
+      # terminal waits for its lock first, usually a second or two. flock by
+      # store path, as the terminal need not have this script's PATH.
+      exec xdg-terminal-exec env REBUILD_REPO="$dir" REBUILD_LOCK="''${prs%/*}/lock" zsh -c "
+        ${flock} -n \"\$REBUILD_LOCK\" true ||
+          { print 'Waiting for the tidy-up to finish…'; ${flock} \"\$REBUILD_LOCK\" true; }
+        rebuild; print; read -sk '?Done. Press any key to close.'"
     '';
   };
 in

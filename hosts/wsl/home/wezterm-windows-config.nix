@@ -35,135 +35,17 @@
 
   # Copy config to the Windows WezTerm location.
   # DAG ordering: Must run after "linkGeneration" to ensure the source file exists
-  # before attempting to copy it to Windows.
-  home.activation.copyWeztermToWindows = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+  # before attempting to copy it to Windows, and after "resolveWindowsUser"
+  # (windows-user.nix), which picks the Windows profile it goes into.
+  home.activation.copyWeztermToWindows = lib.hm.dag.entryAfter [ "linkGeneration" "resolveWindowsUser" ] ''
     # Structured error codes for programmatic error handling by callers
-    readonly ERR_PERMISSION_DENIED=11
-    readonly ERR_USERNAME_DETECTION=12
     readonly ERR_SOURCE_MISSING=13
     readonly ERR_COPY_FAILED=14
     readonly ERR_SOURCE_EMPTY=15
 
-    # Check if running on WSL (Windows mount point exists)
-    if [ -d "/mnt/c/Users" ]; then
-      # Verify /mnt/c/Users is readable
-      if [ ! -r "/mnt/c/Users" ]; then
-        echo "ERROR: Permission denied accessing /mnt/c/Users/" >&2
-        echo "  WSL mount exists but directory is not readable" >&2
-        echo "" >&2
-        echo "To fix:" >&2
-        echo "  1. Check mount options: mount | grep /mnt/c" >&2
-        echo "  2. Check directory permissions: ls -ld /mnt/c/Users" >&2
-        echo "  3. May need to remount with proper permissions" >&2
-        exit $ERR_PERMISSION_DENIED
-      fi
-
-      # Three-tier resolution of the Windows user profile dir (TARGET_DIR).
-      # The fallback chain is intended behavior per issue #62: each tier is
-      # tried in order and falls through to the next on a miss; only the
-      # final fallback tier raises a hard error.
-      TARGET_DIR=""
-      WINDOWS_USER=""
-
-      # Tier 1 (override): an explicit WEZTERM_WINDOWS_USER env var wins when
-      # it names a real profile. If set but missing, warn and fall through —
-      # the override is a safe escape hatch, not a hard requirement.
-      if [ -n "''${WEZTERM_WINDOWS_USER:-}" ]; then
-        if [ -d "/mnt/c/Users/$WEZTERM_WINDOWS_USER" ]; then
-          WINDOWS_USER="$WEZTERM_WINDOWS_USER"
-          TARGET_DIR="/mnt/c/Users/$WINDOWS_USER"
-        else
-          echo "WARNING: WEZTERM_WINDOWS_USER='$WEZTERM_WINDOWS_USER' set but /mnt/c/Users/$WEZTERM_WINDOWS_USER does not exist; falling back to auto-detection" >&2
-        fi
-      fi
-
-      # Tier 2 (WSL interop): ask Windows for its own %USERPROFILE% and map it
-      # to a WSL path with wslpath. This is the authoritative answer on a real
-      # WSL host. Any miss (interop absent, empty output, non-dir) falls through.
-      if [ -z "$TARGET_DIR" ] && command -v cmd.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
-        WIN_PROFILE=$(cmd.exe /c echo %USERPROFILE% 2>/dev/null | tr -d '\r')
-        CAND=$(wslpath -u "$WIN_PROFILE" 2>/dev/null)
-        if [ -n "$CAND" ] && [ -d "$CAND" ]; then
-          case "$CAND" in
-            /mnt/c/Users/*)
-              TARGET_DIR="$CAND"
-              WINDOWS_USER=$(basename "$CAND")
-              ;;
-            *)
-              echo "WARNING: wslpath returned '$CAND' which is not under /mnt/c/Users/; falling back to heuristic" >&2
-              ;;
-          esac
-        fi
-      fi
-
-      # Tier 3 (fallback heuristic): list /mnt/c/Users, drop known system
-      # directories, take the first remaining entry. This is the last resort
-      # and the only tier that raises a hard error when it cannot resolve a
-      # valid profile directory.
-      if [ -z "$TARGET_DIR" ]; then
-        LS_STDERR=$(mktemp)
-        trap 'if ! rm -f "$LS_STDERR" 2>&1; then echo "WARNING: Failed to cleanup stderr temp file: $LS_STDERR" >&2; fi' EXIT
-        LS_OUTPUT=$(ls /mnt/c/Users/ 2>"$LS_STDERR")
-        LS_EXIT_CODE=$?
-
-        if [ $LS_EXIT_CODE -ne 0 ]; then
-          echo "ERROR: Failed to list /mnt/c/Users/ directory" >&2
-          echo "  Exit code: $LS_EXIT_CODE" >&2
-          if [ -s "$LS_STDERR" ]; then
-            echo "  Error output:" >&2
-            if ! cat "$LS_STDERR" 2>/dev/null | sed 's/^/    /' >&2; then
-              echo "    (failed to read error file - may indicate filesystem issue)" >&2
-              echo "    Error file location: $LS_STDERR" >&2
-            fi
-          fi
-          echo "  Check permissions and mount status" >&2
-          echo "  Diagnostic directory listing:" >&2
-          ls -ld /mnt/c/Users/ 2>&1 || echo "  (diagnostic ls failed)" >&2
-          exit $ERR_PERMISSION_DENIED
-        fi
-
-        WINDOWS_USER=$(echo "$LS_OUTPUT" | grep -v -E '^(All Users|Default|Default User|Public|desktop.ini)$' | head -n1)
-
-        # Terminal failure: no candidate after filtering system directories.
-        if [ -z "$WINDOWS_USER" ]; then
-          echo "ERROR: Failed to detect Windows username" >&2
-          echo "  Directory is readable but no valid user directories found" >&2
-          echo "  Available directories:" >&2
-          echo "$LS_OUTPUT" | sed 's/^/    /' >&2
-          exit $ERR_USERNAME_DETECTION
-        fi
-
-        # Terminal failure: a candidate name was detected but its directory
-        # does not exist (e.g. a race in mount availability).
-        if [ ! -d "/mnt/c/Users/$WINDOWS_USER" ]; then
-          echo "ERROR: Detected Windows username '$WINDOWS_USER' but directory does not exist" >&2
-          echo "  Expected directory: /mnt/c/Users/$WINDOWS_USER" >&2
-          echo "" >&2
-
-          if ! ls_output=$(ls -1 /mnt/c/Users/ 2>&1); then
-            echo "ERROR: Additionally, cannot list /mnt/c/Users/ for diagnostics" >&2
-            echo "  Directory passed initial checks but is now inaccessible" >&2
-            echo "  This indicates a filesystem or permission issue" >&2
-            echo "  Error: $ls_output" >&2
-            exit $ERR_USERNAME_DETECTION
-          fi
-
-          echo "Available directories in /mnt/c/Users/:" >&2
-          echo "$ls_output" | sed 's/^/  /' >&2
-          echo "" >&2
-          echo "This may indicate:" >&2
-          echo "  - WSL mount configuration issue" >&2
-          echo "  - Incorrect user directory detection logic" >&2
-          echo "  - Race condition in directory availability" >&2
-          exit $ERR_USERNAME_DETECTION
-        fi
-
-        TARGET_DIR="/mnt/c/Users/$WINDOWS_USER"
-      fi
-
-      # TARGET_DIR is guaranteed set here: each tier either set it or, in the
-      # case of tier 3, exited. Copy logic is keyed on TARGET_DIR/TARGET_FILE.
-      TARGET_FILE="$TARGET_DIR/.wezterm.lua"
+    # WINDOWS_USER is empty when not running on WSL (see windows-user.nix).
+    if [ -n "$WINDOWS_USER" ]; then
+      TARGET_FILE="/mnt/c/Users/$WINDOWS_USER/.wezterm.lua"
 
       # Verify source file exists before copying
       SOURCE_FILE="${config.home.homeDirectory}/.config/wezterm/wezterm.lua"
@@ -183,10 +65,20 @@
         exit $ERR_SOURCE_EMPTY
       fi
 
+      # The source is a read-only store file, and on /mnt/c a missing write bit
+      # is enforced (DrvFs also turns it into the Windows read-only attribute;
+      # see wezterm-windows.nix). A plain cp gives a new target the source's
+      # 0444, and the next switch's cp then fails on it. So copy without the
+      # source's mode, and first repair a copy an older generation left
+      # read-only. A chmod failure is left to the cp below to report.
+      if [ -e "$TARGET_FILE" ] && [ ! -w "$TARGET_FILE" ]; then
+        $DRY_RUN_CMD chmod u+w "$TARGET_FILE" 2>/dev/null || true
+      fi
+
       # Copy config file with error checking and stderr capture
       if [ -z "$DRY_RUN_CMD" ]; then
         # Normal mode: capture stderr for better diagnostics
-        if ! copy_error=$(cp ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE" 2>&1); then
+        if ! copy_error=$(cp --no-preserve=mode ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE" 2>&1); then
           echo "ERROR: Failed to copy WezTerm config to $TARGET_FILE" >&2
           echo "  Copy error: $copy_error" >&2
           echo "  Common causes: permissions, disk space, file locked by running WezTerm" >&2
@@ -194,7 +86,7 @@
         fi
       else
         # Dry run mode: execute but don't fail on dry run
-        $DRY_RUN_CMD cp ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE"
+        $DRY_RUN_CMD cp --no-preserve=mode ''${VERBOSE_ARG:+"$VERBOSE_ARG"} "$SOURCE_FILE" "$TARGET_FILE"
       fi
       echo "Copied WezTerm config to Windows location: $TARGET_FILE"
     else

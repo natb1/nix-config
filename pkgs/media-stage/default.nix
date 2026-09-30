@@ -7,7 +7,7 @@
 # the same on both hosts without anything else installed. The tests run in the
 # build: a broken layout rule fails `nix flake check`, not a batch.
 
-{ lib, python3Packages, ffmpeg-headless, poppler-utils, exiftool, mkvtoolnix-cli, chromaprint }:
+{ lib, stdenv, python3Packages, ffmpeg-headless, poppler-utils, exiftool, mkvtoolnix-cli, chromaprint }:
 
 let
   tools = [ ffmpeg-headless poppler-utils exiftool mkvtoolnix-cli ];
@@ -19,8 +19,9 @@ python3Packages.buildPythonApplication {
   src = ./.;
 
   # pikepdf writes a book's or RPG's metadata into the PDF as one clean
-  # revision, which Kavita's PDF reader can follow.
-  dependencies = [ python3Packages.guessit python3Packages.pikepdf ];
+  # revision, which Kavita's PDF reader can follow; lxml rewrites an EPUB's
+  # OPF keeping the prefixes it was written with (pikepdf needs it too).
+  dependencies = [ python3Packages.guessit python3Packages.pikepdf python3Packages.lxml ];
 
   installPhase = ''
     runHook preInstall
@@ -32,8 +33,11 @@ python3Packages.buildPythonApplication {
 
   doCheck = true;
   # fpcalc for beetsplug/stagecheck.py, which runs inside beets (whose
-  # chroma plugin brings it); tested here with the rest.
-  nativeCheckInputs = tools ++ [ chromaprint ];
+  # chroma plugin brings it); tested here with the rest. beets itself for
+  # beetsplug/stagereview.py, on Linux only: the plugin runs only in desk's
+  # beets, and the Mac need not fetch beets to build media-stage.
+  nativeCheckInputs = tools ++ [ chromaprint ]
+    ++ lib.optional stdenv.hostPlatform.isLinux python3Packages.beets-minimal;
   checkPhase = ''
     runHook preCheck
     python -m unittest -v test_media_stage

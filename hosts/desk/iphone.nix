@@ -34,6 +34,7 @@ let
   # notifications down. Genuinely away, Classic is down too, and it stays
   # quiet. The alert withdraws itself once notifications flow again (after
   # the Bluetooth cycle), and only then: leaving while wedged keeps it up.
+  # (The tetherd-is-down alert goes once tetherd is back.)
   ancsWatch = pkgs.writeShellApplication {
     name = "tether-ancs-watch";
     runtimeInputs = [
@@ -46,6 +47,7 @@ let
     text = ''
       down=0
       alert=""
+      shown=""
       while true; do
         # `tether` spawns a tetherd of its own when none is running. Doing that
         # while tetherd.service restarts (a switch, 2026-09-25) left a stray
@@ -71,8 +73,13 @@ let
         if [ "$down" -ge 5 ] && [ -z "$alert" ]; then
           alert=$(notify-send -p -u critical -a Tether -i phone \
             "iPhone notifications are stuck" "$body")
+          shown=$body
         fi
-        if [ -n "$alert" ] && [ "$down" -eq 0 ]; then
+        # Not on down=0 alone: that is also the phone leaving, or one query
+        # timing out. A changed cause (tetherd gone, or back) withdraws it
+        # too, and the new cause posts its own.
+        if [ -n "$alert" ] && { grep -q '^Notifications: *yes' <<<"$status" ||
+          [ "$body" != "$shown" ]; }; then
           busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
             org.freedesktop.Notifications CloseNotification u "$alert" || true
           alert=""
@@ -112,12 +119,21 @@ in
   # hardware.enableRedistributableFirmware in default.nix.
   hardware.bluetooth.powerOnBoot = true;
   # Pairing UI for everything that is not the phone. The applet is started by
-  # home-manager's user unit, not XDG autostart, which niri does not run. It
-  # stays for its pairing agent (the prompts when a device pairs); its tray
-  # icon is hidden, because the panel's Bluetooth tile shows the same and
-  # opens blueman-manager.
+  # home-manager's user unit, which a switch restarts. services.blueman also
+  # installs an XDG autostart entry, and niri.service pulls in
+  # xdg-desktop-autostart.target, so that entry is hidden: two applets race,
+  # and the one that exits can take an agent with it (the file-transfer one,
+  # 2026-09-28). The applet stays for its pairing agent (the prompts when a
+  # device pairs); its tray icon is hidden, because the panel's Bluetooth
+  # tile shows the same and opens blueman-manager.
   services.blueman.enable = true;
   home-manager.users.n8.services.blueman-applet.enable = true;
+  home-manager.users.n8.xdg.configFile."autostart/blueman.desktop".text = ''
+    [Desktop Entry]
+    Type=Application
+    Name=Blueman Applet
+    Hidden=true
+  '';
 
   # tetherd, the daemon. The package ships the user unit; this starts it with
   # the graphical session. Upstream deliberately leaves it untied (it runs
@@ -186,17 +202,21 @@ in
   # - No mDNS announcement: stop avahi publishing *application* services on
   #   desk. That is only Tether here — CUPS browsing is off and Samba has no
   #   mDNS — and desk.local itself (publish.addresses) is unaffected.
-  # - No port 5134 on the tailnet, which is otherwise open because
-  #   tailscale0 is trusted. Inserted at the top of nixos-fw, ahead of the
-  #   trusted-interface accept. Wi-Fi never had it.
+  # - No port 5134 on the tailnet, which is otherwise open. Dropped in the
+  #   raw table, not refused in nixos-fw: tailscaled hooks its own ts-input
+  #   chain in at the top of INPUT, and it accepts everything on tailscale0
+  #   before nixos-fw is consulted — a nixos-fw rule here never matched. raw
+  #   comes before INPUT, and tailscaled leaves it alone; DROP, because
+  #   REJECT is not allowed there. Deleted before it is inserted, since
+  #   firewall-start rebuilds nixos-fw but leaves raw as it finds it. Wi-Fi
+  #   never had the port.
   services.avahi.publish.userServices = lib.mkForce false;
   networking.firewall.extraCommands = ''
-    iptables -I nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse
-    ip6tables -I nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse
+    ip46tables -t raw -D PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP 2>/dev/null || true
+    ip46tables -t raw -I PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP
   '';
   networking.firewall.extraStopCommands = ''
-    iptables -D nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse 2>/dev/null || true
-    ip6tables -D nixos-fw -i tailscale0 -p tcp --dport 5134 -j nixos-fw-refuse 2>/dev/null || true
+    ip46tables -t raw -D PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP 2>/dev/null || true
   '';
 
   # Keep the phone's audio on the phone. Stock WirePlumber advertises desk as

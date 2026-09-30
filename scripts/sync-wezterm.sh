@@ -2,10 +2,11 @@
 # Refresh modules/home/wezterm-pin.nix to the current upstream WezTerm nightly,
 # mirroring its Windows zip to a release on this repo.
 #
-# The Windows GUI (mux client) and the WSL wezterm-mux-server must be the same
-# build or the mux handshake fails and the GUI window closes on connect. Upstream
-# ships exactly ONE Windows nightly zip (overwritten in place), so a pinned build
-# vanishes from upstream as soon as a newer nightly ships. This script captures
+# Every mux client (the Windows, Mac and desk GUIs) and every wezterm-mux-server
+# (desk and WSL) must be the same build or the mux handshake fails and the GUI
+# window closes on connect. Upstream ships exactly ONE Windows nightly zip
+# (overwritten in place), so a pinned build vanishes from upstream as soon as a
+# newer nightly ships. This script captures
 # the current nightly as a pin and uploads the zip to an immutable
 # `wezterm-<version>` release on natb1/nix-config, which is where
 # hosts/wsl/home/wezterm-windows.nix fetches it from.
@@ -91,8 +92,8 @@ write_pin() {
 # Both the WezTerm package (wezterm-package.nix, built from source at \`rev\`)
 # and the Windows GUI binary (hosts/wsl/home/wezterm-windows.nix, the matching
 # nightly zip) are pinned to the SAME upstream build here, so every mux client
-# (Windows GUI, Mac GUI) and the WSL wezterm-mux-server speak the same PDU
-# protocol version.
+# (Windows, Mac and desk GUIs) and every wezterm-mux-server (desk and WSL) speak
+# the same PDU protocol version.
 #
 # \`version\` is authoritative and is read from the distributed Windows binary
 # itself (the zip's internal \`WezTerm-windows-<version>\` directory name), NOT
@@ -132,5 +133,7 @@ nix build "$REPO_ROOT#packages.$system.wezterm" --no-link --dry-run
 
 echo
 echo "Wrote $PIN_FILE for $VERSION."
-echo "Next: switch the WSL host (close the Windows WezTerm GUI first — the install"
-echo "can't overwrite a running binary) and the Mac, so all three load $VERSION."
+echo "Next: switch every host so each loads $VERSION: desk and the WSL host, whose"
+echo "mux servers restart (run those from a non-WezTerm shell; on WSL close the"
+echo "Windows WezTerm GUI first — the install can't overwrite a running binary),"
+echo "and the Mac."

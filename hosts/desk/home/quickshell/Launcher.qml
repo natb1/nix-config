@@ -27,13 +27,18 @@ Scope {
         }
     }
 
+    // Each app runs in a scope of its own, as niri's spawns do. Started
+    // plainly (entry.execute()) it would stay in quickshell.service's cgroup
+    // and be killed with the shell, which restarts on every change to this
+    // config (X-Restart-Triggers, home/desktop.nix) and after a crash.
     function launch(entry) {
         counts = Object.assign({}, counts, { [entry.id]: (counts[entry.id] ?? 0) + 1 });
         countsFile.setText(JSON.stringify(counts));
-        if (entry.runInTerminal)
-            Quickshell.execDetached(["xdg-terminal-exec", ...entry.command]);
-        else
-            entry.execute();
+        const cmd = entry.runInTerminal ? ["xdg-terminal-exec", ...entry.command] : entry.command;
+        Quickshell.execDetached({
+            command: ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--", ...cmd],
+            workingDirectory: entry.workingDirectory
+        });
     }
 
     // Apps with their own key in niri.kdl — Ghostty on Mod+Return, Chrome on

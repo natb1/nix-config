@@ -35,7 +35,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # iPhone notifications and messages on `desk` over Bluetooth — see
-    # hosts/desk/iphone.nix. Pinned to a rev in the URL, so the weekly
+    # hosts/desk/iphone.nix. Pinned to a rev in the URL, so the daily
     # `nix flake update` leaves it alone: it is a fast-moving beta that
     # changes how bluetoothd runs, so a bump is a deliberate edit here.
     tether = {
@@ -61,10 +61,13 @@
       ];
 
       # Unfree packages, allowed by name rather than blanket-allowing.
-      # google-chrome is desk's browser (hosts/desk/desktop.nix). Naming it
-      # here rather than in that host is not a choice: nixpkgs.config is set
-      # once by the `home` helper below, so a second definition in a host
-      # module conflicts with it instead of extending it.
+      # google-chrome is desk's browser (hosts/desk/desktop.nix). Add names
+      # here, not as a second allowUnfreePredicate in a host module: that
+      # raises no error. nixpkgs.config definitions merge with recursiveUpdate,
+      # so one predicate silently replaces the other, by module order, and the
+      # losing side's packages fail with "has an unfree license". (A host that
+      # wants its own names can set nixpkgs.config.allowUnfreePackages, a list
+      # that does merge across modules and is ORed with this predicate.)
       unfreePredicate =
         pkg: builtins.elem (nixpkgs.lib.getName pkg) [
           "claude-code"
@@ -108,8 +111,9 @@
         };
       };
 
-      # The platforms this repo actually targets: the WSL box and a future native
-      # NixOS machine (x86_64-linux), and the Apple Silicon Mac (aarch64-darwin).
+      # The platforms this repo actually targets: the WSL box and desk, the
+      # native NixOS desktop (x86_64-linux), and the Apple Silicon Mac
+      # (aarch64-darwin).
       # x86_64-darwin is deliberately absent — nixpkgs 26.11 dropped support for
       # it, so listing it breaks `nix flake check --all-systems`.
       systems = [ "x86_64-linux" "aarch64-darwin" ];
@@ -171,16 +175,17 @@
           # nightly (modules/home/wezterm-package.nix) as a real WezTerm.app and
           # generates ~/.config/wezterm/wezterm.lua. Installing the pinned build
           # here — rather than an out-of-Nix GUI — keeps this Mac's `wezterm
-          # connect` client in version lockstep with the WSL mux server, which is
-          # built from the same pin. The module's Linux-only mux service is
-          # guarded by pkgs.stdenv.hostPlatform.isLinux; the Windows-side pieces live in
-          # hosts/wsl/home and are not imported here.
+          # connect` client in version lockstep with the desk and WSL mux
+          # servers, which are built from the same pin. The module's Linux-only
+          # mux service is guarded by pkgs.stdenv.hostPlatform.isLinux; the
+          # Windows-side pieces live in hosts/wsl/home and are not imported here.
         ];
       };
 
-      # WSL wezterm rebuilt from the pinned nightly (modules/home/wezterm-pin.nix).
-      # Exposed so `nix build .#wezterm` can verify the pin and so
-      # scripts/sync-wezterm.sh can resolve the vendor hash against it.
+      # The wezterm every host installs, rebuilt from the pinned nightly
+      # (modules/home/wezterm-pin.nix). Exposed so `nix build .#wezterm` can
+      # verify the pin and so scripts/sync-wezterm.sh can resolve the vendor
+      # hash against it.
       packages = forAllSystems ({ pkgs, ... }: {
         wezterm = pkgs.callPackage ./modules/home/wezterm-package.nix { };
         # Media filing for /srv/media (docs/desktop-migration.md, "Layout on
@@ -237,6 +242,47 @@
               ''}
               touch "$out"
             '';
+          # desk's claude-remote-control units, for every user that has one.
+          # Sessions get no root (see the module's "No root from a session"):
+          # NoNewPrivileges must be set and PATH must leave out
+          # /run/wrappers/bin. A store path in PATH would change the
+          # unit on unrelated switches and restart rc, killing its sessions.
+          # With stdout sent to null, stderr must name the journal, or it
+          # follows stdout and rc's startup errors are lost too.
+          claude-remote-control-unit =
+            let
+              lib = nixpkgs.lib;
+              units = lib.filterAttrs (_: s: s != null) (lib.mapAttrs
+                (_: u: u.systemd.user.services.claude-remote-control or null)
+                self.nixosConfigurations.desk.config.home-manager.users);
+              problems = lib.concatLists (lib.mapAttrsToList (user: s:
+                let
+                  env = lib.toList (s.Service.Environment or [ ]);
+                  path = lib.findFirst (lib.hasPrefix "PATH=") "" env;
+                in
+                lib.optional ((s.Service.NoNewPrivileges or false) != true)
+                  "${user}: NoNewPrivileges is not set"
+                ++ lib.optional (lib.hasInfix "/run/wrappers" path)
+                  "${user}: PATH has /run/wrappers: ${path}"
+                ++ lib.optional (lib.hasInfix "/nix/store/" path)
+                  "${user}: PATH has a store path: ${path}"
+                ++ lib.optional ((s.Service.StandardOutput or null) == "null"
+                  && (s.Service.StandardError or null) != "journal")
+                  "${user}: StandardOutput is null but StandardError is not journal"
+              ) units);
+            in
+            pkgs.runCommand "claude-remote-control-unit" { } ''
+              ${lib.optionalString (units == { }) ''
+                echo "no claude-remote-control unit on desk" >&2
+                exit 1
+              ''}
+              ${lib.optionalString (problems != [ ]) ''
+                printf '%s\n' ${lib.escapeShellArgs problems} >&2
+                exit 1
+              ''}
+              echo "checked: ${lib.concatStringsSep " " (lib.attrNames units)}"
+              touch "$out"
+            '';
           niri-config =pkgs.runCommand "niri-config-valid" { } ''
             ${pkgs.niri}/bin/niri validate -c ${./hosts/desk/home/niri.kdl}
             touch "$out"
@@ -261,7 +307,13 @@
             kill %1 || true
             cat qs.log
             grep -q "Configuration Loaded" qs.log
-            ! grep -qE "Failed to load configuration|TypeError|ReferenceError" qs.log
+            # An if, not `! grep`: set -e ignores a command negated with `!`,
+            # so that form never failed the build. A binding that throws still
+            # logs "Configuration Loaded", so this is the line that catches it.
+            if grep -E "Failed to load configuration|TypeError|ReferenceError" qs.log; then
+              echo "quickshell-config: QML errors in qs.log" >&2
+              exit 1
+            fi
             touch "$out"
           '';
         }

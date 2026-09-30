@@ -1,5 +1,6 @@
 """Tests for media-stage. Run by the package's checkPhase (`nix build .#media-stage`,
-`nix flake check`), where ffmpeg, poppler, exiftool and mkvtoolnix are on PATH.
+`nix flake check`), where ffmpeg, poppler, exiftool and mkvtoolnix are on PATH,
+and, on Linux, beets for the beets plugin.
 
 The pipeline test builds a small batch of real files — generated video, audio,
 a hand-written PDF and EPUB — and takes it through scan, draft, check, apply
@@ -15,11 +16,21 @@ import unittest
 import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import media_stage as ms
 
 sys.path.insert(0, str(Path(__file__).parent / "beetsplug"))
 import stagecheck as sc  # noqa: E402
+
+try:  # beets is in the check on Linux only (default.nix)
+    from beets import config as beets_config
+    from beets import logging as beets_logging
+    from beets.library import Item, Library
+    import beetsplug.stagereview as sr
+except ImportError:
+    sr = None
 
 
 def run_cli(*args):
@@ -159,6 +170,33 @@ class Review(unittest.TestCase):
             code, out = run_cli("check", str(st), "--library", d)
             self.assertEqual(code, 0, out)
 
+    def test_video_evidence_is_what_scan_read(self):
+        # scan_file keeps the picture as meta["video"] and the container's
+        # title among meta["tags"]: what a reviewer compares copies by.
+        rec = {"path": "Heat.1995.mkv", "kind": "video", "size": 7e9, "guess": ms.guess("Heat.1995.mkv"),
+               "meta": {"duration": 7200.0, "bit_rate": 8000000, "tags": {"title": "Heat.1995.x264-GRP"},
+                        "video": "h264 1920x1080", "audio_langs": ["eng"], "sub_langs": ["eng", "fre"]}}
+        ev = {e["label"]: e["value"] for e in ms.evidence(rec)}
+        self.assertEqual((ev["Video"], ev["Title"]), ("h264 1920x1080", "Heat.1995.x264-GRP"))
+        self.assertEqual((ev["Audio"], ev["Subtitles"]), ("eng", "eng, fre"))
+
+    def test_export_keeps_stage_reviews_albums(self):
+        # Music with a booklet: `beet stage-review` wrote its albums first;
+        # the table's rows join them in the batch's one review.
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "b"
+            st.mkdir()
+            (Path(d) / "b.tsv").write_text("old\tnew\tconfidence\tnote\n"
+                                           "A/01.flac\tbeets\thigh\t\nA/booklet.pdf\t\t\t\n")
+            album = {"id": "a1b2c3d4e5f6", "key": "A", "kind": "album", "twin": 42, "options": []}
+            review = Path(d) / "b.review.json"
+            review.write_text(json.dumps({"batch": "b", "kind": "audio", "source": "beets", "items": [album]}))
+            for _ in range(2):  # again: the table's rows are replaced, the album kept once
+                run_cli("review", "export", str(st))
+                items = json.loads(review.read_text())["items"]
+                self.assertEqual([i["key"] for i in items], ["A", "A/booklet.pdf"])
+                self.assertEqual(items[0], album)
+
 
 class Layout(unittest.TestCase):
     good = [
@@ -207,6 +245,8 @@ class Layout(unittest.TestCase):
         ("books/Terry Pratchett/Discworld/Equal Rites.epub", "series of its own"),
         ("books/Terry Pratchett/Discworld/Mort Vol. 4.epub", "named for its folder"),
         ("rpg/Game/Title..pdf", None),  # legal: the dot is not trailing on the component
+        # Hidden: Jellyfin ignores it, lint and the filed index pass over it.
+        ("movies/...And Justice for All (1979)/...And Justice for All (1979).mkv", "leading dot"),
     ]
 
     def test_good(self):
@@ -262,6 +302,8 @@ class Helpers(unittest.TestCase):
                          {"series": "Discworld", "volume": "3", "title": "Equal Rites (tr. X)", "author": "Terry Pratchett"})
         self.assertEqual(ms.standard("rpg/Cairn/The Drops of St Jerome (pages).pdf"),
                          {"series": "Cairn", "volume": "", "title": "The Drops of St Jerome (pages)"})
+        self.assertEqual(ms.standard("rpg/Game/Game Vol. 2 (spreads).pdf"),
+                         {"series": "Game", "volume": "2", "title": "Game Vol. 2 (spreads)"})
         self.assertEqual(ms.standard("movies/Heat (1995)/Heat (1995).mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("tv/The Wire (2002) {tmdb-1438}/Season 01/The Wire (2002) - S01E01.mkv"),
@@ -273,6 +315,8 @@ class Helpers(unittest.TestCase):
 
     def test_title_clean(self):
         self.assertEqual(ms.title_clean("Alien: Covenant"), "Alien - Covenant")
+        self.assertEqual(ms.title_clean("...And Justice for All"), "And Justice for All")  # not a hidden name
+        self.assertEqual(ms.clean(".hack//Sign ."), "hack--Sign")
         self.assertEqual(ms.norm_title("Aguirre, the Wrath of God"), ms.norm_title("Aguirre The Wrath Of God"))
         self.assertEqual(ms.norm_title("Big Sick, The"), ms.norm_title("The Big Sick"))
 
@@ -294,6 +338,14 @@ class Helpers(unittest.TestCase):
     def test_ep_code(self):
         self.assertEqual(ms.ep_code(1, 2), "S01E02")
         self.assertEqual(ms.ep_code(1, [2, 3]), "S01E02-E03")
+
+    def test_episode_across_seasons_is_left_blank(self):
+        # A finale and the next premiere in one file: no one SxxEyy names it,
+        # and the rest of the batch still drafts.
+        name = "Show.2010.S01E24-S02E01.720p.mkv"
+        t = ms.video_target({"path": name, "guess": ms.guess(name)})
+        self.assertIsNone(t["stem"])
+        self.assertIn("spans seasons", t["note"])
 
 
 class Group(unittest.TestCase):
@@ -330,6 +382,55 @@ class Group(unittest.TestCase):
             self.assertEqual(sorted(p.relative_to(st).as_posix() for p in st.rglob("*.mp3")), [
                 "Greatest Hits (Queen)/a.mp3", "Greatest Hits/b.mp3"])
 
+    def test_table_follows_and_filed_audio_is_done(self):
+        # A mixed batch, drafted before group: the table follows the audio
+        # into its album folder, and once beets has filed it (moved it out
+        # of staging) its row is done, so the rest of the batch can be filed.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "mix"
+            st.mkdir(parents=True)
+            make_mp3(st / "a1.mp3", album="Nocturnal", title="One", track="1")
+            make_pdf(st / "rules.pdf", title="x")
+            run_cli("scan", str(st), "--hash", "--library", d)
+            run_cli("draft", str(st), "--library", d)
+            table = Path(str(st) + ".tsv")
+            table.write_text(table.read_text().replace("\t\t\tclassify", "\trpg/Game/Rules.pdf\thigh\tclassify"))
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)
+            self.assertIn("Nocturnal/a1.mp3\tbeets\t", table.read_text())
+            self.assertFalse(any(r.get("gone") for r in ms.load_manifest(st).values()))  # moved, not gone
+            code, out = run_cli("check", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            (st / "Nocturnal" / "a1.mp3").unlink()  # beets filed it
+            (st / "Nocturnal").rmdir()
+            code, out = run_cli("check", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertIn("already done 1", out)
+            code, out = run_cli("apply", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertTrue((lib / "rpg/Game/Rules.pdf").exists())
+
+    def test_rescan_keeps_the_hashes(self):
+        # group rescans without reading every byte again: the files it
+        # didn't change keep their hashes, and with them check's refusal to
+        # file content that is already filed.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            (lib / "rpg/Game").mkdir(parents=True)
+            make_pdf(lib / "rpg/Game/Rules.pdf", title="x")
+            st = lib / "staging" / "mix"
+            st.mkdir(parents=True)
+            (st / "rules.pdf").write_bytes((lib / "rpg/Game/Rules.pdf").read_bytes())
+            make_mp3(st / "a1.mp3", album="Nocturnal", title="One", track="1")
+            run_cli("scan", str(st), "--hash", "--library", d)
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)
+            recs = ms.load_manifest(st)
+            self.assertEqual(sorted(p for p, r in recs.items() if r.get("sha256")), ["Nocturnal/a1.mp3", "rules.pdf"])
+            Path(str(st) + ".tsv").write_text("old\tnew\nNocturnal/a1.mp3\tbeets\nrules.pdf\trpg/Game/Rules again.pdf\n")
+            code, out = run_cli("check", str(st), "--library", d)
+            self.assertEqual(code, 1)
+            self.assertIn("already filed as rpg/Game/Rules.pdf", out)
+
     def test_split_disc(self):
         self.assertEqual(ms.split_disc("Ballads CD2"), ("Ballads", 2))
         self.assertEqual(ms.split_disc("Ballads (Disc 1)"), ("Ballads", 1))
@@ -361,6 +462,28 @@ class Close(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertEqual(sorted(p.name for p in staging.iterdir()), ["audio-2.tsv", "audio.applied.jsonl"])
 
+    def test_rescan_keeps_what_beets_filed(self):
+        # beets moves what it files out of staging. A rescan after that keeps
+        # those files' records, the only ones of what they said they were:
+        # the audit checks against them, and close still waits for it.
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "mix"
+            (st / "Album").mkdir(parents=True)
+            make_mp3(st / "Album" / "01.mp3", album="Album", title="No. 3", track="1")
+            make_pdf(st / "doc.pdf")
+            run_cli("scan", str(st), "--library", d)
+            (st / "Album" / "01.mp3").unlink()  # filed by beets
+            for _ in range(2):
+                code, out = run_cli("scan", str(st), "--library", d)
+                self.assertEqual(code, 0, out)
+                rec = ms.load_manifest(st).get("Album/01.mp3", {})
+                self.assertEqual((rec.get("meta", {}).get("tags", {}).get("title"), rec.get("gone")), ("No. 3", True))
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)  # passes it over
+            (st / "doc.pdf").unlink()
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertNotEqual(code, 0)
+            self.assertIn("not audited", out)
+
     def test_hidden_folder_blocks(self):
         with tempfile.TemporaryDirectory() as d:
             st = Path(d) / "staging" / "print"
@@ -368,6 +491,25 @@ class Close(unittest.TestCase):
             code, out = run_cli("close", str(st), "--library", d)
             self.assertNotEqual(code, 0)
             self.assertIn(".originals/", out)
+
+    def test_dot_named_file_blocks(self):
+        # Left out of the batch like junk, but it may be media, and the only copy.
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "print"
+            st.mkdir(parents=True)
+            book = st / "...And Ladies of the Club.pdf"
+            book.write_bytes(b"%PDF-1.4\n")
+            (st / "._x.pdf").write_bytes(b"")  # the Mac's AppleDouble: junk
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertNotEqual(code, 0)
+            self.assertIn(book.name, out)
+            self.assertTrue(book.exists())
+            code, out = run_cli("scan", str(st), "--library", d)
+            self.assertIn("dot-named, so not in the batch", out)
+            book.unlink()
+            code, out = run_cli("close", str(st), "--library", d)
+            self.assertEqual(code, 0, out)
+            self.assertFalse(st.exists())
 
 
 class Checks(unittest.TestCase):
@@ -432,6 +574,246 @@ class Checks(unittest.TestCase):
             self.assertIsNotNone(a)
             self.assertGreaterEqual(sc.similarity(a, a2), sc.SAME_RECORDING)
             self.assertLess(sc.similarity(a, b), sc.SAME_RECORDING)
+
+
+@unittest.skipIf(sr is None, "beets is in the check on Linux only")
+class Plugin(unittest.TestCase):
+    """beetsplug/stagereview.py, on a scratch beets library: stage-review's
+    decisions and answers, and stage-audit."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.d = Path(tmp.name)
+        # beets' defaults only, never the config of whoever runs the tests.
+        self.enterContext(mock.patch.dict(os.environ, BEETSDIR=str(self.d / "beets")))
+        beets_config.clear()
+        beets_config.read(user=False)
+        # A file, not ":memory:": beets backs a new library up beside it (in
+        # the working directory, for ":memory:") as it migrates it, and says so.
+        with redirect_stdout(io.StringIO()):
+            self.lib = Library(str(self.d / "library.db"), str(self.d / "music"))
+        self.addCleanup(self.lib._close)
+        self.staging = self.d / "staging" / "audio"
+        self.staging.mkdir(parents=True)
+
+    def album(self, tracks, files=False):
+        """"A – Album", filed from the batch: (track, title, slot length)
+        each. Its files exist when `files`."""
+        items = []
+        for n, title, length in tracks:
+            path = self.d / "music" / "A" / "Album" / f"{n:02d} {title}.mp3"
+            if files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                make_mp3(path)
+            items.append(Item(path=os.fsencode(path), disc=1, track=n, title=title, length=length,
+                              artist="A", albumartist="A", album="Album", mb_trackid=f"mb{n}",
+                              stage_source=f"audio/Album/{n:02d} {title}.mp3"))
+        self.lib.add_album(items)
+        return items
+
+    def manifest(self, records):
+        """The batch's manifest: (original path, real length, title in its tags) each."""
+        Path(f"{self.staging}.manifest.jsonl").write_text("".join(
+            json.dumps({"path": p, "kind": "audio", "meta": {"duration": real, "tags": {"title": title}}}) + "\n"
+            for p, real, title in records))
+
+    def audit(self):
+        return sr.audit(self.lib, str(self.staging))[0]
+
+    def test_album_filed_earlier_in_the_run_is_filed(self):
+        # One recording on a best-of and, ripped again, on its studio album.
+        for folder in ("Best Of", "Studio"):
+            (self.staging / folder).mkdir()
+        tune = "sin(2*PI*(220*pow(2,floor(mod(t*3,7))/12))*t)+0.5*sin(2*PI*110*pow(2,floor(mod(t,5))/7)*t)"
+        ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{tune}':d=20", str(self.staging / "Best Of" / "a.flac"))
+        ffmpeg("-i", str(self.staging / "Best Of" / "a.flac"), "-b:a", "96k", str(self.staging / "Studio" / "a.mp3"))
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging))
+
+        def task(folder, name):
+            path = next((self.staging / folder).iterdir())
+            info = SimpleNamespace(album_id=name, artist="A", album=name, label=None, country=None, media="CD",
+                                   year=None, tracks=[None], albumdisambig=None, data_url=None)
+            return SimpleNamespace(
+                paths=[os.fsencode(self.staging / folder)], rec=sr.Recommendation.strong,
+                items=[Item(path=os.fsencode(path), track=1, title="Tune", length=20.0,
+                            artist="A", albumartist="A", album=name)],
+                candidates=[SimpleNamespace(distance=0.0, info=info, extra_items=[], extra_tracks=[])])
+
+        best = task("Best Of", "Best Of")
+        self.assertIs(session.choose_match(best), best.candidates[0])
+        self.lib.add_album(best.items)  # as beets does, before it asks about the next album
+        studio = task("Studio", "Studio")
+        self.assertEqual(session.choose_match(studio), sr.Action.SKIP)
+        self.assertEqual(session.review[0]["why"], "same recordings as 1 of these 1 files already filed")
+
+    def test_dup_answer_names_the_library_album(self):
+        twin = self.album([(1, "One", 60.0)])[0].get_album()
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging), answers={})
+        [merge] = [o for o in session.dup_options(twin, 1) if o["value"].startswith("dup:merge")]
+        # Answered without the page, as the media-share skill says: the item
+        # is taken out of the review JSON.
+        folder = self.staging / "Album (more)"
+        item = Item(path=os.fsencode(folder / "02 Two.mp3"), track=2, title="Two")
+        task = SimpleNamespace(paths=[os.fsencode(folder)], items=[item])
+        session.answers[sr.item_id("Album (more)")] = {"choice": "option", "value": merge["value"]}
+        self.assertEqual(session.answered(task), sr.Action.RETAG)
+        self.assertEqual((item.albumartist, item.album), ("A", "Album"))
+        self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.MERGE)
+
+    def test_release_named_like_a_filed_album(self):
+        twin = self.album([(1, "One", 60.0)])[0].get_album()
+        twin.mb_albumid = "e1"
+        twin.store()
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging))
+        # The edition filed, a second edition of "A – Album", and a live album.
+        first, edition, live = (SimpleNamespace(info=SimpleNamespace(album_id=r, artist="A", album=name))
+                                for r, name in (("e1", "Album"), ("e2", "Album"), ("live", "Album (Live)")))
+        offered = session.against_filed(
+            [{"value": "mb:e1", "label": "A – Album (2000)", "detail": "", "recommended": False},
+             {"value": "mb:e2", "label": "A – Album (2020)", "detail": "CD", "recommended": True},
+             {"value": "mb:live", "label": "A – Album (Live)", "detail": "", "recommended": False}],
+            [first, edition, live], twin)
+        self.assertEqual([o["value"] for o in offered], ["mb:e2+remove", "mb:e2+keep", "mb:live"])
+        self.assertFalse(any(o["recommended"] for o in offered))
+
+        session = sr.StageSession(self.lib, None, [], None, str(self.staging), answers={})
+        task = SimpleNamespace(paths=[os.fsencode(self.staging / "Album")], items=[], candidates=[])
+        task.lookup_candidates = lambda ids: setattr(task, "candidates", [edition] if ids == ["e2"] else [])
+        session.answers[sr.item_id("Album")] = {"choice": "option", "value": "mb:e2+keep"}
+        self.assertIs(session.answered(task), edition)
+        self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.KEEP)
+        # Chosen bare, it waits in staging, and says why.
+        session.dupmode.clear()
+        session.answers[sr.item_id("Album")] = {"choice": "option", "value": "mb:e2"}
+        self.assertIs(session.answered(task), edition)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.SKIP)
+        self.assertIn("A – Album is already filed; left in staging", out.getvalue())
+        # Tagged by hand like it: no release to offer again, so it says what the answer needs.
+        session.answers[sr.item_id("Album")] = {"choice": "custom", "fields": {"albumartist": "A", "album": "Album"}}
+        self.assertEqual(session.answered(task), sr.Action.RETAG)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(session.get_duplicate_action(task, [twin]), sr.DuplicateAction.SKIP)
+        self.assertIn('"on_duplicate"', out.getvalue())
+
+    def test_import_log_is_written(self):
+        log = self.d / "import.log"
+        beets_config["import"]["log"] = str(log)
+        beets_log = beets_logging.getLogger("beets")
+        beets_log.set_global_level(beets_logging.INFO)  # as the `beet` command sets it
+        self.addCleanup(beets_log.set_global_level, beets_logging.NOTSET)
+        with redirect_stdout(io.StringIO()):
+            sr.StageReview().run(self.lib, SimpleNamespace(answers=None, batch=None), [str(self.staging)])
+        self.assertIn("import started", log.read_text())
+
+    def test_audit_flags_what_it_could_not_compare(self):
+        self.album([(1, "One", 60.0), (2, "Two", 90.0)])
+        # Rescanned after filing: the manifest has only what is still in staging.
+        self.manifest([("Leftover/x.mp3", 30, "x")])
+        review = self.audit()
+        self.assertEqual([r["title"] for r in review], ["1 One", "2 Two"])
+        self.assertIn("not checked", review[0]["why"])
+        self.assertEqual([o["value"] for o in review[0]["options"]], ["audit:ok"])
+        sr.apply_audit_answers(self.lib, str(self.staging), {review[0]["id"]: {"choice": "option",
+                                                                            "value": "audit:ok"}}, review)
+        self.assertEqual([r["title"] for r in self.audit()], ["2 Two"])
+
+    def test_audit_answer_for_an_item_out_of_the_review(self):
+        self.album([(1, "One", 60.0), (2, "Two", 90.0)])
+        self.manifest([("Album/01 One.mp3", 60, "One"), ("Album/02 Two.mp3", 200, "Two")])
+        plugin = sr.StageReview()
+        with redirect_stdout(io.StringIO()):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=None), [str(self.staging)])
+        out = Path(f"{self.staging}.audit.review.json")
+        doc = json.loads(out.read_text())
+        [flagged] = doc["items"]
+        # Settled without the page: an answer file, and the item out of the review JSON.
+        out.write_text(json.dumps({**doc, "items": []}))
+        answers = self.d / "audio.answers"
+        answers.mkdir()
+        (answers / f"{flagged['id']}.json").write_text(json.dumps(
+            {"batch": "audio-audit", "item": flagged["id"], "choice": "option", "value": "audit:ok"}))
+        with redirect_stdout(io.StringIO()):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=str(answers)), [str(self.staging)])
+        self.assertTrue(json.loads(Path(f"{self.staging}.audit.json").read_text())["passed"])
+
+    def test_audit_answer_outlives_a_rescan(self):
+        items = self.album([(1, "One", 60.0), (2, "Two No. 5", 90.0)], files=True)
+        self.manifest([("Album/01 One.mp3", 60, "One"), ("Album/02 Two No. 5.mp3", 90, "Two No. 3")])
+        plugin = sr.StageReview()
+        with redirect_stdout(io.StringIO()):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=None), [str(self.staging)])
+        [two] = json.loads(Path(f"{self.staging}.audit.review.json").read_text())["items"]
+        answers = self.d / "audio.answers"
+        answers.mkdir()
+        # Titled as the original was, from the page; and track 1 the same,
+        # by hand, though the page never showed what its original was.
+        for iid in (two["id"], sr.item_id(items[0]["stage_source"])):
+            (answers / f"{iid}.json").write_text(json.dumps(
+                {"batch": "audio-audit", "item": iid, "choice": "option", "value": "audit:original"}))
+        # Rescanned before the answers are applied: the filed tracks' records are gone.
+        self.manifest([("Leftover/x.mp3", 30, "x")])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            plugin.run_audit(self.lib, SimpleNamespace(answers=str(answers)), [str(self.staging)])
+        for i in items:
+            i.load()
+        self.assertEqual(items[1].title, "Two No. 3")
+        self.assertTrue(items[1].path.endswith(b"02 Two No. 3.mp3"))
+        self.assertEqual(items[0].title, "One")
+        self.assertIn("1 One: its original title went with its manifest record; still flagged", out.getvalue())
+        self.assertEqual([r["title"] for r in self.audit()], ["1 One"])
+
+    def test_audit_never_leaves_two_tracks_in_one_slot(self):
+        items = self.album([(1, "One", 60.0), (2, "Two", 90.0), (3, "Three", 130.0), (4, "Four", 180.0),
+                            (5, "Five", 245.0)], files=True)
+        # Track 3's file is really 4:02, as long as slot 5; so is slot 5's own file.
+        self.manifest([(f"Album/{i.track:02d} {i.title}.mp3", real, i.title)
+                       for i, real in zip(items, (60, 90, 242, 180, 246))])
+        [three] = self.audit()
+        [slot5] = [o for o in three["options"] if o["value"] == "audit:slot:1-5"]
+        self.assertFalse(slot5["recommended"])
+        self.assertIn("the file there fits it too", slot5["detail"])
+        # Chosen all the same, with slot 5's file accepted before: it is
+        # flagged again, as sharing its slot, and its answer from then, still
+        # among the batch's, doesn't accept it again, round after round.
+        items[4]["stage_audit"] = "ok"
+        items[4].store()
+        answers = self.d / "audio.answers"
+        answers.mkdir()
+        for iid, value in ((three["id"], "audit:slot:1-5"), (sr.item_id(items[4]["stage_source"]), "audit:ok")):
+            (answers / f"{iid}.json").write_text(json.dumps(
+                {"batch": "audio-audit", "item": iid, "choice": "option", "value": value}))
+        plugin = sr.StageReview()
+        for _ in range(2):
+            with redirect_stdout(io.StringIO()):
+                plugin.run_audit(self.lib, SimpleNamespace(answers=str(answers)), [str(self.staging)])
+            [five] = json.loads(Path(f"{self.staging}.audit.review.json").read_text())["items"]
+            self.assertEqual(five["key"], "audio/Album/05 Five.mp3")
+            self.assertIn("shares track 5 with “Five”", five["why"])
+            self.assertIsNone(json.loads(Path(f"{self.staging}.audit.json").read_text())["passed"])
+
+    def test_audit_flags_a_track_moved_onto_a_file_it_cant_check(self):
+        items = self.album([(1, "One", 60.0), (2, "Two", 90.0), (3, "Three", 180.0)], files=True)
+        # Track 3 was filed from another batch; track 2's file is really 3:01.
+        del items[2]["stage_source"]
+        items[2].store()
+        self.manifest([("Album/01 One.mp3", 60, "One"), ("Album/02 Two.mp3", 181, "Two")])
+        [two] = self.audit()
+        [slot3] = [o for o in two["options"] if o["value"] == "audit:slot:1-3"]
+        self.assertFalse(slot3["recommended"])
+        self.assertIn("the file there can't be checked here", slot3["detail"])
+        with redirect_stdout(io.StringIO()):
+            sr.apply_audit_answers(self.lib, str(self.staging), {two["id"]: {"choice": "option",
+                                                                              "value": "audit:slot:1-3"}}, [two])
+        [moved] = self.audit()
+        self.assertEqual((moved["key"], moved["title"]), ("audio/Album/02 Two.mp3", "3 Three"))
+        self.assertIn("shares track 3 with “Three”", moved["why"])
+        self.assertNotEqual(moved["id"], two["id"])
+
 
 class Pipeline(unittest.TestCase):
     def test_batch(self):
@@ -499,6 +881,8 @@ class Pipeline(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertTrue((lib / "movies/The Matrix (1999)/The Matrix (1999).mkv").exists())
             self.assertTrue((st / "song.mp3").exists())      # beets' job
+            self.assertIn(f"then `beet stage-review {st}`", out)
+            self.assertNotIn("beet import", out)
             self.assertTrue((st / "IMG_4211.mov").exists())  # skipped
             self.assertFalse((st / "sub").exists())          # emptied dirs are removed
 
@@ -591,6 +975,29 @@ class Concurrency(unittest.TestCase):
             self.assertFalse((lib / ".media-stage.lock").exists())
             self.assertFalse(Path(str(st) + ".lock").exists())
 
+    def test_staging_given_as_dot(self):
+        # From inside the batch: its sidecars, lock and trash still go beside it.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "b"
+            st.mkdir(parents=True)
+            make_pdf(st / "c.pdf")
+            cwd = os.getcwd()
+            os.chdir(st)
+            try:
+                for cmd in ("scan", "draft"):
+                    code, out = run_cli(cmd, ".", "--library", str(lib))
+                    self.assertEqual(code, 0, out)
+                self.assertEqual(sorted(p.name for p in st.parent.iterdir()), ["b", "b.manifest.jsonl", "b.tsv"])
+                Path(str(st) + ".tsv").write_text("old\tnew\nc.pdf\ttrash\n")
+                code, out = run_cli("apply", ".", "--library", str(lib))
+                self.assertEqual(code, 0, out)
+            finally:
+                os.chdir(cwd)
+            self.assertTrue((lib / "staging/trash/b/c.pdf").exists())
+            self.assertTrue(Path(str(st) + ".applied.jsonl").exists())
+            self.assertEqual(list(st.iterdir()), [])
+
     def test_file_changed_since_scan_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             lib, st = self.batch(d)
@@ -599,6 +1006,20 @@ class Concurrency(unittest.TestCase):
             code, out = run_cli("check", str(st), "--library", str(lib))
             self.assertEqual(code, 1)
             self.assertIn("changed since scan", out)
+
+    def test_discard_changed_since_scan_is_refused(self):
+        # A copy drafted as the worse one while it was still being copied:
+        # apply deletes a `discard` row, so it is held to its scan too.
+        for new in ("discard", "trash"):
+            with tempfile.TemporaryDirectory() as d:
+                lib, st = self.batch(d)
+                Path(str(st) + ".tsv").write_text(f"old\tnew\nHeat.1995.mkv\t{new}\n")
+                with open(st / "Heat.1995.mkv", "ab") as f:
+                    f.write(b"\0" * 10)
+                code, out = run_cli("apply", str(st), "--library", str(lib))
+                self.assertEqual(code, 1, new)
+                self.assertIn("changed since scan", out)
+                self.assertTrue((st / "Heat.1995.mkv").exists())
 
     def test_case_clash_with_library_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
@@ -642,6 +1063,26 @@ class Concurrency(unittest.TestCase):
             self.assertIn("Heat (1995) - Reviewed.mkv", text)
             self.assertIn("movies/Alien (1979)/Alien (1979).mkv", text)
 
+    def test_sidecar_added_later_follows_the_reviewed_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            lib, st = self.batch(d)
+            table = Path(str(st) + ".tsv")
+            reviewed = "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}"
+            table.write_text(table.read_text().replace("movies/Heat (1995)/Heat (1995)", reviewed))
+            (st / "Heat.1995.en.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+            run_cli("scan", str(st), "--library", str(lib))
+            code, out = run_cli("draft", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            rows = {l.split("\t")[0]: l.split("\t")[1] for l in table.read_text().splitlines()[1:]}
+            self.assertEqual(rows["Heat.1995.en.srt"], reviewed + ".en.srt")
+            # A video set aside keeps its subtitle with it.
+            table.write_text("".join(l.replace(reviewed + ".mkv", "skip") + "\n" for l in table.read_text().splitlines()
+                                     if not l.startswith("Heat.1995.en.srt")))
+            code, out = run_cli("draft", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            rows = {l.split("\t")[0]: l.split("\t")[1] for l in table.read_text().splitlines()[1:]}
+            self.assertEqual(rows["Heat.1995.en.srt"], "skip")
+
 
 def fake_wikidata(entities):
     """A Wikidata API stand-in: `entities` is {qid: (label, prop, tmdb, year, lang_qid)}."""
@@ -666,6 +1107,25 @@ def fake_wikidata(entities):
             out[q] = {"labels": {"en": {"value": label}}, "claims": claims}
         return {"entities": out}
     return fetch
+
+
+def video_rec(path, video="h264 1280x720", audio=("eng",), duration=60.0):
+    """A video's manifest record, as scan_file writes one."""
+    return {"path": path, "size": 1, "kind": "video", "ext": ms.ext_of(path), "guess": ms.guess(Path(path).name),
+            "meta": {"duration": duration, "bit_rate": 0, "tags": {}, "video": video,
+                     "audio_langs": list(audio), "sub_langs": []}}
+
+
+def draft_rows(d, recs, lookup=None):
+    """draft on a manifest of `recs` (batch staging/b, library `d`): {old: [new, confidence, note]}."""
+    st = Path(d) / "staging" / "b"
+    st.mkdir(parents=True, exist_ok=True)
+    Path(str(st) + ".manifest.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in sorted(recs, key=lambda r: r["path"])))  # walk's order
+    ns = type("A", (), {"staging": str(st), "library": d, "force": False, "lookup": False})
+    with redirect_stdout(io.StringIO()):
+        ms.draft(ns, lookup=lookup)
+    return {l.split("\t")[0]: l.split("\t")[1:] for l in Path(str(st) + ".tsv").read_text().splitlines()[1:]}
 
 
 class Copies(unittest.TestCase):
@@ -803,6 +1263,92 @@ class Copies(unittest.TestCase):
             code, out = run_cli("lint", "--library", str(lib))
             self.assertEqual(code, 0, out)
 
+    def test_damaged_book_is_filed_and_logged(self):
+        # Its OPF reads, one chapter doesn't (a bad CRC-32): apply files and
+        # logs it with the error and goes on; lint --fix reports it.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "b"
+            st.mkdir(parents=True)
+            make_epub(st / "a.epub", "Alpha", "Author, Ann")
+            with zipfile.ZipFile(st / "a.epub", "a") as z:
+                z.writestr("OEBPS/ch1.xhtml", "<html>chapter one</html>")
+            (st / "a.epub").write_bytes((st / "a.epub").read_bytes().replace(b"chapter one", b"chapter 0ne"))
+            make_pdf(st / "b.pdf", title="b")
+            run_cli("scan", str(st), "--library", str(lib))
+            Path(str(st) + ".tsv").write_text("old\tnew\na.epub\tbooks/Ann Author/Alpha/Alpha.epub\n"
+                                              "b.pdf\trpg/Game/Beta.pdf\n")
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            log = {e["old"]: e for e in map(json.loads, Path(str(st) + ".applied.jsonl").read_text().splitlines())}
+            self.assertEqual(sorted(log), ["a.epub", "b.pdf"])
+            self.assertIn("Bad CRC-32", log["a.epub"]["metadata"][0])
+            self.assertEqual(ms.pdf_meta(lib / "rpg/Game/Beta.pdf")["title"], "Beta")
+            code, out = run_cli("lint", "--fix", "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("FAILED books/Ann Author/Alpha/Alpha.epub: not written: Bad CRC-32", out)
+
+    def test_epub2_keeps_its_opf_attributes(self):
+        # calibre's EPUB2 OPF: the author's sort name and role, and the
+        # identifier's scheme, are attributes in the OPF namespace.
+        with tempfile.TemporaryDirectory() as d:
+            book = Path(d) / "stranger.epub"
+            make_epub(book, "The Stranger", None)
+            ms.rewrite_zip(book, {"OEBPS/content.opf": b"""<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uuid_id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>The Stranger</dc:title>
+    <dc:creator opf:file-as="Camus, Albert" opf:role="aut">Albert Camus</dc:creator>
+    <dc:identifier id="uuid_id" opf:scheme="ISBN">9780679720201</dc:identifier>
+  </metadata>
+  <manifest/><spine/>
+</package>"""})
+            ms.epub_write(book, {"title": "The Stranger", "series": "Absurd", "volume": "1"}, source="0" * 64)
+            with zipfile.ZipFile(book) as z:
+                md = ms.ET.fromstring(z.read("OEBPS/content.opf")).find("opf:metadata", ms.NS)
+            opf = "{%s}" % ms.NS["opf"]
+            creator, ident = md.find("dc:creator", ms.NS), md.find("dc:identifier", ms.NS)
+            self.assertEqual((creator.get(opf + "file-as"), creator.get(opf + "role"), ident.get(opf + "scheme")),
+                             ("Camus, Albert", "aut", "ISBN"))
+            m = ms.epub_meta(book)
+            self.assertEqual((m["title"], m["series"], m["volume"], m["source"]), ("The Stranger", "Absurd", "1", "0" * 64))
+
+    def test_epub2_written_bare_is_mended(self):
+        # As the ElementTree version left a book: the attributes bare, no
+        # opf: prefix declared, and its sha256 already in a dc:source, so
+        # nothing else about it would make `tag` write it.
+        with tempfile.TemporaryDirectory() as d:
+            book = Path(d) / "stranger.epub"
+            make_epub(book, "The Stranger", None)
+            ms.rewrite_zip(book, {"OEBPS/content.opf": ("""<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" unique-identifier="PrimaryID" version="2.0">
+  <metadata>
+    <dc:identifier id="PrimaryID" scheme="ISBN">978-0-307-82766-1</dc:identifier>
+    <dc:creator file-as="Camus, Albert" role="aut">Albert Camus</dc:creator>
+    <dc:date event="publication">2012-07-18</dc:date>
+    <meta content="cover-image" name="cover" />
+  <dc:title>The Stranger</dc:title><dc:source>sha256:%s</dc:source></metadata>
+  <manifest/><spine/>
+</package>""" % ("0" * 64)).encode()})
+            rel = "books/Albert Camus/The Stranger/The Stranger.epub"
+            self.assertEqual(ms.shelf_todo(rel, ms.current_meta(book)).get("opf"), "event,file-as,role,scheme")
+            ms.epub_write(book, {"title": "The Stranger", "author": "Albert Camus"}, source="0" * 64)
+            self.assertNotIn("opf", ms.shelf_todo(rel, ms.current_meta(book)))
+            with zipfile.ZipFile(book) as z:
+                raw = z.read("OEBPS/content.opf")
+            md = ms.ET.fromstring(raw).find("opf:metadata", ms.NS)
+            opf = "{%s}" % ms.NS["opf"]
+            creator, ident, date = (md.find(f"dc:{t}", ms.NS) for t in ("creator", "identifier", "date"))
+            self.assertEqual((creator.get(opf + "file-as"), creator.get(opf + "role"),
+                              ident.get(opf + "scheme"), date.get(opf + "event")),
+                             ("Camus, Albert", "aut", "ISBN", "publication"))
+            self.assertNotIn(b' role="', raw)
+            self.assertIn(b"opf:role=", raw)
+            self.assertEqual(ident.get("id"), "PrimaryID")
+            self.assertIsNotNone(md.find("opf:meta[@name='cover']", ms.NS))
+            m = ms.epub_meta(book)
+            self.assertEqual((m["title"], m["source"]), ("The Stranger", "0" * 64))
+
     def test_one_file_per_volume(self):
         with tempfile.TemporaryDirectory() as d:
             lib = Path(d)
@@ -846,6 +1392,48 @@ class Copies(unittest.TestCase):
                 self.assertEqual(ms.current_meta(lib / rel).get("title"), "Heat (1995)", e)
                 self.assertEqual(len(ms.ffprobe(lib / rel)["streams"]), streams, e)
                 self.assertEqual(ms.tag_file(lib, rel), [], e)
+
+    def test_lint_fix_says_what_it_could_not_write(self):
+        # MPEG-PS has no title tag we write: --fix says so, and fails.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            mpg = lib / "movies/Heat (1995)/Heat (1995).mpg"
+            mpg.parent.mkdir(parents=True)
+            ffmpeg("-f", "lavfi", "-i", "testsrc=size=64x48:rate=25", "-t", "1", "-c:v", "mpeg2video", str(mpg))
+            code, out = run_cli("lint", "--fix", "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("FAILED movies/Heat (1995)/Heat (1995).mpg: title not written", out)
+
+    def test_lint_and_tag_take_library_paths(self):
+        # Relative to the current directory, else to the library (`ssh desk`
+        # starts in ~). A path that is neither is an error, never "ok".
+        with tempfile.TemporaryDirectory() as d:
+            lib, home = Path(d) / "media", Path(d) / "home"
+            (lib / "rpg/Game").mkdir(parents=True)
+            home.mkdir()
+            make_pdf(lib / "rpg/Game/Game (v2).pdf", title="x")
+            make_pdf(lib / "rpg/Game/Other - Rules.pdf", title="x")
+            cwd = os.getcwd()
+            os.chdir(home)
+            try:
+                code, out = run_cli("lint", "rpg", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("LAYOUT rpg/Game/Game (v2).pdf", out)
+                code, out = run_cli("lint", "rgp", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("no such directory: rgp", out)
+                code, out = run_cli("tag", "rpg/Game/Other - Rules.pdf", "--library", str(lib))
+                self.assertEqual(code, 0, out)
+                self.assertEqual(ms.pdf_meta(lib / "rpg/Game/Other - Rules.pdf")["title"], "Other - Rules")
+                code, out = run_cli("tag", "rpg/Game/Nothing.pdf", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("no such file: rpg/Game/Nothing.pdf", out)
+                (home / "notes.pdf").write_bytes(b"")
+                code, out = run_cli("tag", "notes.pdf", "--library", str(lib))
+                self.assertEqual(code, 1, out)
+                self.assertIn("not in the library: notes.pdf", out)
+            finally:
+                os.chdir(cwd)
 
     def test_best_copy_is_kept(self):
         with tempfile.TemporaryDirectory() as d:
@@ -907,6 +1495,50 @@ class Copies(unittest.TestCase):
             row = Path(str(st2) + ".tsv").read_text().splitlines()[1].split("\t")
             self.assertEqual(row[1], "trash")
             self.assertIn("the library already has this", row[3])
+
+    def test_copies_in_one_folder_keep_their_own_subtitles(self):
+        sub = lambda p: {"path": p, "size": 1, "kind": "subtitle", "ext": "srt", "guess": ms.guess(Path(p).name)}
+        with tempfile.TemporaryDirectory() as d:
+            rows = draft_rows(d, [
+                # One name, two containers: the subtitle is the kept copy's.
+                video_rec("a/Heat.1995.mkv"), video_rec("a/Heat.1995.mp4", video="h264 640x360"), sub("a/Heat.1995.en.srt"),
+                # A longer name: the subtitle is its, not the shorter one's.
+                video_rec("b/Alien.1979.mkv", video="h264 640x360"), video_rec("b/Alien.1979.remastered.mkv"),
+                sub("b/Alien.1979.remastered.en.srt"),
+                # ...so the kept copy has none of its own, and takes the dropped one's.
+                video_rec("c/Aliens.1986.mkv", video="h264 1920x1080"), video_rec("c/Aliens.1986.remastered.mkv"),
+                sub("c/Aliens.1986.remastered.en.srt")])
+        self.assertEqual(rows["a/Heat.1995.mp4"][0], "discard")
+        self.assertEqual(rows["a/Heat.1995.en.srt"][0], "movies/Heat (1995)/Heat (1995).en.srt")
+        self.assertEqual(rows["b/Alien.1979.mkv"][0], "discard")
+        self.assertEqual(rows["b/Alien.1979.remastered.en.srt"][0], "movies/Alien (1979)/Alien (1979) - Remastered.en.srt")
+        self.assertEqual(rows["c/Aliens.1986.remastered.mkv"][0], "discard")
+        self.assertEqual(rows["c/Aliens.1986.remastered.en.srt"][:3:2],
+                         ["movies/Aliens (1986)/Aliens (1986).en.srt", "subtitle of a dropped copy of the same length; check: timing"])
+
+    def test_untagged_audio_is_not_the_wrong_language(self):
+        # mkvmerge, ffmpeg and many web files leave the audio's language unset.
+        wd = ms.Wikidata(fake_wikidata({"Q1": ("Heat", "P4947", "949", 1995, "L2")}))  # English
+        with tempfile.TemporaryDirectory() as d:
+            rows = draft_rows(d, [video_rec("Heat.1995.2160p.BluRay.mkv", video="hevc 3840x1600", audio=["und"]),
+                                  video_rec("Heat.1995.DVDRip.mkv", video="mpeg2video 720x576", audio=["eng"])], lookup=wd)
+        self.assertEqual(rows["Heat.1995.2160p.BluRay.mkv"][0], "movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv")
+        # The one copy known to be in English may yet be wanted: the kept one may be a dub.
+        self.assertEqual(rows["Heat.1995.DVDRip.mkv"][0], "trash")
+        self.assertIn("the kept copy's audio language is untagged", rows["Heat.1995.DVDRip.mkv"][2])
+
+    def test_shows_of_one_name_from_two_countries_are_not_copies(self):
+        with tempfile.TemporaryDirectory() as d:
+            rows = draft_rows(d, [video_rec("The.Office.US.S01E01.720p.WEB.mkv"),
+                                  video_rec("The.Office.US.2005.S01E02.720p.WEB.mkv"),
+                                  video_rec("The.Office.UK.S01E01.576p.DVDRip.mkv", video="mpeg2video 720x576"),
+                                  video_rec("The.Office.UK.S01E02.576p.DVDRip.mkv", video="mpeg2video 720x576")])
+        self.assertEqual(rows["The.Office.US.S01E01.720p.WEB.mkv"][0],
+                         "tv/The Office (2005)/Season 01/The Office (2005) - S01E01.mkv")
+        # The UK show's year is not the US show's: left for review, neither discarded nor filed under it.
+        for p in ("The.Office.UK.S01E01.576p.DVDRip.mkv", "The.Office.UK.S01E02.576p.DVDRip.mkv"):
+            self.assertEqual(rows[p][0], "", rows[p])
+            self.assertIn("show year unknown", rows[p][2])
 
     def test_review_offers_delete_or_trash(self):
         with tempfile.TemporaryDirectory() as d:

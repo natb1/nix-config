@@ -92,7 +92,7 @@
   services.tailscale.extraSetFlags = [ "--operator=n8" ];
 
   # google-chrome is unfree, and it is allowed by name in flake.nix's
-  # unfreePredicate — not here. nixpkgs.config is defined once, by the flake's
-  # `home` helper, so a second definition in this file conflicts with that one
-  # rather than adding to it.
+  # unfreePredicate — not here. The flake's `home` helper sets that predicate,
+  # and a second allowUnfreePredicate in this file would silently replace it
+  # (or be replaced by it) rather than add to it.
 }

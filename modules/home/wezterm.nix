@@ -17,14 +17,29 @@
   ...
 }:
 
+let
+  # The tailscale CLI the ssh_domains discovery runs. On macOS, WezTerm.app
+  # started from the Dock, Finder or Spotlight gets launchd's minimal PATH
+  # (/usr/bin:/bin:/usr/sbin:/sbin), which lacks /run/current-system/sw/bin,
+  # where modules/darwin/tailscale.nix installs the CLI — a bare `tailscale`
+  # fails there and ssh_domains comes up empty. So name the system profile's
+  # CLI, which also matches the running tailscaled. Linux sessions have that
+  # directory on PATH.
+  tailscaleCli =
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      "/run/current-system/sw/bin/tailscale"
+    else
+      "tailscale";
+in
+
 {
   programs.wezterm = {
     enable = true;
 
     # Build wezterm from the pinned nightly (modules/home/wezterm-pin.nix) rather
     # than the nixpkgs snapshot, so every mux client and server this repo installs
-    # — the WSL mux server, the Mac GUI, and the Windows GUI that
-    # hosts/wsl/home/wezterm-windows.nix mirrors — share one version. The
+    # — the mux servers on desk and WSL, the desk and Mac GUIs, and the Windows
+    # GUI that hosts/wsl/home/wezterm-windows.nix mirrors — share one version. The
     # mux-server user service below references config.programs.wezterm.package,
     # so it follows this automatically. Refresh with scripts/sync-wezterm.sh.
     package = pkgs.callPackage ./wezterm-package.nix { };
@@ -49,7 +64,7 @@
         -- On Windows, tailscale runs inside WSL so invoke it via a login shell
         -- to get the NixOS PATH (a non-login shell won't have tailscale on PATH).
         local is_windows = wezterm.target_triple:find('windows')
-        local tailscale_status_cmd = { 'tailscale', 'status', '--json' }
+        local tailscale_status_cmd = { '${tailscaleCli}', 'status', '--json' }
         if is_windows then
           tailscale_status_cmd = { 'wsl.exe', '-d', 'NixOS', '--', 'bash', '-lc', 'tailscale status --json' }
         end
@@ -128,7 +143,7 @@
   # NixOS: run the mux server as a managed systemd user service.
   #
   # Otherwise the mux server is spawned lazily by `wezterm connect` as a detached
-  # process that never restarts. After `home-manager switch` upgrades wezterm, that
+  # process that never restarts. After a switch upgrades wezterm, that
   # stale process keeps the old binary, and a freshly-upgraded client fails the mux
   # version handshake ("unexpected response ... UnitResponse").
   #

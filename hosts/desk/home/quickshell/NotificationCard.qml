@@ -100,6 +100,7 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     text: [card.notif.appName || "", Notifs.ago(card.notif)].filter(s => s !== "").join(" · ")
+                    textFormat: Text.PlainText
                     elide: Text.ElideRight
                     font.family: Theme.font
                     font.pixelSize: 11
@@ -123,10 +124,13 @@ Rectangle {
                 }
             }
 
+            // Plain text, as the spec has it. The default (AutoText) would
+            // render markup, <img> included; see the body below.
             Text {
                 Layout.fillWidth: true
                 text: card.notif.summary
                 visible: text !== ""
+                textFormat: Text.PlainText
                 wrapMode: Text.Wrap
                 maximumLineCount: 3
                 elide: Text.ElideRight
@@ -136,9 +140,17 @@ Rectangle {
                 color: Theme.fg
             }
 
+            // The body's markup is what the server advertises (Notifs.qml):
+            // <b>, <i>, <u> and <a href>; every other "<" is escaped. The
+            // text is not always the sender's own — tetherd forwards the
+            // phone's messages as they are, so anyone who can text the user
+            // writes it — and StyledText would fetch an <img src> from
+            // anywhere, each time the card is drawn. Escaping, unlike
+            // deleting <img…>, cannot leave a new tag behind ("<im<img>g …").
+            // Links open only if they are on the web.
             Text {
                 Layout.fillWidth: true
-                text: card.notif.body
+                text: card.notif.body.replace(/<(?!\/?(?:b|i|u)>|a\s[^>]*>|\/a>)/gi, "&lt;")
                 visible: text !== ""
                 textFormat: Text.StyledText
                 wrapMode: Text.Wrap
@@ -148,7 +160,10 @@ Rectangle {
                 font.pixelSize: 13
                 color: Theme.fg
                 linkColor: Theme.accent
-                onLinkActivated: link => Qt.openUrlExternally(link)
+                onLinkActivated: link => {
+                    if (/^https?:/i.test(link))
+                        Qt.openUrlExternally(link);
+                }
             }
 
             Flow {

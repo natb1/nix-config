@@ -10,8 +10,9 @@
 #
 # beets' library database is state, not config: it lives in /var/lib/beets
 # (one library, whoever imports) and can be rebuilt from the tags with
-# `beet import -A -C /srv/media/music` (as-is, no copy/move), since `write`
-# puts everything it knows in the files. The directory is made by tmpfiles:
+# `beet import -A -C -M /srv/media/music` (as-is, no copy, no move: with
+# import.move on, -C alone still moves), since `write` puts everything it
+# knows in the files. The directory is made by tmpfiles:
 # beets asks before creating it, and a prompt is fatal to `beet
 # stage-review`, which runs without a terminal.
 

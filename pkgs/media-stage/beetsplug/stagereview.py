@@ -28,15 +28,19 @@ chosen (and, when the album goes to the page anyway, suggested).
 The review page (docs/desktop-migration.md, "Filing a batch") shows each and
 stores the answers; --answers reads them back — exported JSON documents
 anywhere under DIR — and imports each answered album: a chosen release by
-its id, hand-entered tags as-is (written to the files), or not at all.
+its id, hand-entered tags as-is (written to the files), or not at all. A
+release named like an album already filed is offered, and filed, only as
+replacing that album or beside it.
 
 stage-audit then compares every file filed from the batch with what it was
 before beets renamed it, from STAGING/audio.manifest.jsonl (media-stage
 scan): a real length that doesn't fit its slot on the release, or a new title
 that names another number than the old one ("No. 3" filed as "No. 5"), goes
 to STAGING/audio.audit.review.json for the same page, as batch
-"<batch>-audit". It writes STAGING/audio.audit.json; `media-stage close`
-removes the batch's records only once that says passed.
+"<batch>-audit". So do two files filed in one slot, and a file whose
+original the manifest no longer has (rescanned since), which could not be
+compared. It writes STAGING/audio.audit.json; `media-stage close` removes
+the batch's records only once that says passed.
 
 The review file's shape is shared with `media-stage review export`, so one
 page reviews both.
@@ -45,6 +49,7 @@ page reviews both.
 import datetime
 import hashlib
 import json
+import logging
 import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -103,12 +108,21 @@ def write_review(path, batch, source, items):
 class Fingerprints:
     """Which library tracks are the same recording as a staged file. Library
     fingerprints are computed once, for tracks of a near length, and kept
-    on the item (the flexible field `stage_fp`)."""
+    on the item (the flexible field `stage_fp`). Albums filed earlier in the
+    run count too, by their staged files' fingerprints: beets adds each to
+    the library before it checks the next, but may still be moving its
+    files."""
 
     def __init__(self, lib):
         self.lib = lib
         self.library = [(i, i.length or 0) for i in lib.items()]
         self.staged = {}
+        self.filed = []  # (item, fingerprint) of each track filed this run
+
+    def filing(self, items):
+        """These are about to be filed: the albums after them are checked
+        against them too."""
+        self.filed += [(i, self.staged.get(i.path)) for i in items]
 
     def of_library(self, items):
         todo = [i for i in items if not i.get("stage_fp")]
@@ -134,8 +148,11 @@ class Fingerprints:
                 continue
             near = [li for li, ln in self.library if abs(ln - (i.length or 0)) <= 10]
             fps = self.of_library(near)
-            best = max(((li, similarity(fp, fps[li.id])) for li in near if li.id in fps),
-                       key=lambda x: x[1], default=(None, 0))
+            scores = [(li, similarity(fp, fps[li.id])) for li in near if li.id in fps]
+            # No id: beets declined that album after all (a duplicate).
+            scores += [(li, similarity(fp, lfp)) for li, lfp in self.filed
+                       if li.id and lfp and abs((li.length or 0) - (i.length or 0)) <= 10]
+            best = max(scores, key=lambda x: x[1], default=(None, 0))
             if best[1] >= SAME_RECORDING:
                 out[i.path] = best
         return out
@@ -268,18 +285,48 @@ class StageSession(TerminalImportSession):
         return None
 
     def dup_options(self, twin, here, all_filed=False):
+        # Each value names the library album, so an answer needs nothing
+        # else: one written without the page leaves the review file.
         there = len(list(twin.items()))
         name = f"{twin.albumartist} – {twin.album}" + (f" ({twin.year})" if twin.year else "")
         return [
-            {"value": "dup:merge", "label": f"Add these files to {name}",
+            {"value": f"dup:merge:{twin.id}", "label": f"Add these files to {name}",
              "detail": f"{there} tracks there + {here} here, filed as one album with its tags"},
-            {"value": "dup:remove", "label": "Replace the library copy with this one",
+            {"value": f"dup:remove:{twin.id}", "label": "Replace the library copy with this one",
              "detail": f"the {there} tracks there are deleted; these {here} are filed with its tags"},
-            {"value": "dup:keep", "label": "Keep both", "detail": "filed as a second album of the same name"},
+            {"value": f"dup:keep:{twin.id}", "label": "Keep both",
+             "detail": "filed as a second album of the same name"},
             {"value": "dup:skip", "label": "Keep only the library copy",
              "detail": "this one stays in staging" + (" — every file here is already filed" if all_filed else ""),
              "recommended": all_filed},
         ]
+
+    def against_filed(self, cands, matches, twin=None):
+        """The candidates (of `matches`) as the page offers them. A release
+        named like an album already filed is a duplicate to beets, and chosen
+        as it is it would only wait in staging: it is offered twice instead,
+        replacing the library copy or keeping both, and suggested neither
+        way. The release `twin` was filed as is left out: the dup options
+        stand for it."""
+        filed = {}
+        for a in self.lib.albums():
+            filed.setdefault((a.albumartist, a.album), []).append(a)
+        out = []
+        for c, m in zip(cands, matches):
+            if twin and twin.mb_albumid and m.info.album_id == twin.mb_albumid:
+                continue
+            same = filed.get((m.info.artist, m.info.album))  # beets' duplicate_keys
+            if not same:
+                out.append(c)
+                continue
+            there = sum(len(list(a.items())) for a in same)
+            out += [{**c, "value": c["value"] + "+remove", "label": c["label"] + ", replacing the library copy",
+                     "detail": " · ".join(filter(None, [f"the {there} tracks filed under that name are deleted",
+                                                        c["detail"]])), "recommended": False},
+                    {**c, "value": c["value"] + "+keep", "label": c["label"] + ", keeping the library copy",
+                     "detail": " · ".join(filter(None, ["filed as a second album of that name", c["detail"]])),
+                     "recommended": False}]
+        return out
 
     # -- decisions beets would have prompted for
 
@@ -315,8 +362,8 @@ class StageSession(TerminalImportSession):
             for c in cands:
                 c["recommended"] = False
             self.record(task, f"same recordings as {len(same)} of these {n} files already filed",
-                        self.dup_options(twin, n, all_filed=len(same) == n) + cands, twin=twin.id,
-                        evidence=[{"label": "Already filed (fingerprint)", "value": "\n".join(lines)}])
+                        self.dup_options(twin, n, all_filed=len(same) == n) + self.against_filed(cands, ranked, twin),
+                        twin=twin.id, evidence=[{"label": "Already filed (fingerprint)", "value": "\n".join(lines)}])
             return Action.SKIP
 
         twin = self.twin(task)
@@ -325,7 +372,7 @@ class StageSession(TerminalImportSession):
                 c["recommended"] = False
             there = len(list(twin.items()))
             self.record(task, f"like an album already filed ({there} tracks there, {n} here)",
-                        self.dup_options(twin, n) + cands, twin=twin.id)
+                        self.dup_options(twin, n) + self.against_filed(cands, ranked, twin), twin=twin.id)
             return Action.SKIP
 
         reasons, evidence = [], []
@@ -345,6 +392,7 @@ class StageSession(TerminalImportSession):
                 if edition else ": no best match has them")})
 
         if task.rec == Recommendation.strong and task.candidates and not reasons:
+            self.fingerprints.filing(task.items)
             return ranked[0]
         if task.rec == Recommendation.strong and task.candidates:
             why = f"strong match ({cands[0]['score']}%), but " + "; ".join(reasons)
@@ -354,7 +402,7 @@ class StageSession(TerminalImportSession):
                    Recommendation.medium: "close match"}.get(task.rec, "needs a look")
             why += f" (best {cands[0]['score']}%)" if cands else ": nothing found"
             why = "; ".join([why] + reasons)
-        self.record(task, why, cands, evidence=evidence)
+        self.record(task, why, self.against_filed(cands, ranked), evidence=evidence)
         return Action.SKIP
 
     def answered(self, task):
@@ -365,10 +413,15 @@ class StageSession(TerminalImportSession):
         if not a or a["choice"] == "skip":
             return Action.SKIP
         value = a.get("value", "")
-        if value in ("dup:merge", "dup:remove", "dup:keep"):
-            twin = self.lib.get_album((self.review_items.get(item_id(key)) or {}).get("twin") or 0)
+        mode = ":".join(value.split(":")[:2])
+        if mode in ("dup:merge", "dup:remove", "dup:keep"):
+            # "dup:merge:<album id>" (dup_options); an older answer, bare,
+            # finds the album in the review file, if the item is still there.
+            tid = value[len(mode) + 1:] or str((self.review_items.get(item_id(key)) or {}).get("twin") or "")
+            twin = self.lib.get_album(int(tid)) if tid.isdigit() else None
             if not twin:
-                ui.print_(f"stagereview: {key}: the library album to join is gone; left in staging")
+                ui.print_(f"stagereview: {key}: " + ("the library album to join is gone" if tid else
+                          "the answer doesn't say which library album to join") + "; left in staging")
                 return Action.SKIP
             for i in task.items:
                 for f in self.TWIN_FIELDS:
@@ -378,7 +431,7 @@ class StageSession(TerminalImportSession):
                 guess = from_name(os.path.basename(displayable_path(i.path)))
                 i.title = i.title or guess.get("title", "")
                 i.track = i.track or track_no(guess.get("track")) or 0
-            self.dupmode[key] = value
+            self.dupmode[key] = mode
             task.__dict__.pop("source", None)  # cached from the old tags; the duplicate check reads it
             return Action.RETAG
         if value == "dup:skip":
@@ -397,8 +450,13 @@ class StageSession(TerminalImportSession):
             task.__dict__.pop("source", None)
             return Action.RETAG
         if value.startswith("mb:"):
-            task.lookup_candidates([value[3:]])
+            # "mb:<id>+remove" or "+keep": a release named like an album
+            # already filed (against_filed), and what becomes of that one.
+            release, _, dup = value[3:].partition("+")
+            task.lookup_candidates([release])
             if task.candidates:
+                if dup in ("remove", "keep"):
+                    self.dupmode[key] = "dup:" + dup
                 return task.candidates[0]
         ui.print_(f"stagereview: {self.key(task)}: answer {a.get('value')!r} gave no match; left in staging")
         return Action.SKIP
@@ -407,18 +465,31 @@ class StageSession(TerminalImportSession):
         key = self.key(task)
         if self.answers is not None:
             # A chosen release can meet an album already filed under its
-            # name; the answer may say "on_duplicate": "remove" (replace the
-            # library copy) or "keep" (both). Otherwise the new one waits.
+            # name. The page offers such a release as "+remove" (replace the
+            # library copy) or "+keep" (both), and a hand-written answer may
+            # say "on_duplicate": "remove" or "keep". Otherwise the new one
+            # waits, and says why.
             a = self.answers.get(item_id(key)) or {}
             mode = self.dupmode.get(key) or {"remove": "dup:remove", "keep": "dup:keep"}.get(a.get("on_duplicate"))
             if mode == "dup:merge":
                 self.merging.add(key)
                 return DuplicateAction.MERGE
-            return {"dup:keep": DuplicateAction.KEEP, "dup:remove": DuplicateAction.REMOVE}.get(
-                mode, DuplicateAction.SKIP)
+            if mode in ("dup:keep", "dup:remove"):
+                return {"dup:keep": DuplicateAction.KEEP, "dup:remove": DuplicateAction.REMOVE}[mode]
+            d = found_duplicates[0]
+            ui.print_(f"stagereview: {key}: {d.albumartist} – {d.album} is already filed; left in staging ("
+                      + ("the next round offers its release again, replacing that album or keeping both"
+                         if a.get("value", "").startswith("mb:") else
+                         'to file it with these tags all the same, its answer needs "on_duplicate": '
+                         '"remove" or "keep"') + ")")
+            return DuplicateAction.SKIP
         twin = found_duplicates[0]
+        # The matched release too, filed as itself, when it is another
+        # edition: dup:remove and dup:keep file these with the library
+        # copy's tags, its release id among them.
+        mine = self.against_filed([self.candidate(task.match)], [task.match], twin) if task.match else []
         self.record(task, f"already in the library ({len(list(twin.items()))} tracks there, {len(task.items)} here)",
-                    self.dup_options(twin, len(task.items)), twin=twin.id)
+                    self.dup_options(twin, len(task.items)) + mine, twin=twin.id)
         return DuplicateAction.SKIP
 
     def should_resume(self, path):
@@ -438,8 +509,10 @@ def audit_items(lib, staging):
 
 def audit(lib, staging):
     """Flag every track filed from the batch whose original doesn't fit
-    where it was filed. Returns the review items, the originals still in
-    staging, and those neither filed nor in staging."""
+    where it was filed, that shares its slot with another track, or whose
+    original the manifest no longer has (a rescan since it was filed drops
+    it), so it could not be compared. Returns the review items, the
+    originals still in staging, and those neither filed nor in staging."""
     recs = {}
     manifest = sidecar(staging, ".manifest.jsonl")
     if not manifest.exists():
@@ -449,47 +522,74 @@ def audit(lib, staging):
             r = json.loads(line)
             if r.get("kind") == "audio":
                 recs[r["path"]] = r
+    batch = os.path.basename(staging)
+
+    def fits_its_slot(s):
+        """Whether the batch's file filed in slot s fits it, by its own
+        original; None when it isn't one of the batch's, or has no record."""
+        src = s.get("stage_source") or ""
+        r = recs.get(src.split("/", 1)[1]) if src.startswith(batch + "/") else None
+        if not r:
+            return None
+        m = r.get("meta") or {}
+        was = (m.get("tags") or {}).get("title") or from_name(os.path.basename(src)).get("title", "")
+        return not length_off(m.get("duration") or 0, s.length) and not number_clash(was, s.title)
+
     filed = audit_items(lib, staging)
     review, seen = [], set()
     for i in sorted(filed, key=lambda i: (i.albumartist, i.album, i.disc or 0, i.track or 0)):
         rel = i["stage_source"].split("/", 1)[1]
         seen.add(rel)
-        rec = recs.get(rel)
-        if not rec or i.get("stage_audit") == "ok":
+        if i.get("stage_audit") == "ok":
             continue
-        meta = rec.get("meta") or {}
+        rec = recs.get(rel)
+        meta = (rec or {}).get("meta") or {}
         tags, real = meta.get("tags") or {}, meta.get("duration") or 0
         name = os.path.basename(rel)
-        original = tags.get("title") or from_name(name).get("title", "")
+        original = (tags.get("title") or from_name(name).get("title", "")) if rec else ""
+        album = i.get_album()
+        siblings = sorted(album.items() if album else [i], key=lambda x: (x.disc or 0, x.track or 0))
+        slot = (i.disc or 1, i.track)
         flags = []
+        if not rec:
+            flags.append("its original is no longer in the manifest (rescanned since it was filed?): not checked")
         off = length_off(real, i.length)
         if off:
             flags.append(f"the file is {mmss(real)}, its slot {mmss(i.length)}")
         clash = number_clash(original, i.title)
         if clash:
             flags.append(f"was “{original}”: {clash}")
+        shared = [s for s in siblings if i.track and s.id != i.id and (s.disc or 1, s.track) == slot]
+        if shared:
+            flags.append(f"shares track {i.track} with “{shared[0].title}”")
         if not flags:
             continue
-        album = i.get_album()
-        siblings = sorted(album.items() if album else [i], key=lambda x: (x.disc or 0, x.track or 0))
         slots = {f"{s.disc or 1}-{s.track}": {"disc": s.disc or 1, "track": s.track, "title": s.title,
                                               "mb_trackid": s.mb_trackid or "", "length": s.length}
                  for s in siblings}
-        fits = [s for s in siblings if s.id != i.id and not length_off(real, s.length)
-                and not number_clash(original, s.title)]
+        fits = [s for s in siblings if (s.disc or 1, s.track) != slot and not length_off(real, s.length)
+                and not number_clash(original, s.title)] if rec else []
         options = [{"value": "audit:ok", "label": "It's right as filed",
                     "detail": f"{i.track} {i.title}"}]
         for s in fits[:3]:
+            there = fits_its_slot(s)
             options.append({"value": f"audit:slot:{s.disc or 1}-{s.track}",
                             "label": f"It's track {s.track}: {s.title}",
-                            "detail": f"that slot is {mmss(s.length)}; the file now there gets its own check",
-                            "recommended": len(fits) == 1})
+                            "detail": f"that slot is {mmss(s.length)}" + {
+                                True: "; the file there fits it too, and would share it",
+                                False: "; the file there doesn't fit it either",
+                                None: "; the file there can't be checked here, and would share it"}[there],
+                            # Never suggested onto a slot filled right: two files would share it.
+                            "recommended": len(fits) == 1 and there is False})
         if original and original != i.title:
             options.append({"value": "audit:original", "label": f"Title it as the original did: {original}",
                             "detail": f"stays track {i.track}"})
         conflict = name_conflict(name, tags)
         review.append({
-            "id": item_id(i["stage_source"]),
+            # An id of its own while it shares its slot, and with which
+            # files: an answer from before (accepting it for another flag)
+            # doesn't settle that.
+            "id": item_id(" +".join([i["stage_source"], *sorted(str(s.id) for s in shared)])),
             "key": i["stage_source"],
             "kind": "track",
             "title": f"{i.track} {i.title}",
@@ -497,10 +597,10 @@ def audit(lib, staging):
             "why": "; ".join(flags),
             "evidence": [
                 {"label": "Original file", "value": rel},
-                {"label": "Its tags", "value": f"track {tags.get('track', '—')}; title {tags.get('title', '—')}; "
-                                               f"album {tags.get('album', '—')}"},
+                *([{"label": "Its tags", "value": f"track {tags.get('track', '—')}; title {tags.get('title', '—')}; "
+                                                  f"album {tags.get('album', '—')}"}] if rec else []),
                 *([{"label": "Name vs tags", "value": conflict}] if conflict else []),
-                {"label": "Its length", "value": mmss(real)},
+                *([{"label": "Its length", "value": mmss(real)}] if rec else []),
                 {"label": "The release", "value": "\n".join(
                     f"{'→' if s.id == i.id else ' '} {s.track:>2}  {s.title}  ({mmss(s.length)})"
                     + ("  ← fits" if s in fits else "") for s in siblings)},
@@ -526,17 +626,24 @@ def audit(lib, staging):
 
 def apply_audit_answers(lib, staging, answers, review):
     by_id = {r["id"]: r for r in review}
-    items = {item_id(i["stage_source"]): i for i in audit_items(lib, staging)}
+    items = {i["stage_source"]: i for i in audit_items(lib, staging)}
     changes = []
     for iid, a in answers.items():
-        i, r = items.get(iid), by_id.get(iid)
-        if not i or not r or a["choice"] == "skip":
+        r = by_id.get(iid)
+        i = items.get(r["key"]) if r else None
+        if not i or a["choice"] == "skip":
             continue
         value, f = a.get("value", ""), {}
         if value == "audit:original":
+            if not r.get("original_title"):
+                ui.print_(f"  {r['title']}: its original title went with its manifest record; still flagged")
+                continue
             f = {"title": r["original_title"]}
         elif value.startswith("audit:slot:"):
-            s = r["slots"][value[len("audit:slot:"):]]
+            s = r["slots"].get(value[len("audit:slot:"):])
+            if not s:
+                ui.print_(f"  {r['title']}: its album has no slot {value[len('audit:slot:'):]} now; still flagged")
+                continue
             f = {k: s[k] for k in ("disc", "track", "title", "mb_trackid", "length")}
         elif a["choice"] == "custom":
             fields = a.get("fields") or {}
@@ -551,6 +658,8 @@ def apply_audit_answers(lib, staging, answers, review):
             i.store()
             continue
         changes.append((i, f))
+    moved = [i for i, f in changes
+             if "track" in f and (f.get("disc") or i.disc or 1, f["track"]) != (i.disc or 1, i.track)]
     # Two phases, so no file moves onto a name another still holds (a swap).
     for i, _ in changes:
         src = displayable_path(i.path)
@@ -565,6 +674,19 @@ def apply_audit_answers(lib, staging, answers, review):
         i.try_write()
         i.move(MoveOperation.MOVE)
         ui.print_(f"  {i.track:>2} {i.title}  ->  {displayable_path(i.path)}")
+    # A track moved onto a slot another file still holds: the two are
+    # flagged. The one there is audited again, even if it was accepted (its
+    # shared slot gives it a new id, so its old answer doesn't accept it
+    # again); one the audit can't check, not the batch's, sends the moved
+    # track back instead.
+    for i in moved:
+        album = i.get_album()
+        for s in album.items() if album else []:
+            if s.id != i.id and (s.disc or 1, s.track) == (i.disc or 1, i.track):
+                t = items.get(s.get("stage_source")) or i
+                if t.get("stage_audit"):
+                    del t["stage_audit"]
+                    t.store()
     return len(changes)
 
 
@@ -597,13 +719,24 @@ class StageReview(BeetsPlugin):
         config["import"]["timid"] = False
         config["import"]["resume"] = False
         config["import"]["group_albums"] = False
+        # beets' import log (import.log in its config): `beet import` opens
+        # it, and a session gets it only when handed it.
+        loghandler = None
+        if config["import"]["log"].get() is not None:
+            logpath = config["import"]["log"].as_filename()
+            try:
+                loghandler = logging.FileHandler(logpath, encoding="utf-8")
+            except OSError as e:
+                raise ui.UserError(f"can't open the import log {logpath}: {e}")
         stale = forget_unfiled(lib, staging)
         if stale:
             ui.print_(f"forgot {stale} tracks an earlier run recorded but never filed")
-        session = StageSession(lib, None, [os.fsencode(p) for p in paths], None, staging, answers)
+        session = StageSession(lib, loghandler, [os.fsencode(p) for p in paths], None, staging, answers)
         try:
             session.run()
         finally:
+            if loghandler:
+                loghandler.close()
             stale = forget_unfiled(lib, staging)
             if stale:
                 ui.print_(f"forgot {stale} tracks recorded but not filed (the move failed); they stay in staging")
@@ -622,8 +755,18 @@ class StageReview(BeetsPlugin):
         batch = os.path.basename(staging) + "-audit"
         out = sidecar(staging, ".audit.review.json")
         if opts.answers:
-            review = load_json(out, {}).get("items", [])
-            n = apply_audit_answers(lib, staging, load_answers(opts.answers, batch), review)
+            # What the audit flags now as well as the review file: an item
+            # answered without the page is taken out of that file. Now wins
+            # for each track, but one whose manifest record went since (a
+            # rescan) keeps the original title the page showed, which an
+            # answer may have chosen.
+            shown = {r["key"]: r for r in load_json(out, {}).get("items", [])}
+            review = []
+            for r in audit(lib, staging)[0]:
+                was = shown.pop(r["key"], {})
+                r["original_title"] = r["original_title"] or was.get("original_title", "")
+                review.append(r)
+            n = apply_audit_answers(lib, staging, load_answers(opts.answers, batch), [*shown.values(), *review])
             ui.print_(f"audit answers applied: {n} tracks changed")
         review, left, lost = audit(lib, staging)
         filed = len(audit_items(lib, staging))
