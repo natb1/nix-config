@@ -216,7 +216,9 @@ let
 
       dir=$(rows | pick --prompt "rebuild ›" --refresh "$(printf '%q --refresh' "$0")") || exit 0
       if [[ $dir == pr:* ]]; then
-        if ! out=$(worktree_for "''${dir#pr:}"); then
+        # Under the tidy-up's lock: its fetch would race this one, as it would
+        # rebuild's pull below.
+        if ! out=$(exec 9>"''${prs%/*}/lock"; flock 9; worktree_for "''${dir#pr:}"); then
           notify-send -a "Rebuild menu" "Couldn't add a worktree for PR #''${dir#pr:}" "$out"
           exit 1
         fi
