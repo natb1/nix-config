@@ -21,6 +21,7 @@
     ./gaming.nix
     ./gdrive.nix
     ./media.nix
+    ./git.nix
     ./mail.nix
     ./media-group.nix
     ./music.nix
