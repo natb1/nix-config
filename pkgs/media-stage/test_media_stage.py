@@ -532,6 +532,15 @@ class Checks(unittest.TestCase):
                                                         {"track": "5", "title": "Prelude No. 5"}))
         self.assertIn("in the tags", sc.name_conflict("03 Greensleeves.mp3", {"track": "3", "title": "Fantasia"}))
         self.assertEqual(sc.name_conflict("track.mp3", {"track": "3", "title": "Fantasia"}), "")
+        # "<disc>-<track>" set off by underscores, behind the disc `group` adds:
+        # the track is the 02, not the leading disc.
+        grouped = "1-Kendrick Lamar_Mr. Morale & the Big Steppers_01-02_N95.flac"
+        self.assertEqual(sc.from_name(grouped), {"disc": "01", "artist": "Kendrick Lamar", "track": "02",
+                                                  "album": "Mr. Morale & the Big Steppers", "title": "N95"})
+        self.assertEqual(sc.name_conflict(grouped, {"track": "2", "title": "N95"}), "")
+        self.assertIn("track 2 in the name, 3 in the tags", sc.name_conflict(grouped, {"track": "3", "title": "N95"}))
+        self.assertEqual(sc.from_name("2-Artist - Album - 03 Title.flac")["track"], "03")
+        self.assertEqual(sc.from_name("1-Intro.mp3"), {"track": "1", "title": "Intro"})  # no disc: a track
 
     def test_name_layout(self):
         vinyl = [f"Animals as Leaders - The Joy of Motion [12 Vinyl 0{d}] - 0{t} T{d}{t}.flac"

@@ -32,12 +32,25 @@ SAME_RECORDING = 0.8
 NAME = re.compile(r"^(?P<artist>.+?) - (?P<album>.+) - (?P<track>\d{1,3})(?: - |\.? )(?P<title>.+)\.[^.]+$")
 # "04 Title.mp3", "1-04 - Title.mp3", "04. Title.mp3"
 SHORT_NAME = re.compile(r"^(?:(?P<disc>\d{1,2})-)?(?P<track>\d{1,3})(?:\s*[-.]\s*|\s+)(?P<title>.+)\.[^.]+$")
+# "Artist_Album_01-02_Title.flac": disc and track, set off by underscores
+DISC_TRACK_NAME = re.compile(r"^(?:(?P<artist>.+?)_(?P<album>.+)_)?(?P<disc>\d{1,2})-(?P<track>\d{1,3})_(?P<title>.+)\.[^.]+$")
+# The disc `media-stage group` puts before a name that is itself a full name:
+# "1-Artist_Album_01-02_Title.flac", "2-Artist - Album - 03 Title.flac"
+GROUPED = re.compile(r"^(?P<disc>\d{1,2})-(?=\D)")
 
 
 def from_name(filename):
     """What a file's name says: track and title, and artist and album when
     the name carries them. {} when it says nothing parseable."""
-    m = NAME.match(filename) or SHORT_NAME.match(filename)
+    m = GROUPED.match(filename)
+    rest = _parse(filename[m.end():]) if m else {}
+    if rest:
+        return {"disc": m.group("disc"), **rest}
+    return _parse(filename)
+
+
+def _parse(filename):
+    m = NAME.match(filename) or DISC_TRACK_NAME.match(filename) or SHORT_NAME.match(filename)
     return {k: v.strip() for k, v in m.groupdict().items() if v} if m else {}
 
 
