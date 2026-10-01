@@ -32,6 +32,7 @@ youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
 books/<author>/<series or title>/<title>[ (<variant>)].<ext>   epub pdf mobi azw3 cbz cbr djvu
 books/<author>/<series>/<series> Vol. <N>[ - <title>].<ext>
 rpg/<game>/<title>[ (<variant>)].<ext>
+rpg/<game>/extras/<file>                                        what Kavita doesn't read
 music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.<ext>   beets only
 ```
 
@@ -53,6 +54,16 @@ volume from any `v2`, `vol 2`, `volume 2`, `tome 2` or `S01` in a name, so a
 version is written `version 1.1`, never `v1.1`. Parentheses are for variants
 (pages, spreads, A4, a system, a translator). `check` refuses what Kavita
 would misread; `apply` writes the series, volume and title into each file.
+
+A game's other downloads: an archive of images (maps, art, handouts) is
+filed beside its books as it came, `.zip` or `.cbz`; Kavita shows it as a
+second series of the game's name. Kavita reads nothing from a zip but its
+images, and makes a series of a number in its name, so a zip's name spells
+its numbers out (`check` refuses a digit). What Kavita can't show (an app, a
+virtual tabletop's assets, an archive with no images, which `check` refuses
+beside the books) goes in `rpg/<game>/extras/`, which Kavita leaves out and
+`apply` leaves as it came. A soundtrack is music: unzip it into a batch of
+its own for beets.
 
 ## Procedure
 
@@ -189,7 +200,11 @@ agent or person per batch.
    It re-checks, moves, writes standard metadata, deletes `discard` rows,
    moves `trash` rows to `staging/trash/<batch>/`, and logs each file with its
    original sha256 to `<batch>.applied.jsonl` (kept after `close`: it is how
-   a later batch knows the content is filed). It can be rerun.
+   a later batch knows the content is filed). It can be rerun. For books and
+   RPGs it ends by asking Kavita to scan (`Kavita: asked to rescan RPG`), as
+   `tag`, `restage` and `lint --fix` do; the files show in Kavita a moment
+   later. `Kavita: no rescan …` or `no API key …` is not an error: Kavita's
+   folder watcher finds them minutes later. Don't work around it.
 10. **Lint and close**: `media-stage lint`. Then take the filed batch off
    the review page, so the page shows only reviews still waiting: every
    `reviews` document of the batch (`<batch>`, `<batch>-2` and later

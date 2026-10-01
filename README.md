@@ -84,8 +84,17 @@ short name `desk` works everywhere through MagicDNS.
    add the server `http://localhost:8096`. Check: Dashboard → Playback →
    Transcoding shows VAAPI on the `12:00.0` render node.
 4. **Book server (Kavita):** open `http://desk:5000`, create the admin, and add
-   two libraries of type **Book**: `/srv/media/books` and `/srv/media/rpg`
-   ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)).
+   two libraries of type **Book**: `/srv/media/books` and `/srv/media/rpg`,
+   the second with the exclude pattern `**/extras/*` in its settings, so
+   each game's `extras/` stays out ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)).
+   Then the key file `media-stage` asks Kavita to scan with, once it has
+   filed books or RPGs: `/etc/kavita/api-key`, one line, 0440 n8:media
+   (which key is in it: the owner's private notes). On desk, paste it at the
+   prompt of
+   `( stty -echo; printf 'Kavita key: '; IFS= read -r key; stty echo; echo; printf '%s\n' "$key" | sudo install -m 0440 -o n8 -g media /dev/stdin /etc/kavita/api-key )`.
+   Check: the next `media-stage apply` of books or RPGs ends with
+   `Kavita: asked to rescan …`. Without the key, Kavita's folder watcher
+   finds new files about six minutes later.
 5. **Soulseek (slskd):** write `/etc/slskd/credentials` (root, 0600) with
    the Soulseek account and a web UI login, then `sudo systemctl restart
    slskd` ([`hosts/desk/soulseek.nix`](hosts/desk/soulseek.nix)):
@@ -356,6 +365,9 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   `/var/lib/kavita` (watched state and reading progress are lost with it).
   Kavita's login-signing key, `/etc/kavita/token-key`, is generated on first
   start; deleting it only logs everyone out.
+- `desk`'s key file for `media-stage`'s Kavita scans, `/etc/kavita/api-key`
+  (0440 n8:media, one line; "desk (once, after its first switch)", step 4).
+  Without it, new files wait for Kavita's folder watcher.
 - `desk`'s restic credentials for the media backup in `hosts/desk/media.nix`,
   in `/etc/restic/` (root, dir 0700, files 0600). `media.password` is the
   repository's **encryption key**: there is no reset, and without it the

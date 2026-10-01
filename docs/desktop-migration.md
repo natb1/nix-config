@@ -3550,6 +3550,7 @@ each file's own metadata instead.
   music/<album artist>/<album> (<year>)/[<disc>-]<track> <title>.mp3   # disc only if multi-disc
   books/<author>/<series or title>/<title> (<variant>).<ext>      # <series> Vol. <N> - <title> in a series
   rpg/<game or line>/<title> (<variant>).<ext>
+  rpg/<game or line>/extras/<file>                                # what Kavita doesn't read
   movies/<title> (<year>) {tmdb-<id>}/<title> (<year>) {tmdb-<id>}.<ext>
   tv/<show> (<year>) {tmdb-<id>}/Season <NN>/<show> (<year>) - S<NN>E<NN> - <episode>.<ext>
   youtube/<channel>/<YYYY-MM-DD> - <title> [<video id>].<ext>
@@ -3599,6 +3600,14 @@ is dropped (`(1)`, `OEF2025_11_12`, `_DTHKOw`, `pdfcoffee.com_`). A later
 re-download from a storefront arrives under the publisher's name and is renamed
 by hand to match.
 
+*Added 2026-09-30:* a module's other downloads. An archive of images (maps,
+art, handouts) sits beside the books as it came, `.zip` or `.cbz`: Kavita
+shows either, a zip only while its name has no digits (below). What Kavita
+can't show goes in the game's `extras/`, one level deep: an app (Warped
+Beyond Recognition's in-fiction terminal), a virtual tabletop's assets, an
+archive with no images. A soundtrack is music: unpacked into a batch of its
+own and filed by beets.
+
 **Books** — `books/<author>/<series>/<title>.<ext>`: a book in a series is
 `<series> Vol. <N> - <title>`; a book on its own is its own series, in a
 folder of its title (`books/Albert Camus/The Stranger/The Stranger.epub`).
@@ -3647,6 +3656,44 @@ that title goes first in its OPF (the publisher's is kept after it).
 `check` and `lint` refuse a name Kavita would misread and two files numbering
 one volume; `lint` reports a file whose metadata Kavita would read otherwise,
 and `lint --fix` rewrites it.
+
+*Added 2026-09-30:* **archives**, from two scans in a throwaway 0.9.1. Kavita
+shows a `.zip`'s images as it does a `.cbz`'s, but reads **no
+`ComicInfo.xml` from a zip**: the series is the folder's name and the title
+the file's, which `rpg/<game>/` already makes the game's and the title. So a
+zip is filed as it came, nothing written into it, and not in `books/`, where
+the folder is not the series. But a digit in a zip's name makes Kavita take
+the series from the name (`Tokens (version 2)` became a series
+`Tokens (version`, `Maps (1999)` one of `Maps`), so `check` and `lint` want
+a zip's numbers spelled out. **One series holds one format**: a game's image
+archives are a second series of the game's name beside its PDFs, as
+Mythic Bastionland's art already is. An archive with no images is a book of
+0 pages and a media error, so `check` and `lint` refuse one beside the books
+and point to the game's **`extras/`**, which the RPG library leaves out with
+the exclude pattern `**/extras/*` (Kavita's library settings, as the
+libraries are its own, [`kavita.nix`](../hosts/desk/kavita.nix); 0.9 has no
+`.kavitaignore`). Scanned with it, nothing in `extras/` was read; without
+it, `extras/` became series of its own. Nothing is written into a file in
+`extras/`, and no naming rule of Kavita's applies there.
+
+*Added 2026-09-30:* **a scan once media-stage has filed**. Kavita's folder
+watcher scans five minutes after a change and a minute more, so a batch
+showed in Kavita minutes after `apply`. Now `apply`, `tag`, `restage` and
+`lint --fix` ask Kavita to scan each library they changed, as soon as they
+are done: `books/` and `rpg/`, never for `extras/`. A scan without `force`
+takes a moment. It skips each series folder whose latest write time (the
+folder's and everything in it) is older than its last scan, so a file moved
+in as it came, with an old date, is still seen. Two libraries at once is
+one scan of them all, since Kavita puts off a library scan asked for while
+another runs by three hours. The request carries a key from one
+hand-provisioned file on desk, `/etc/kavita/api-key`, which the media group
+reads as it does slskd's and itch.io's
+([`kavita.nix`](../hosts/desk/kavita.nix)), so whoever files asks with it.
+With no key, or Kavita down, `media-stage` says so and files all
+the same, and the watcher still finds the change. Rehearsed in a throwaway
+0.9.1.4 with folder watching off: a file dated 2020, moved into a series
+Kavita had, showed within a second, and so did a batch into both libraries
+and a file restaged out.
 
 **Video** — files named after the title, not after the source:
 
@@ -3699,7 +3746,7 @@ Music is the exception at step 4: beets files it.
 | 4′. Music | `media-stage group staging/<batch>`, then `beet stage-review staging/<batch>` | `group` gives each album its own folder, **by the files' own album and disc tags** wherever they sit (the `audio` drive was one flat folder of 800 tracks), and logs every album it made from more than one folder to `staging/<batch>.group.json`. `stage-review` ([`beetsplug/stagereview.py`](../pkgs/media-stage/beetsplug/stagereview.py)) is beets with no prompts, one folder at a time, so beets never joins "… CD1"/"… CD2" folders by name on its own. An album is imported only when its MusicBrainz match is strong **and** none of these hold: its files are the same recordings as tracks already filed (Chromaprint fingerprints, ≥ 80% — copies score 94–100%, other recordings of the same piece ≤ 60%), it has the name of an album already filed, `group` merged it, or a file's name disagrees with its own tags (another track, another "No."). The rest are written with their evidence and top five candidates to `staging/<batch>.review.json` and stay in staging. Each filed track keeps its staged path in the beets field `stage_source` |
 | 5′. Review | `media-stage review export staging/<batch>`, then the review page | The rows a person must decide go to `staging/<batch>.review.json` (music's is already there). Claude loads it into the **Media Filing Review** page (source [`review.html`](../pkgs/media-stage/review.html), one Claude artifact for every batch, audio and video included): each item shows its evidence and the suggestions, and the user picks one, types a path or tags, or leaves it in staging. Answers are saved as they are made. When the user says the batch is reviewed, Claude exports the answers to `staging/<batch>.answers/` and applies them: `media-stage review import … --answers …` into the table, or `beet stage-review --answers …` for music |
 | 5. Check | `media-stage check staging/<batch>` | Refuses the batch on: a blank row; a staged file missing from the table, or a row whose file is gone; a path that is not the layout (`LAYOUT` in the script is the layout above, as regexes); a character SMB cannot carry; a changed extension; two rows with one target; a target that already exists (and says so if it is byte-identical — a duplicate to `discard`); content that is **already filed under another name** (below) |
-| 6. Apply | `media-stage apply staging/<batch>` | Checks again, moves each file, **writes its standard metadata**, deletes `discard` rows, moves `trash` rows to `staging/trash/<batch>/` (writable from the Mac, for the user to look through and empty), logs every row with the **source's sha256** to `staging/<batch>.applied.jsonl`, removes emptied folders. Rerunnable: moved rows count as done |
+| 6. Apply | `media-stage apply staging/<batch>` | Checks again, moves each file, **writes its standard metadata**, deletes `discard` rows, moves `trash` rows to `staging/trash/<batch>/` (writable from the Mac, for the user to look through and empty), logs every row with the **source's sha256** to `staging/<batch>.applied.jsonl`, removes emptied folders, and asks Kavita to scan what it filed into `books/` or `rpg/` ("Books and RPGs in Kavita"). Rerunnable: moved rows count as done |
 | 6′. Audit music | `beet stage-audit staging/<batch>` | Every track filed from the batch against its original's record in the manifest: a **real length** that doesn't fit the release slot it was given (more than 7 s, or 4% of long tracks), or a **new title naming another number** than the original's (`Prelude No. 3` filed as `No. 5`, `BWV 999` as `998`, movement `II.` as `III.`). beets assigns files to slots mostly by title and then stores the *release's* length, so neither shows up afterwards without the original. It also flags two tracks in one slot, and a track whose original the manifest no longer has (rescanned since), which it could not compare. Flags go to the review page as batch `<batch>-audit`, with the release's slots that fit, one suggested only when the file already in it is misfiled too; `beet stage-audit --answers …` re-slots, retitles or accepts, and audits again. Writes `staging/<batch>.audit.json` |
 | 7. Lint | `media-stage lint [--fix]` | Audits the whole library: every file against the layout, and its metadata against the standard below. `--fix` rewrites what differs (not music). Then Claude marks the batch filed on the review page |
 | 8. Close | `media-stage close staging/<batch>` | Removes the batch's records (manifest, table, review and audit files, answers) and its emptied folder; keeps `<batch>.applied.jsonl`. Refuses while files are still in staging, and for a music batch until `stage-audit` has passed: the manifest is the only record of what each file said it was |

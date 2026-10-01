@@ -10,11 +10,16 @@
 # Libraries, as set up from http://desk:5000 after the first login (they are
 # Kavita's database, not this file), both of type "Book":
 #   Books   /srv/media/books   (books/<author>/<series>/<title>.<ext>)
-#   RPG     /srv/media/rpg     (rpg/<game or line>/<title> (<variant>).<ext>)
+#   RPG     /srv/media/rpg     (rpg/<game or line>/<title> (<variant>).<ext>),
+#           with the exclude pattern **/extras/* (library settings), which
+#           leaves out each game's extras/: what Kavita can't show
 # Each folder above is one Kavita series: media-stage writes the series,
 # volume and title into every file, since Kavita takes them from a file's
 # metadata (docs/desktop-migration.md, "Books and RPGs in Kavita").
 # Kavita reads, never writes: covers and progress stay in /var/lib/kavita.
+# Both libraries watch their folders, but the watcher scans only minutes
+# after a change, so media-stage asks for a scan as soon as it has filed,
+# with the key in /etc/kavita/api-key (below).
 #
 # Tailnet and home Wi-Fi, unlike Navidrome and Jellyfin, which are
 # tailnet-only. It listens on every interface; tailscale0 is trusted
@@ -32,12 +37,16 @@
 # Not managed by this repo: Kavita's accounts and libraries. The first visit
 # to http://desk:5000 creates the admin. State is in /var/lib/kavita
 # (accounts, libraries, reading progress). The token key below is state too,
-# but a disposable one: it only signs logins.
+# but a disposable one: it only signs logins. And /etc/kavita/api-key, written
+# by hand (README, step 4): one line, the key media-stage asks for a scan
+# with. The media group reads it (hosts/desk/media-group.nix), so whoever
+# files asks with the same one.
 
 { pkgs, ... }:
 
 let
   tokenKeyFile = "/etc/kavita/token-key";
+  apiKeyFile = "/etc/kavita/api-key";
 in
 {
   services.kavita = {
@@ -56,8 +65,8 @@ in
     unitConfig.ConditionPathExists = "!${tokenKeyFile}";
     serviceConfig.Type = "oneshot";
     script = ''
+      ${pkgs.coreutils}/bin/install -d -m 0755 "$(dirname ${tokenKeyFile})"
       umask 077
-      mkdir -p "$(dirname ${tokenKeyFile})"
       ${pkgs.coreutils}/bin/head -c 64 /dev/urandom \
         | ${pkgs.coreutils}/bin/base64 --wrap=0 > ${tokenKeyFile}
     '';
@@ -73,9 +82,13 @@ in
   # The Kobo's way in; see the header.
   networking.firewall.interfaces.wlp14s0.allowedTCPPorts = [ 5000 ];
 
-  # A library needs its folder to exist; media-stage would otherwise create
-  # them only on the first batch that files there.
   systemd.tmpfiles.rules = [
+    # Traversable, so the media group can reach api-key. `d` also fixes the
+    # mode of a directory that already exists.
+    "d /etc/kavita 0755 root root -"
+    "z ${apiKeyFile} 0440 n8 media -"
+    # A library needs its folder to exist; media-stage would otherwise create
+    # them only on the first batch that files there.
     # 0775, not 0755: the group bits are the media group's ACL mask
     # (hosts/desk/media-group.nix), and `d` reapplies the mode on every
     # switch, so 0755 took the group's write away. Only the ACL's media

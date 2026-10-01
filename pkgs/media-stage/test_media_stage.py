@@ -33,6 +33,11 @@ except ImportError:
     sr = None
 
 
+def setUpModule():
+    # Never desk's own Kavita: these tests run there too, beside a real key.
+    unittest.enterModuleContext(mock.patch.object(ms, "KAVITA_KEY", "/nonexistent/kavita-api-key"))
+
+
 def run_cli(*args):
     out = io.StringIO()
     code = 0
@@ -212,6 +217,9 @@ class Layout(unittest.TestCase):
         "rpg/Stonetop/Stonetop - Book II - The Wider World (spreads).pdf",
         "rpg/A Thousand Thousand Islands/A Thousand Thousand Islands 3 - Upper Heleng.pdf",
         "rpg/Partizan/Partizan - One-Page Character Sheet (2026-04-25).pdf",
+        "rpg/Mothership/Warped Beyond Recognition - Maps.zip",  # its series is its folder's name
+        "rpg/Mothership/extras/Warped Beyond Recognition - Remote Desktop (Windows).zip",
+        "rpg/Mothership/extras/Tokens (v2).zip",  # Kavita passes over extras/: no volume to misread
         "movies/Heat (1995)/Heat (1995).mkv",
         "movies/Heat (1995)/Heat (1995) - Director's Cut.mkv",
         "movies/Heat (1995)/Heat (1995).en.srt",
@@ -244,6 +252,15 @@ class Layout(unittest.TestCase):
         ("rpg/Tower/Tower S01 Map.pdf", "volume 01"),
         ("books/Terry Pratchett/Discworld/Equal Rites.epub", "series of its own"),
         ("books/Terry Pratchett/Discworld/Mort Vol. 4.epub", "named for its folder"),
+        # extras/ is a game's, one level deep
+        ("rpg/Mothership/extras/Maps/Deck 1.png", "rpg/ layout"),
+        ("books/Someone/Some Book/extras/Notes.pdf", "books/ layout"),
+        # Kavita reads no ComicInfo.xml from a .zip, so no series: a comic is a .cbz
+        ("books/Someone/Some Comic/Some Comic Vol. 1.zip", "books/ layout"),
+        # ... and makes a series of a zip's name with a number in it (Kavita 0.9.1, sandbox scan)
+        ("rpg/Mothership/Tokens (version 2).zip", "a zip's name takes no digits"),
+        ("rpg/Mothership/Warped Beyond Recognition - Maps (1999).zip", "a zip's name takes no digits"),
+        ("rpg/Mothership/Tokens (version two).zip", None),
         ("rpg/Game/Title..pdf", None),  # legal: the dot is not trailing on the component
         # Hidden: Jellyfin ignores it, lint and the filed index pass over it.
         ("movies/...And Justice for All (1979)/...And Justice for All (1979).mkv", "leading dot"),
@@ -304,6 +321,7 @@ class Helpers(unittest.TestCase):
                          {"series": "Cairn", "volume": "", "title": "The Drops of St Jerome (pages)"})
         self.assertEqual(ms.standard("rpg/Game/Game Vol. 2 (spreads).pdf"),
                          {"series": "Game", "volume": "2", "title": "Game Vol. 2 (spreads)"})
+        self.assertEqual(ms.standard("rpg/Game/extras/Remote Desktop (Windows).zip"), {})
         self.assertEqual(ms.standard("movies/Heat (1995)/Heat (1995).mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("movies/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"), {"title": "Heat (1995)"})
         self.assertEqual(ms.standard("tv/The Wire (2002) {tmdb-1438}/Season 01/The Wire (2002) - S01E01.mkv"),
@@ -1263,6 +1281,70 @@ class Copies(unittest.TestCase):
             code, out = run_cli("lint", "--library", str(lib))
             self.assertEqual(code, 0, out)
 
+    def test_zip_is_filed_as_it_came_and_extras_are_left_alone(self):
+        # A module's zips, as itch.io has them. Kavita shows a zip's images
+        # and reads nothing else from it (its series is its folder's name,
+        # while its name has no digits), so the maps go beside the books as
+        # they came. An app has no images: it goes in the game's extras/,
+        # which Kavita passes over. A soundtrack is for beets.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d)
+            st = lib / "staging" / "zips"
+            st.mkdir(parents=True)
+            with zipfile.ZipFile(st / "Maps.zip", "w") as z:
+                z.writestr("Maps/deck-1.png", b"not really")
+                z.writestr("Maps/deck-2.png", b"not really")
+            with zipfile.ZipFile(st / "App WIN.zip", "w") as z:
+                z.writestr("App/App.exe", b"MZ")
+                z.writestr("App/readme.txt", b"run it")
+            with zipfile.ZipFile(st / "Soundtrack.zip", "w") as z:
+                z.writestr("OST/01 Intro.mp3", b"not really")
+                z.writestr("OST/02 Outro.mp3", b"not really")
+            make_pdf(st / "handout.pdf", title="x")
+            maps, app, handout = ((st / n).read_bytes() for n in ("Maps.zip", "App WIN.zip", "handout.pdf"))
+            run_cli("scan", str(st), "--hash", "--library", str(lib))
+            run_cli("draft", str(st), "--library", str(lib))
+            table = Path(str(st) + ".tsv")
+            notes = {r.split("\t")[0]: r.split("\t")[3] for r in table.read_text().splitlines()[1:]}
+            self.assertIn("archive of images (2 png)", notes["Maps.zip"])
+            self.assertIn("archive with no images (1 exe, 1 txt)", notes["App WIN.zip"])
+            self.assertIn("archive of audio (2 mp3): unpack it into a batch of its own for beets", notes["Soundtrack.zip"])
+            # Beside the books, an archive with no images is refused.
+            rows = {"Maps.zip": "rpg/Game/Game - Maps.zip", "App WIN.zip": "rpg/Game/App (Windows).zip",
+                    "Soundtrack.zip": "skip", "handout.pdf": "rpg/Game/extras/Handout (v2).pdf"}
+            write = lambda: table.write_text("old\tnew\n" + "".join(f"{o}\t{n}\n" for o, n in rows.items()))
+            write()
+            code, out = run_cli("check", str(st), "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("rpg/Game/App (Windows).zip: no images in it, so nothing for Kavita to show: "
+                          "a game's other files go in rpg/Game/extras/", out)
+            rows["App WIN.zip"] = "rpg/Game/extras/App (Windows).zip"
+            write()
+            code, out = run_cli("apply", str(st), "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            # All as they came: nothing is written into a zip, or into extras/.
+            self.assertEqual((lib / "rpg/Game/Game - Maps.zip").read_bytes(), maps)
+            self.assertEqual((lib / "rpg/Game/extras/App (Windows).zip").read_bytes(), app)
+            self.assertEqual((lib / "rpg/Game/extras/Handout (v2).pdf").read_bytes(), handout)
+            code, out = run_cli("lint", "--library", str(lib))
+            self.assertEqual(code, 0, out)
+            # The maps, downloaded again: the same bytes as the filed zip's.
+            Path(str(st) + ".applied.jsonl").unlink()
+            again = lib / "staging" / "again"
+            again.mkdir()
+            (again / "maps.zip").write_bytes(maps)
+            run_cli("scan", str(again), "--hash", "--library", str(lib))
+            run_cli("draft", str(again), "--library", str(lib))
+            row = Path(str(again) + ".tsv").read_text().splitlines()[1].split("\t")
+            self.assertEqual(row[1], "discard")
+            self.assertIn("already filed as rpg/Game/Game - Maps.zip", row[3])
+            # One with no images, beside the books all the same: lint says where it goes.
+            with zipfile.ZipFile(lib / "rpg/Game/Stray.zip", "w") as z:
+                z.writestr("notes.txt", b"x")
+            code, out = run_cli("lint", "--library", str(lib))
+            self.assertEqual(code, 1, out)
+            self.assertIn("LAYOUT rpg/Game/Stray.zip: no images in it", out)
+
     def test_damaged_book_is_filed_and_logged(self):
         # Its OPF reads, one chapter doesn't (a bad CRC-32): apply files and
         # logs it with the error and goes on; lint --fix reports it.
@@ -1554,6 +1636,106 @@ class Copies(unittest.TestCase):
                                                         "value": "discard"}))
             run_cli("review", "import", str(st), "--answers", str(Path(d) / "a.json"))
             self.assertIn("x.mkv\tdiscard\treviewed", (Path(d) / "b.tsv").read_text())
+
+
+class Kavita(unittest.TestCase):
+    """Once a command changes books/ or rpg/, Kavita is asked to scan the
+    library that holds the change, rather than wait for its folder watcher."""
+
+    def setUp(self):
+        d = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.lib = d / "media"
+        self.key = d / "api-key"
+        self.key.write_text("sekrit\n")
+        self.calls, self.down, self.batches = [], None, 0
+        self.enterContext(mock.patch.object(ms, "KAVITA_KEY", str(self.key)))
+        self.enterContext(mock.patch.object(ms, "kavita_api", self.api))
+
+    def api(self, method, path, token=None, **query):
+        if self.down:
+            raise self.down
+        self.calls.append((method, path, token, query))
+        if path == "/api/Plugin/authenticate":
+            return {"token": "jwt", "username": "someone"}
+        if path == "/api/Library/libraries":
+            return [{"id": 1, "name": "RPG", "folders": [str(self.lib / "rpg")]},
+                    {"id": 2, "name": "Book", "folders": [f"{self.lib}/books/"]}]
+        return None
+
+    def scans(self):
+        return [(path, token, query) for _, path, token, query in self.calls if path.startswith("/api/Library/scan")]
+
+    def apply(self, files):
+        """File `files` ({library path: maker}) through a batch of their own; apply's output."""
+        self.batches += 1
+        st = self.lib / "staging" / f"b{self.batches}"
+        st.mkdir(parents=True)
+        for n, (new, make) in enumerate(files.items()):
+            make(st / f"{n}{Path(new).suffix}")
+        run_cli("scan", str(st), "--library", str(self.lib))
+        Path(str(st) + ".tsv").write_text("old\tnew\n" + "".join(
+            f"{n}{Path(new).suffix}\t{new}\n" for n, new in enumerate(files)))
+        code, out = run_cli("apply", str(st), "--library", str(self.lib))
+        self.assertEqual(code, 0, out)
+        return out
+
+    def test_apply_asks_for_a_scan_of_the_library_it_filed_into(self):
+        out = self.apply({"rpg/Game/Game - Rules.pdf": make_pdf})
+        self.assertEqual(self.calls[0][1:], ("/api/Plugin/authenticate", None,
+                                             {"apiKey": "sekrit", "pluginName": "media-stage"}))
+        self.assertEqual(self.scans(), [("/api/Library/scan", "jwt", {"libraryId": 1})])
+        self.assertIn("Kavita: asked to rescan RPG", out)
+        # Books and RPGs at once: one scan of all. Kavita puts a scan asked
+        # for while another runs off by three hours.
+        self.calls.clear()
+        out = self.apply({"rpg/Game/Game - Map.pdf": make_pdf,
+                          "books/Someone/Some Book/Some Book.pdf": make_pdf})
+        self.assertEqual(self.scans(), [("/api/Library/scan-all", "jwt", {})])
+        self.assertIn("Kavita: asked to rescan RPG, Book", out)
+
+    def test_what_kavita_does_not_read_asks_for_nothing(self):
+        out = self.apply({"rpg/Game/extras/Handout.pdf": make_pdf})
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("Kavita", out)
+        with redirect_stdout(io.StringIO()) as out:
+            ms.kavita_rescan(self.lib, ["movies/Heat (1995)/Heat (1995).mkv", "music/A/B/01 C.mp3"])
+        self.assertEqual((self.calls, out.getvalue()), ([], ""))
+        # A library Kavita doesn't have.
+        with redirect_stdout(io.StringIO()) as out:
+            ms.kavita_rescan(Path(self.key.parent) / "elsewhere", ["rpg/Game/Game - Rules.pdf"])
+        self.assertEqual(self.scans(), [])
+        self.assertIn("none of its libraries holds", out.getvalue())
+
+    def test_tag_lint_fix_and_restage_ask_too(self):
+        pdf = self.lib / "rpg/Game/Game - Rules.pdf"
+        pdf.parent.mkdir(parents=True)
+        make_pdf(pdf, title="x")
+        code, out = run_cli("lint", "--library", str(self.lib))
+        self.assertEqual((code, self.calls), (1, []))  # only looks
+        code, out = run_cli("lint", "--fix", "--library", str(self.lib))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.scans(), [("/api/Library/scan", "jwt", {"libraryId": 1})])
+        self.calls.clear()
+        code, out = run_cli("tag", str(pdf), "--library", str(self.lib))
+        self.assertEqual((code, self.calls), (0, []))  # nothing to write, nothing changed
+        code, out = run_cli("restage", str(self.lib / "staging" / "again"), "rpg/Game", "--library", str(self.lib))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.scans(), [("/api/Library/scan", "jwt", {"libraryId": 1})])
+
+    def test_no_key_or_no_kavita_is_a_note(self):
+        self.down = OSError("refused apiKey=sekrit")
+        out = self.apply({"rpg/Game/Game - Rules.pdf": make_pdf})
+        self.assertTrue((self.lib / "rpg/Game/Game - Rules.pdf").exists())
+        self.assertIn("Kavita: no rescan (refused apiKey=…); its folder watcher finds the change", out)
+        self.assertNotIn("sekrit", out)
+        self.key.unlink()
+        out = self.apply({"rpg/Game/Game - Map.pdf": make_pdf})
+        self.assertIn(f"Kavita: no API key in {self.key}, so no rescan", out)
+        # A key that is there but won't read (someone outside the media group) says why.
+        self.key.mkdir()
+        out = self.apply({"rpg/Game/Game - Deck.pdf": make_pdf})
+        self.assertIn("Kavita: no rescan ([Errno 21] Is a directory", out)
+        self.assertNotIn("no API key", out)
 
 
 if __name__ == "__main__":
