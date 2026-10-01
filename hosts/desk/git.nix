@@ -32,4 +32,11 @@
   # second would need a second key and password provisioned by hand.
   # --one-file-system there is per path, so this one on / is still walked.
   services.restic.backups.media.paths = [ "/srv/git" ];
+
+  # slskd runs as n8 (soulseek.nix), so 0700 does not keep it out, and it
+  # serves files to strangers. It shares only music/, and its sandbox makes
+  # the rest read-only; this takes /srv/git out of its view altogether, so
+  # no share added later, by config or through its API, can reach in here.
+  # (/home is already hidden from it: the module sets ProtectHome.)
+  systemd.services.slskd.serviceConfig.InaccessiblePaths = [ "/srv/git" ];
 }
