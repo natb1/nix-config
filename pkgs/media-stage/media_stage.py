@@ -22,9 +22,9 @@ library share is read-only from the Mac, so apply, tag and lint --fix run
 on desk (`ssh desk media-stage apply /srv/media/staging/<batch>`).
 
 Once apply, tag, restage or lint --fix has changed books/ or rpg/, Kavita is
-asked to scan the library, with an admin's auth key in
-~/.config/kavita/api-key; without one, its folder watcher finds the change
-minutes later.
+asked to scan the library, with the admin's auth key in /etc/kavita/api-key,
+which desk's media group reads; without it, its folder watcher finds the
+change minutes later.
 
 The table (TSV, header row) needs `old` and `new` columns; `confidence` and
 `note` are optional. `old` is relative to STAGING, `new` to the library root.
@@ -2471,12 +2471,13 @@ def glob_escape(s):
 # Kavita: a scan as soon as a command has changed what it reads (books/ and
 # rpg/, a game's extras/ aside), rather than when its folder watcher gets to
 # it: five minutes after a change, then a minute more. Scans are an admin's
-# to ask for, so the key is an admin's auth key (Kavita's user settings, 3rd
-# Party Clients; README, step 4). Best effort: the files are filed either
-# way, so no key, or no Kavita, is a note and never a failure.
+# to ask for, so the key is the admin's auth key: one file, which the media
+# group reads, so it is the same key for everyone who files
+# (hosts/desk/kavita.nix). Best effort: the files are filed either way, so no
+# key, or no Kavita, is a note and never a failure.
 
-KAVITA_URL = "http://127.0.0.1:5000"  # desk's (hosts/desk/kavita.nix), where apply, tag, restage and lint --fix run
-KAVITA_KEY = "~/.config/kavita/api-key"
+KAVITA_URL = "http://127.0.0.1:5000"  # desk's, where apply, tag, restage and lint --fix run
+KAVITA_KEY = "/etc/kavita/api-key"
 
 
 def kavita_api(method, path, token=None, **query):
@@ -2496,13 +2497,9 @@ def kavita_rescan(library, rels):
              if rel.split("/")[0] in ("books", "rpg") and not is_extra(rel)]
     if not paths:
         return
-    key_file, key = Path(KAVITA_KEY).expanduser(), ""
-    later = "its folder watcher finds the change, minutes later"
-    if not key_file.exists():
-        print(f"Kavita: no API key in {key_file}, so no rescan; {later}")
-        return
+    key, later = "", "its folder watcher finds the change, minutes later"
     try:
-        key = key_file.read_text().strip()
+        key = Path(KAVITA_KEY).read_text().strip()
         token = kavita_api("POST", "/api/Plugin/authenticate", apiKey=key, pluginName="media-stage")["token"]
         libs = [lib for lib in kavita_api("GET", "/api/Library/libraries", token)
                 if any(Path(os.path.realpath(f)) in (p, *p.parents) for f in lib.get("folders") or [] for p in paths)]
@@ -2512,7 +2509,10 @@ def kavita_rescan(library, rels):
             # One job for them all: a library scan asked for while another
             # runs is put off by three hours.
             kavita_api("POST", "/api/Library/scan-all", token)
-    except Exception as e:  # Kavita down, a key it doesn't know: the files are filed all the same
+    except FileNotFoundError:
+        print(f"Kavita: no API key in {KAVITA_KEY}, so no rescan; {later}")
+        return
+    except Exception as e:  # Kavita down, a key it doesn't know or we can't read: the files are filed all the same
         why = str(e).replace(key, "…") if key else str(e)
         print(f"Kavita: no rescan ({why}); {later}")
         return

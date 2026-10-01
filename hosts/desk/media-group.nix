@@ -9,8 +9,10 @@
 #   /var/lib/beets        beets' library database and import log
 #                         (hosts/desk/home/media-tools.nix)
 # and, read-only, the API keys media-fetch uses: slskd's (/etc/slskd/api.env)
-# and itch.io's (/etc/itch/api.env, written by hand: README.md), each 0440
-# n8:media.
+# and itch.io's (/etc/itch/api.env, written by hand: README.md), and the one
+# media-stage asks Kavita to scan with (/etc/kavita/api-key, by hand too:
+# hosts/desk/kavita.nix), each 0440 n8:media. Kavita's is its admin's key:
+# whoever is in the group is the admin to Kavita.
 #
 # Owners stay what they were — each file is its creator's — and POSIX ACLs
 # give the group the rest: `g:media:rwX` on what is there, and a default ACL

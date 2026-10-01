@@ -21,7 +21,9 @@
 # group (hosts/desk/media-group.nix) and get the same tools and beets config
 # (home/media-tools.nix), so they run media-fetch, media-stage and beet as
 # themself, on the shared state: staging and the library, media-fetch's jobs,
-# beets' library, slskd's API key. Nothing of n8's account beyond that.
+# beets' library, and the group's API keys: slskd's, itch.io's, and Kavita's
+# admin key, with which media-stage asks for a scan once it has filed.
+# Nothing of n8's account on desk beyond that.
 #
 # One place the media-share skill assumes n8 (their CLAUDE.md line below
 # overrides it): the Media Filing Review page is n8's artifact, which

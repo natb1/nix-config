@@ -1731,6 +1731,11 @@ class Kavita(unittest.TestCase):
         self.key.unlink()
         out = self.apply({"rpg/Game/Game - Map.pdf": make_pdf})
         self.assertIn(f"Kavita: no API key in {self.key}, so no rescan", out)
+        # A key that is there but won't read (someone outside the media group) says why.
+        self.key.mkdir()
+        out = self.apply({"rpg/Game/Game - Deck.pdf": make_pdf})
+        self.assertIn("Kavita: no rescan ([Errno 21] Is a directory", out)
+        self.assertNotIn("no API key", out)
 
 
 if __name__ == "__main__":
