@@ -1656,7 +1656,7 @@ class Kavita(unittest.TestCase):
             raise self.down
         self.calls.append((method, path, token, query))
         if path == "/api/Plugin/authenticate":
-            return {"token": "jwt", "username": "admin"}
+            return {"token": "jwt", "username": "someone"}
         if path == "/api/Library/libraries":
             return [{"id": 1, "name": "RPG", "folders": [str(self.lib / "rpg")]},
                     {"id": 2, "name": "Book", "folders": [f"{self.lib}/books/"]}]

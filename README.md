@@ -87,11 +87,11 @@ short name `desk` works everywhere through MagicDNS.
    two libraries of type **Book**: `/srv/media/books` and `/srv/media/rpg`,
    the second with the exclude pattern `**/extras/*` in its settings, so
    each game's `extras/` stays out ([`hosts/desk/kavita.nix`](hosts/desk/kavita.nix)).
-   Then the key `media-stage` asks Kavita to scan with, once it has filed
-   books or RPGs: the admin's auth key, the one the OPDS URL under user
-   settings → **3rd Party Clients** ends in. On desk, paste it at the prompt of
+   Then the key file `media-stage` asks Kavita to scan with, once it has
+   filed books or RPGs: `/etc/kavita/api-key`, one line, 0440 n8:media
+   (which key is in it: the owner's private notes). On desk, paste it at the
+   prompt of
    `( stty -echo; printf 'Kavita key: '; IFS= read -r key; stty echo; echo; printf '%s\n' "$key" | sudo install -m 0440 -o n8 -g media /dev/stdin /etc/kavita/api-key )`.
-   It is one key for everyone who files: the media group reads it.
    Check: the next `media-stage apply` of books or RPGs ends with
    `Kavita: asked to rescan …`. Without the key, Kavita's folder watcher
    finds new files about six minutes later.
@@ -365,12 +365,9 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   `/var/lib/kavita` (watched state and reading progress are lost with it).
   Kavita's login-signing key, `/etc/kavita/token-key`, is generated on first
   start; deleting it only logs everyone out.
-- `desk`'s Kavita key for `media-stage`, `/etc/kavita/api-key` (0440
-  n8:media, one line): the admin's auth key, the one the OPDS URL ends in,
-  with which `media-stage` asks Kavita to scan after anyone files ("desk
-  (once, after its first switch)", step 4). The e-readers use the same key:
-  rotated in Kavita, it is saved here again. Without it, new files wait for
-  Kavita's folder watcher.
+- `desk`'s key file for `media-stage`'s Kavita scans, `/etc/kavita/api-key`
+  (0440 n8:media, one line; "desk (once, after its first switch)", step 4).
+  Without it, new files wait for Kavita's folder watcher.
 - `desk`'s restic credentials for the media backup in `hosts/desk/media.nix`,
   in `/etc/restic/` (root, dir 0700, files 0600). `media.password` is the
   repository's **encryption key**: there is no reset, and without it the

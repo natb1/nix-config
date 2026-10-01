@@ -19,7 +19,7 @@
 # Kavita reads, never writes: covers and progress stay in /var/lib/kavita.
 # Both libraries watch their folders, but the watcher scans only minutes
 # after a change, so media-stage asks for a scan as soon as it has filed,
-# with the admin's auth key in /etc/kavita/api-key (below).
+# with the key in /etc/kavita/api-key (below).
 #
 # Tailnet and home Wi-Fi, unlike Navidrome and Jellyfin, which are
 # tailnet-only. It listens on every interface; tailscale0 is trusted
@@ -38,10 +38,9 @@
 # to http://desk:5000 creates the admin. State is in /var/lib/kavita
 # (accounts, libraries, reading progress). The token key below is state too,
 # but a disposable one: it only signs logins. And /etc/kavita/api-key, written
-# by hand (README, step 4): the admin's auth key, the one the OPDS URL in
-# Kavita's user settings ends in, on one line. One key for everyone who
-# files: the media group reads it (hosts/desk/media-group.nix), as it does
-# slskd's and itch.io's, and with it is the admin to Kavita.
+# by hand (README, step 4): one line, the key media-stage asks for a scan
+# with. The media group reads it (hosts/desk/media-group.nix), so whoever
+# files asks with the same one.
 
 { pkgs, ... }:
 
@@ -84,8 +83,8 @@ in
   networking.firewall.interfaces.wlp14s0.allowedTCPPorts = [ 5000 ];
 
   systemd.tmpfiles.rules = [
-    # Traversable, so the media group can reach api-key; token-key stays 0600
-    # root. `d` also fixes the mode of a directory that already exists.
+    # Traversable, so the media group can reach api-key. `d` also fixes the
+    # mode of a directory that already exists.
     "d /etc/kavita 0755 root root -"
     "z ${apiKeyFile} 0440 n8 media -"
     # A library needs its folder to exist; media-stage would otherwise create

@@ -3685,11 +3685,11 @@ takes a moment. It skips each series folder whose latest write time (the
 folder's and everything in it) is older than its last scan, so a file moved
 in as it came, with an old date, is still seen. Two libraries at once is
 one scan of them all, since Kavita puts off a library scan asked for while
-another runs by three hours. The request is an admin's, so it is made with
-the admin's auth key, kept on desk in `/etc/kavita/api-key` (README, "Book
-server"): one key, which the media group reads as it does slskd's and
-itch.io's ([`kavita.nix`](../hosts/desk/kavita.nix)), so whoever files asks
-with it. With no key, or Kavita down, `media-stage` says so and files all
+another runs by three hours. The request carries a key from one
+hand-provisioned file on desk, `/etc/kavita/api-key`, which the media group
+reads as it does slskd's and itch.io's
+([`kavita.nix`](../hosts/desk/kavita.nix)), so whoever files asks with it.
+With no key, or Kavita down, `media-stage` says so and files all
 the same, and the watcher still finds the change. Rehearsed in a throwaway
 0.9.1.4 with folder watching off: a file dated 2020, moved into a series
 Kavita had, showed within a second, and so did a batch into both libraries

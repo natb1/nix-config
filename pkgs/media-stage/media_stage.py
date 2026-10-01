@@ -22,9 +22,8 @@ library share is read-only from the Mac, so apply, tag and lint --fix run
 on desk (`ssh desk media-stage apply /srv/media/staging/<batch>`).
 
 Once apply, tag, restage or lint --fix has changed books/ or rpg/, Kavita is
-asked to scan the library, with the admin's auth key in /etc/kavita/api-key,
-which desk's media group reads; without it, its folder watcher finds the
-change minutes later.
+asked to scan the library, with the key in /etc/kavita/api-key; without it,
+its folder watcher finds the change minutes later.
 
 The table (TSV, header row) needs `old` and `new` columns; `confidence` and
 `note` are optional. `old` is relative to STAGING, `new` to the library root.
@@ -2470,11 +2469,10 @@ def glob_escape(s):
 # --------------------------------------------------------------------------
 # Kavita: a scan as soon as a command has changed what it reads (books/ and
 # rpg/, a game's extras/ aside), rather than when its folder watcher gets to
-# it: five minutes after a change, then a minute more. Scans are an admin's
-# to ask for, so the key is the admin's auth key: one file, which the media
-# group reads, so it is the same key for everyone who files
-# (hosts/desk/kavita.nix). Best effort: the files are filed either way, so no
-# key, or no Kavita, is a note and never a failure.
+# it: five minutes after a change, then a minute more. The key is one file
+# on desk, the same for everyone who files (hosts/desk/kavita.nix). Best
+# effort: the files are filed either way, so no key, or no Kavita, is a note
+# and never a failure.
 
 KAVITA_URL = "http://127.0.0.1:5000"  # desk's, where apply, tag, restage and lint --fix run
 KAVITA_KEY = "/etc/kavita/api-key"
