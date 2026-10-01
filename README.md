@@ -379,6 +379,10 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   replaced by generating a new one and swapping the line on the box; a lost
   password cannot be replaced. See `docs/desktop-migration.md`, "Before any
   original is retired", for where the off-machine copies go.
+- `desk`'s bare git repositories in `/srv/git` (`hosts/desk/git.nix`): made
+  by hand with `git init --bare`, and pushed to from their clones. The
+  directory is in the restic backup, so a lost one comes back with
+  `restic restore --include /srv/git`.
 - `desk`'s outgoing mail password, `/etc/msmtp/gmail-app-password` (root,
   0600), for `hosts/desk/mail.nix`: a Google app password for
   `nathan@natb1.com` (myaccount.google.com → Security → App passwords), no
