@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,6 +36,7 @@ class FakeSlskd:
         self.busy = set()        # remote filenames refused: "try again later"
         self.hold = False        # leave transfers queued
         self.lag = 0             # status polls before responses are saved
+        self.logged_out = False  # the service has no session with its server
         self.searches = {}
         fake = self
 
@@ -78,6 +80,8 @@ class FakeSlskd:
     def handle(self, method, parts, body):
         if parts[0] == "searches":
             if method == "POST":
+                if self.logged_out:
+                    return 409, "The server connection must be connected and logged in to perform a search (currently: Disconnected)"
                 self.searches[body["id"]] = body["searchText"]
                 return 200, {"id": body["id"], "isComplete": False}
             if method == "PUT":
@@ -425,6 +429,53 @@ class MediaFetchTest(unittest.TestCase):
         self.assertEqual(len(self.fake.transfers["peer"]), 2)
         os.environ["MEDIA_FETCH_PER_SOURCE"] = "0"
         self.assertIn("MEDIA_FETCH_PER_SOURCE", self.cli("wait", "--timeout", "0")[1])
+
+    def test_searches_wait_for_their_turn(self):
+        # Two in any 0.4 s: the third waits, whichever process asks.
+        os.environ["MEDIA_FETCH_SEARCHES"] = "2/0.4"
+        self.addCleanup(os.environ.pop, "MEDIA_FETCH_SEARCHES", None)
+        self.fake.responses = [response("peer", "M\\A", ["01"])]
+        start = time.monotonic()
+        self.search()
+        code, out = self.cli("search", "artist album", "--kind", "music")
+        self.assertNotIn("waiting", out)
+        self.assertLess(time.monotonic() - start, 0.4)
+        code, out = self.cli("search", "artist album", "--kind", "music")
+        self.assertEqual(code, 0, out)
+        self.assertIn("corpus fetch: 2 searches in the last 0.4 s, its limit; waiting", out)
+        self.assertGreaterEqual(time.monotonic() - start, 0.4)
+        self.assertEqual(len(self.fake.searches), 3)
+        os.environ["MEDIA_FETCH_SEARCHES"] = "fast"
+        self.assertIn("MEDIA_FETCH_SEARCHES='fast': want COUNT/SECONDS", self.tables()["corpus fetch"]["error"])
+        self.assertEqual(len(self.fake.searches), 3)
+
+    def test_a_search_refused_for_no_login_says_so(self):
+        self.fake.logged_out = True
+        error = self.tables()["corpus fetch"]["error"]
+        self.assertIn("HTTP 409", error)
+        self.assertIn("not logged in to its server", error)
+
+    def test_files_past_the_request_pace_wait_for_a_later_round(self):
+        os.environ["MEDIA_FETCH_REQUESTS"] = "2/0.5"
+        self.addCleanup(os.environ.pop, "MEDIA_FETCH_REQUESTS", None)
+        self.fake.responses = [response(f"peer{i}", f"M\\{i}", ["01"]) for i in range(3)]
+        ids = [c["id"] for c in self.search()["candidates"]]
+        self.fake.hold = True
+        for cid in ids:
+            code, out = self.cli("get", cid, "--batch", "b")
+            self.assertEqual(code, 0, out)
+        asked = lambda: sum(len(ts) for ts in self.fake.transfers.values())
+        self.assertEqual(asked(), 2)  # the third waits here, queued
+        self.assertEqual({s["state"] for s in json.loads(self.cli("status", "--json")[1])}, {"queued"})
+        self.cli("pump")
+        self.assertEqual(asked(), 2)
+        time.sleep(0.5)
+        self.cli("pump")
+        self.assertEqual(asked(), 3)
+        self.fake.hold = False
+        code, out = self.cli("wait", "b", "--timeout", "5", "--interval", "0")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(p.name for p in (self.staging / "b").iterdir()), ["0", "1", "2"])
 
     def test_refusal_while_waiting_fails_the_rest(self):
         self.fake.responses = [response("peer", "M\\A", ["01", "02"])]

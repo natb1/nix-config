@@ -14,6 +14,11 @@
 # moves each finished job into its staging/<batch>, which is then filed like
 # any other (media-share skill). One file at a time: six albums queued at
 # once from one peer were all refused, "Overwhelmed with requests".
+# media-fetch also paces what it asks of the Soulseek server (its
+# MEDIA_FETCH_SEARCHES and MEDIA_FETCH_REQUESTS): 131 searches in ten
+# minutes got the account banned for half an hour, in which slskd could not
+# log in ("The wait timed out after 5000 milliseconds", every retry) and so
+# could search and fetch nothing. Searches made in the web UI are not counted.
 # slskd runs as n8, like the Samba shares' `force user`, so media-fetch can
 # move what it downloaded; the module's sandbox still limits it to its state, the two
 # directories below (read-write) and the share (read-only).
