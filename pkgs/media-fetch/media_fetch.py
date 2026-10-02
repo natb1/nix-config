@@ -45,11 +45,21 @@ and of the jobs ahead of it at its source, at the source's measured speed
 (before a file starts: the speed it offered in the search). Time spent in a
 source's own queue is not counted.
 
+Corpus fetch is paced, across every media-fetch that shares the state
+directory: its server bans an account for half an hour when it searches too
+often, and until the ban ends nothing can be searched or fetched. A `search`
+past MEDIA_FETCH_SEARCHES waits for its turn and says so; many searches in a
+row take as long as the pace allows, however they are run. Files past
+MEDIA_FETCH_REQUESTS stay queued here until a later round.
+
 Environment:
   MEDIA_STAGING        batch directories' parent (default /srv/media/staging)
   MEDIA_LIBRARY        the media share (default: MEDIA_STAGING's parent)
   MEDIA_FETCH_STATE    results and jobs (default $XDG_STATE_HOME/media-fetch)
   MEDIA_FETCH_PER_SOURCE  files in flight per source (default 1)
+  MEDIA_FETCH_SEARCHES    corpus fetch searches, as COUNT/SECONDS (default 20/220)
+  MEDIA_FETCH_REQUESTS    files asked of corpus fetch, as COUNT/SECONDS
+                          (default 30/60)
   CORPUS_URL           corpus fetch's service (default http://localhost:5030)
   CORPUS_API_KEY       its key, else the API_KEY line of CORPUS_KEY_FILE
   CORPUS_DOWNLOADS     where it downloads to
@@ -129,6 +139,11 @@ class Backend:
         source's MEDIA_FETCH_PER_SOURCE."""
         raise NotImplementedError
 
+    def allowance(self, job, n):
+        """How many of `n` more files may be asked for now. The rest wait
+        for a later round."""
+        return n
+
     def download(self, job, files):
         """Start downloading `files` (a subset of job["files"])."""
         raise NotImplementedError
@@ -161,9 +176,55 @@ class Backend:
 BUSY = re.compile(r"try again later|overwhelmed|too many (files|megabytes)", re.I)
 
 
+class Pace:
+    """At most `count` of something in any `seconds`, counted across every
+    process that shares the state directory: the times of the last ones are
+    in <name>.pace there."""
+
+    def __init__(self, name, env, default):
+        self.name, self.env = name, env
+        v = os.environ.get(env, default)
+        m = re.fullmatch(r"(\d+)/(\d+(?:\.\d+)?)", v)
+        if not m or int(m[1]) < 1 or float(m[2]) <= 0:
+            raise FetchError(f"{env}={v!r}: want COUNT/SECONDS, such as {default}")
+        self.count, self.seconds = int(m[1]), float(m[2])
+
+    def take(self, want=1):
+        """(how many of `want` may go now, seconds until the next may)."""
+        d = state_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / f"{self.name}.pace", "a+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.seek(0)
+            now = time.time()
+            try:
+                times = [t for t in json.loads(f.read() or "[]") if now - self.seconds < t <= now]
+            except ValueError:
+                times = []
+            got = max(0, min(want, self.count - len(times)))
+            times += [now] * got
+            f.seek(0)
+            f.truncate()
+            f.write(json.dumps(times))
+            wait = times[len(times) - self.count] + self.seconds - now if len(times) >= self.count else 0
+            return got, wait
+
+
 class Slskd(Backend):
     # "corpus fetch" in everything the CLI prints. Its settings are CORPUS_*;
     # the package's wrapper points them at slskd's key file and downloads.
+    #
+    # The server bans an account for half an hour when it searches too often:
+    # 59 searches in 220 seconds did it, 32 did not, and its other clients
+    # put the line at 34. A banned account cannot log in, so nothing can be
+    # searched or fetched until it ends. The default leaves room for
+    # searches made by hand in slskd's own page, which are not counted here.
+    SEARCHES = ("searches", "MEDIA_FETCH_SEARCHES", "20/220")
+    # No such line is known for asking peers for files, but each file asked
+    # of a new peer is a message to the same server, and a few hundred jobs
+    # started together would send theirs at once.
+    REQUESTS = ("requests", "MEDIA_FETCH_REQUESTS", "30/60")
+
     def __init__(self):
         self.url = os.environ.get("CORPUS_URL", "http://localhost:5030").rstrip("/") + "/api/v0"
         self.download_root = Path(os.environ.get("CORPUS_DOWNLOADS") or staging_dir() / ".corpus")
@@ -198,9 +259,26 @@ class Slskd(Backend):
     def source_key(self, job):
         return job["source"]["user"]
 
+    def allowance(self, job, n):
+        return Pace(*self.REQUESTS).take(n)[0]
+
     def search(self, query, timeout):
+        pace = Pace(*self.SEARCHES)
+        while True:
+            got, wait = pace.take()
+            if got:
+                break
+            print(f"corpus fetch: {pace.count} searches in the last {pace.seconds:g} s, "
+                  f"its limit; waiting {wait:.0f} s", file=sys.stderr, flush=True)
+            time.sleep(max(wait, 0.05))
         sid = str(uuid.uuid4())
-        self._call("POST", "/searches", {"id": sid, "searchText": query})
+        try:
+            self._call("POST", "/searches", {"id": sid, "searchText": query})
+        except FetchError as e:
+            if "HTTP 409" in str(e):
+                raise FetchError(f"{e}. The service is not logged in to its server: it reconnects by "
+                                 "itself, or after half an hour if the server banned it for too many searches")
+            raise
         deadline = time.monotonic() + timeout
         while True:
             s = self._call("GET", f"/searches/{sid}")
@@ -694,6 +772,9 @@ class Backends(Backend):
     def source_key(self, job):
         return f"{job.get('backend', 'corpus')}:{self.of(job).source_key(job)}"
 
+    def allowance(self, job, n):
+        return self.of(job).allowance(job, n)
+
     def download(self, job, files):
         return self.of(job).download(job, files)
 
@@ -823,8 +904,8 @@ def advance(be, raise_for=None):
 
 def _submit(be, raise_for):
     """Ask for pending files, oldest job first, while their source has fewer
-    than per_source() in flight. A refusal fails the job's pending files, or
-    raises for job `raise_for`."""
+    than per_source() in flight and the backend allows more. A refusal fails
+    the job's pending files, or raises for job `raise_for`."""
     jobs = sorted((j for j in load_jobs() if not j.get("delivered")), key=lambda j: j["at"])
     raw = {j["id"]: be.progress(j) for j in jobs}
     busy = Counter()
@@ -850,7 +931,9 @@ def _submit(be, raise_for):
         room = limit - busy[key]
         if room <= 0 or not j.get("pending"):
             continue
-        names = j["pending"][:room]
+        names = j["pending"][:be.allowance(j, min(room, len(j["pending"])))]
+        if not names:
+            continue
         try:
             be.download(j, [f for f in j["files"] if f["name"] in names])
         except FetchError as e:
@@ -860,7 +943,7 @@ def _submit(be, raise_for):
             j["pending"] = []
             save_job(j)
             continue
-        j["pending"] = j["pending"][room:]
+        j["pending"] = j["pending"][len(names):]
         busy[key] += len(names)
         save_job(j)
         for n in names:

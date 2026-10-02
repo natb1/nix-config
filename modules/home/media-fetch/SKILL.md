@@ -132,6 +132,13 @@ came from.
 
 ## Rules
 
+- Corpus fetch is paced: 20 searches in any 220 seconds, and 30 files asked
+  for in any minute, across everyone using desk. `search` waits for its
+  turn and says so. For many searches (a long list of albums), run them one
+  after another, tell the user how long the pace makes it (a hundred
+  searches is about 18 minutes), and don't work around it: its server bans
+  an account that searches faster for half an hour, and nothing can be
+  searched or fetched until the ban ends.
 - Search and download only through `media-fetch`: don't call whatever is
   behind it (itch.io's API and site included), install another download
   client, or move files out of its download directory by hand.
