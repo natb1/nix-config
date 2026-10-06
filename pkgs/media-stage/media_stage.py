@@ -1520,12 +1520,21 @@ def group(a):
     recs = load_manifest(staging)
     if recs is None:
         sys.exit(f"{staging}: no manifest; run `media-stage scan` first")
+    audio = {rel: r for rel, r in sorted(recs.items()) if r["kind"] == "audio" and not r.get("gone")}
+    # A file without an album tag is named by its folder, unless every such
+    # file of the folder names an album itself ("Artist - Album - 04 Title"):
+    # one name that happens to read that way ("13. Artist - Title - 13 M T")
+    # must not leave its album.
+    named = {}
+    for rel, r in audio.items():
+        if not (r.get("meta") or {}).get("tags", {}).get("album"):
+            named.setdefault(str(Path(rel).parent), []).append(bool(AUDIO_NAME.match(Path(rel).name)))
     groups = {}  # (album artist, album) -> {"base", "artist", "files": [(rel, disc)]}
-    for rel, r in sorted(recs.items()):
-        if r["kind"] != "audio" or r.get("gone"):
-            continue
+    for rel, r in audio.items():
         tags = (r.get("meta") or {}).get("tags", {})
         name = AUDIO_NAME.match(Path(rel).name)
+        if "/" in rel and not all(named.get(str(Path(rel).parent), [True])):
+            name = None
         parent = Path(rel).parent.name if "/" in rel else ""
         pbase, pdisc = split_disc(parent)
         album = tags.get("album") or (name and name.group("album")) or pbase or "_loose"

@@ -12,6 +12,7 @@ than from what beets or MusicBrainz made of it:
   ("Prelude No. 3" / "Prelude No. 5", "BWV 998" / "BWV 999", "II." / "III.")?
   Translations and spellings differ harmlessly; numbers don't.
 - name_conflict: does a file's name say something else than its own tags?
+- named_alike: is a staged album named like this filed one, artist included?
 - name_layout / layout_fits: which media do the names lay out ("[12 Vinyl 02]
   - 01 …": two records, numbered per side), and does a release have them?
 - length_off: is a file a different length than the release slot it fills?
@@ -211,26 +212,54 @@ def title_similarity(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def name_numbers(filename):
+    """Every number of up to three digits a file's name holds, the track's
+    among them however the name is laid out: {1, 2} for "1 02 Ghetto Life.flac"
+    and for "Carpenter Brut-TRILOGY-01.02 Disco.flac", {1, 101} for
+    "1-101 Dead Man's Party.flac"."""
+    stem = filename.rsplit(".", 1)[0]
+    return {int(n) for n in re.findall(r"(?<!\d)\d{1,3}(?!\d)", stem)}
+
+
 def name_conflict(filename, tags, offset=0):
     """How a file's name disagrees with its own tags ('' when it doesn't):
     another track number, or another title. A file named for one track and
     tagged as another is wrong in one of the two, and beets believes the tags.
     `offset` (name_offset) is the tracks on earlier discs, for names that
-    number each disc from 1 on tags numbered across the release."""
+    number each disc from 1 on tags numbered across the release.
+
+    The parse of a name is a guess: "1 02 One Day" reads as track 1, and
+    "09 - 99 Problems" behind an artist and album as track 99. So the track
+    disagrees only when the tags' number is nowhere in the name, and the
+    title only when the tags' title is nowhere in it either."""
     name = from_name(filename)
     if not name:
         return ""
     bits = []
     nt, tt = track_no(name.get("track")), track_no(tags.get("track"))
-    if nt and tt and tt not in (nt, nt + offset):
+    if nt and tt and tt != nt + offset and tt not in name_numbers(filename):
         bits.append(f"track {nt} in the name, {tt} in the tags")
     title = tags.get("title", "")
     clash = number_clash(name.get("title", ""), title)
     if clash:
         bits.append(f"{clash} (name / tags)")
     elif title and title_similarity(name.get("title", ""), title) < 0.4:
-        bits.append(f"titled “{name['title']}” in the name, “{title}” in the tags")
+        # The title without what tags add in brackets ("(feat. …)"), looked
+        # for in the whole name: the parse may have cut the title elsewhere.
+        core = _norm(re.sub(r"\s*[(\[][^)\]]*[)\]]", "", title)) or _norm(title)
+        if core not in _norm(filename.rsplit(".", 1)[0]):
+            bits.append(f"titled “{name['title']}” in the name, “{title}” in the tags")
     return "; ".join(bits)
+
+
+def named_alike(album, artist, filed_album, filed_artist, filed_comp=False):
+    """Whether a staged album (its files' album and album artist tags) is
+    named like a filed one. The title alone isn't enough: Korn's "Follow the
+    Leader" is not Eric B. & Rakim's. A compilation's album artist varies
+    with the tagger, so there the title decides."""
+    if not album or _norm(album) != _norm(filed_album):
+        return False
+    return bool(filed_comp) or not artist or not filed_artist or _norm(artist) == _norm(filed_artist)
 
 
 # -- lengths
