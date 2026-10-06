@@ -27,11 +27,11 @@
   # runs it as `ssh desk media-fetch …`.
   home.packages = [
     (pkgs.callPackage ../../../pkgs/media-fetch { stateDir = "/var/lib/media-fetch"; })
-    # The playlists of desk's Navidrome (hosts/desk/music.nix). Not shared
-    # state: each user's playlists are their Navidrome account's, and the
-    # tool logs in with the account in their own
-    # ~/.config/media-playlist/login.env (README, "desk (once)").
-    (pkgs.callPackage ../../../pkgs/media-playlist { })
+    # The playlists of desk's Navidrome (hosts/desk/music.nix). One account
+    # for the whole media group, in a file the group reads
+    # (hosts/desk/music.nix), so anyone's agent manages the same playlists:
+    # the ones the players show.
+    (pkgs.callPackage ../../../pkgs/media-playlist { loginFile = "/etc/navidrome/login.env"; })
   ];
 
   programs.beets = {

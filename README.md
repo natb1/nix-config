@@ -78,8 +78,10 @@ short name `desk` works everywhere through MagicDNS.
    ([`hosts/desk/music.nix`](hosts/desk/music.nix)). Then start **Feishin**
    and add the server `http://localhost:4533` with that account. For
    `media-playlist` (playlists from a shell, and Claude's `media-playlist`
-   skill), write the same account to `~/.config/media-playlist/login.env`,
-   mode 0600, as two lines, `NAVIDROME_USER=…` and `NAVIDROME_PASSWORD=…`.
+   skill), write the same account to `/etc/navidrome/login.env` as two
+   lines, `NAVIDROME_USER=…` and `NAVIDROME_PASSWORD=…` (`sudoedit`; a
+   switch, or `sudo systemd-tmpfiles --create`, makes it 0440 n8:media, so
+   every member of the media group manages that account's playlists).
    Check: `media-playlist list`.
 3. **Video server (Jellyfin):** open `http://desk:8096`, create the admin, and
    add the libraries listed in
@@ -364,8 +366,8 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   by a rescan if lost, except playlists, favourites and play counts; for
   those, Navidrome copies it nightly to `/var/lib/navidrome/backups`, which
   the media backup takes offsite (`hosts/desk/music.nix` has the restore).
-  And `~/.config/media-playlist/login.env`, each user's own copy of their
-  account for `media-playlist`.
+  And `/etc/navidrome/login.env` (0440 n8:media), the account
+  `media-playlist` logs in with, whoever in the media group runs it.
 - `desk`'s Jellyfin and Kavita accounts and libraries
   (`hosts/desk/jellyfin.nix`, `hosts/desk/kavita.nix`): the admin of each is
   created on its first visit (`http://desk:8096`, `http://desk:5000`), and the

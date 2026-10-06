@@ -89,6 +89,8 @@ the rules if it is 0 or not what the user described. `add`, `remove` and
 - `export` is for taking a playlist elsewhere (another player, a copy to
   keep). Write it outside the media share; its paths are the files' on
   desk, under `/srv/media/music`.
-- "no login": the account isn't set up for this user. They write it to the
-  file the message names (README, "desk (once)"); don't ask for the
-  password in chat.
+- One account, shared: every user's agent manages the same playlists, the
+  ones in `list`. Say whose request a change was only if asked.
+- "no login": the account's file isn't written yet. n8 writes it (README,
+  "desk (once)"); don't ask for the password in chat, and don't print the
+  file.

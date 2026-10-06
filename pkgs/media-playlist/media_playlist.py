@@ -89,7 +89,7 @@ def login():
                 found[key.strip()] = value.strip()
     if not all(found.values()):
         raise Problem(
-            f"no login: write the music server's account to {path} (mode 0600), as\n"
+            f"no login: {path} should hold the music server's account, as\n"
             "  NAVIDROME_USER=…\n  NAVIDROME_PASSWORD=…")
     return found["NAVIDROME_USER"], found["NAVIDROME_PASSWORD"]
 

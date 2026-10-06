@@ -28,6 +28,12 @@
 #
 # Playlists are managed from a shell, and by an agent, with media-playlist
 # (pkgs/media-playlist, the media-playlist skill), a client like the others.
+# It logs in with the account in /etc/navidrome/login.env, written by hand
+# (README, "desk (once)"): two lines, NAVIDROME_USER=… and
+# NAVIDROME_PASSWORD=…. The media group reads it (hosts/desk/media-group.nix),
+# so whoever asks, it is that one account's playlists that change. Anyone in
+# the group can read the password, and so log in to Navidrome as that
+# account; it reaches nothing but Navidrome.
 
 { ... }:
 
@@ -82,6 +88,10 @@ in
     # Navidrome makes it at its first backup; restic, which fails on a path
     # that is missing, may run before that.
     "d ${backups} 0700 navidrome navidrome -"
+    # Traversable, so the media group can reach login.env. `z` fixes the
+    # file's owner and mode once it has been written.
+    "d /etc/navidrome 0755 root root -"
+    "z /etc/navidrome/login.env 0440 n8 media -"
     # 0775, not 0755: the group bits are the media group's ACL mask
     # (hosts/desk/media-group.nix), and `d` reapplies the mode on every
     # switch, so 0755 took the group's write away. Only the ACL's media

@@ -5,8 +5,11 @@
 # the build, against a fake Navidrome.
 #
 # url: the server, the script's NAVIDROME_URL (which still overrides it).
+# loginFile: the account's file, for every user of this copy (the script's
+# NAVIDROME_LOGIN_FILE, which still overrides it). Default: each user's own
+# $XDG_CONFIG_HOME/media-playlist/login.env.
 
-{ python3Packages, url ? "http://localhost:4533" }:
+{ lib, python3Packages, url ? "http://localhost:4533", loginFile ? null }:
 
 python3Packages.buildPythonApplication {
   pname = "media-playlist";
@@ -20,7 +23,8 @@ python3Packages.buildPythonApplication {
     runHook postInstall
   '';
 
-  makeWrapperArgs = [ "--set-default" "NAVIDROME_URL" url ];
+  makeWrapperArgs = [ "--set-default" "NAVIDROME_URL" url ]
+    ++ lib.optionals (loginFile != null) [ "--set-default" "NAVIDROME_LOGIN_FILE" loginFile ];
 
   doCheck = true;
   checkPhase = ''
