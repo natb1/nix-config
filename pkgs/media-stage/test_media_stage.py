@@ -389,6 +389,25 @@ class Group(unittest.TestCase):
             self.assertEqual(log, {"Ballads": {"from": ["Ballads CD1", "Ballads CD2"], "discs": [1, 2]}})
             self.assertIn("1 made from more than one folder", out)
 
+    def test_untagged_file_stays_with_its_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            st = Path(d) / "staging" / "audio"
+            (st / "Denzel Curry - TA13OO (2018)").mkdir(parents=True)
+            # No tags. One name alone reads as "artist - album - track title".
+            for f in ("01. Denzel Curry - TABOO - TA13OO.mp3", "13. Denzel Curry - BLACK METAL TERRORIST - 13 M T.mp3"):
+                make_mp3(st / "Denzel Curry - TA13OO (2018)" / f)
+            # Where every name does, the names are the albums.
+            (st / "mix").mkdir()
+            make_mp3(st / "mix" / "Queen - Jazz - 01 Mustapha.mp3")
+            make_mp3(st / "mix" / "ABBA - Arrival - 02 Dancing Queen.mp3")
+            run_cli("scan", str(st), "--library", d)
+            self.assertEqual(run_cli("group", str(st), "--library", d)[0], 0)
+            self.assertEqual(sorted(p.relative_to(st).as_posix() for p in st.rglob("*.mp3")), [
+                "Arrival/ABBA - Arrival - 02 Dancing Queen.mp3",
+                "Denzel Curry - TA13OO (2018)/01. Denzel Curry - TABOO - TA13OO.mp3",
+                "Denzel Curry - TA13OO (2018)/13. Denzel Curry - BLACK METAL TERRORIST - 13 M T.mp3",
+                "Jazz/Queen - Jazz - 01 Mustapha.mp3"])
+
     def test_same_album_name_other_artist(self):
         with tempfile.TemporaryDirectory() as d:
             st = Path(d) / "staging" / "audio"
@@ -559,6 +578,34 @@ class Checks(unittest.TestCase):
         self.assertIn("track 2 in the name, 3 in the tags", sc.name_conflict(grouped, {"track": "3", "title": "N95"}))
         self.assertEqual(sc.from_name("2-Artist - Album - 03 Title.flac")["track"], "03")
         self.assertEqual(sc.from_name("1-Intro.mp3"), {"track": "1", "title": "Intro"})  # no disc: a track
+
+    def test_name_conflict_numbers_elsewhere_in_the_name(self):
+        # The parse reads the wrong number as the track; the tags' number is
+        # in the name all the same.
+        for name, track, title in [
+                ("1 02 Ghetto Life.flac", "2", "Ghetto Life"),                       # disc, track
+                ("1-101 Dead Man's Party.flac", "1", "Dead Man's Party"),            # disc, disc+track
+                ("1-Carpenter Brut-TRILOGY-01.02 Disco Zombi Italia-WEB.flac", "2", "Disco Zombi Italia"),
+                ("1 - 02 - Brothers Gonna Work It Out.flac", "2", "Brothers Gonna Work It Out"),
+                ("JAY‐Z - The Black Album - 09 - 99 Problems.flac", "9", "99 Problems"),
+                ("Juvenile - 400 Degreez - 16 - 400 Degreez.flac", "16", "400 Degreez"),
+                ("03 Danny Brown - CD-01 - 25 Bucks.flac", "3", "25 Bucks"),
+                ("11-3-46.flac", "11", "3:46"),
+                ("01 - Bacdafucup [FLAC 16bit - 781 kbps - 44.1kHz].flac", "1", "Bacdafucup"),
+                ("05. Genius ⁄ GZA - Cold World.flac", "5", "Cold World (Feat. Inspectah Deck, Life)")]:
+            self.assertEqual(sc.name_conflict(name, {"track": track, "title": title}), "", name)
+        # Still a conflict when the tags' number is nowhere in the name.
+        self.assertIn("track 23 in the name, 22 in the tags",
+                      sc.name_conflict("23 - Outro.flac", {"track": "22", "title": "Outro"}))
+        self.assertIn("in the tags", sc.name_conflict("1 02 Ghetto Life.flac", {"track": "2", "title": "Super Freak"}))
+
+    def test_named_alike(self):
+        self.assertTrue(sc.named_alike("Follow The Leader", "Korn", "Follow the Leader", "Korn"))
+        self.assertFalse(sc.named_alike("Follow The Leader", "Korn", "Follow the Leader", "Eric B. & Rakim"))
+        self.assertTrue(sc.named_alike("Hotline Miami Soundtrack", "Various Hotline Miami Artists",
+                                       "Hotline Miami Soundtrack", "Various Artists", True))
+        self.assertTrue(sc.named_alike("Zapp", "", "Zapp", "Zapp"))   # no artist tag: the title decides
+        self.assertFalse(sc.named_alike("", "Korn", "", "Korn"))
 
     def test_name_layout(self):
         vinyl = [f"Animals as Leaders - The Joy of Motion [12 Vinyl 0{d}] - 0{t} T{d}{t}.flac"

@@ -63,7 +63,8 @@ from beets.ui.commands.import_.session import TerminalImportSession
 from beets.util import MoveOperation, displayable_path
 
 from beetsplug.stagecheck import (SAME_RECORDING, describe_layout, fingerprint, from_name, layout_fits,
-                                  length_off, mmss, name_conflict, name_layout, name_offset, number_clash,
+                                  length_off, mmss, name_conflict, name_layout, name_offset, named_alike,
+                                  number_clash,
                                   pack, similarity, track_no, unpack)
 
 AUDIO_EXT = (".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".aif", ".aiff", ".wma", ".alac")
@@ -275,13 +276,29 @@ class StageSession(TerminalImportSession):
                    "mb_releasegroupid", "albumtype", "label", "comp", "disctotal")
 
     def twin(self, task):
+        """The filed album these files belong with: the release beets
+        matches best, else an album named like theirs by the same artist,
+        else a release beets offers at all whose filed copy lacks exactly
+        the tracks these files would be: the stray file of an album
+        (untagged, split off by its name) has no album tag and seldom its
+        own album as the best match, but has it among them."""
         first = task.items[0]
+        albums = list(self.lib.albums())
         best = task.candidates[0].info.album_id if task.candidates else None
-        for a in self.lib.albums():
+        for a in albums:
             if best and a.mb_albumid == best:
                 return a
-            if first.album and (a.album or "").casefold() == first.album.casefold():
+        for a in albums:
+            if named_alike(first.album, first.albumartist or first.artist, a.album, a.albumartist, a.comp):
                 return a
+        if task.rec != Recommendation.strong:
+            for m in task.candidates[1:5]:
+                for a in albums:
+                    if m.info.album_id and a.mb_albumid == m.info.album_id:
+                        filed = {i.mb_trackid for i in a.items()}
+                        mapped = {t.track_id for t in m.mapping.values()}
+                        if mapped and not mapped & filed:
+                            return a
         return None
 
     def dup_options(self, twin, here, all_filed=False):
