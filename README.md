@@ -76,7 +76,13 @@ short name `desk` works everywhere through MagicDNS.
    Samba's own, not the login password.
 2. **Music server account:** open `http://desk:4533` and create the admin
    ([`hosts/desk/music.nix`](hosts/desk/music.nix)). Then start **Feishin**
-   and add the server `http://localhost:4533` with that account.
+   and add the server `http://localhost:4533` with that account. For
+   `media-playlist` (playlists from a shell, and Claude's `media-playlist`
+   skill), write the same account to `/etc/navidrome/login.env` as two
+   lines, `NAVIDROME_USER=…` and `NAVIDROME_PASSWORD=…` (`sudoedit`; a
+   switch, or `sudo systemd-tmpfiles --create`, makes it 0440 n8:media, so
+   every member of the media group manages that account's playlists).
+   Check: `media-playlist list`.
 3. **Video server (Jellyfin):** open `http://desk:8096`, create the admin, and
    add the libraries listed in
    [`hosts/desk/jellyfin.nix`](hosts/desk/jellyfin.nix): `movies`, `tv`,
@@ -357,7 +363,11 @@ These are provisioned by hand and a clean rebuild will not recreate them:
 - `desk`'s Navidrome accounts (`hosts/desk/music.nix`): the admin is created
   on the first visit to `http://desk:4533`, and Feishin on desk and Amperfy on
   the phone log in with it. The database in `/var/lib/navidrome` is rebuilt
-  by a rescan if lost, except playlists, favourites and play counts.
+  by a rescan if lost, except playlists, favourites and play counts; for
+  those, Navidrome copies it nightly to `/var/lib/navidrome/backups`, which
+  the media backup takes offsite (`hosts/desk/music.nix` has the restore).
+  And `/etc/navidrome/login.env` (0440 n8:media), the account
+  `media-playlist` logs in with, whoever in the media group runs it.
 - `desk`'s Jellyfin and Kavita accounts and libraries
   (`hosts/desk/jellyfin.nix`, `hosts/desk/kavita.nix`): the admin of each is
   created on its first visit (`http://desk:8096`, `http://desk:5000`), and the

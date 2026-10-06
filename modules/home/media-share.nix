@@ -12,6 +12,8 @@
 #   - a media-fetch skill (also /media-fetch) for finding and downloading
 #     media, which hands its batch to the first. media-fetch itself is only
 #     on desk (hosts/desk/home/media-tools.nix); the Mac runs it over ssh;
+#   - a media-playlist skill for the music server's playlists; its tool is
+#     on desk too, and run from the Mac the same way;
 #   - a line in the user-level CLAUDE.md, always loaded, naming the skill.
 # Those are in media-skills.nix. Neither is a guarantee — the read-only
 # `media` share on desk is (hosts/desk/media.nix). These make the right way the first thing tried.

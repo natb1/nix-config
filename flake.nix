@@ -193,6 +193,8 @@
         media-stage = pkgs.callPackage ./pkgs/media-stage { };
         # Search and download into a staging batch; `nix run .#media-fetch -- --help`.
         media-fetch = pkgs.callPackage ./pkgs/media-fetch { };
+        # The music server's playlists; `nix run .#media-playlist -- --help`.
+        media-playlist = pkgs.callPackage ./pkgs/media-playlist { };
       });
 
       # Module regression tests. `nix flake check` is the gate before a switch.
@@ -207,6 +209,7 @@
           # Its unit and pipeline tests run in the build.
           media-stage = pkgs.callPackage ./pkgs/media-stage { };
           media-fetch = pkgs.callPackage ./pkgs/media-fetch { };
+          media-playlist = pkgs.callPackage ./pkgs/media-playlist { };
         }
         // weztermTests.wezterm-tests
         // claudeDaemonTests.claude-daemon-tests

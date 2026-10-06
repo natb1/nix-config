@@ -3819,6 +3819,15 @@ read-only to everything but beets.
 Nothing needs a rescan after an import: Navidrome watches the folder, with a
 six-hourly scan as the backstop.
 
+Playlists (added 2026-10-06) are Navidrome's own, not M3U files in the
+share: a native playlist can be edited from every client and keeps its
+tracks by id when beets refiles them, while an imported M3U is one-way and
+breaks on a rename. `media-playlist` ([`pkgs/media-playlist`](../pkgs/media-playlist))
+is a shell client for them, with a Claude Code skill of the same name, and
+makes smart playlists too. Since playlists, favourites and play counts
+exist only in Navidrome's database, it is copied nightly and the copies go
+offsite with the media backup ([`hosts/desk/music.nix`](../hosts/desk/music.nix)).
+
 #### Watching and reading
 
 Added 2026-09-26. Two more servers beside Navidrome, both read-only over the

@@ -18,9 +18,28 @@
 # http://desk:4533 creates the admin; the phone logs in with it. State is in
 # /var/lib/navidrome (the database, rebuilt by a rescan if lost, except
 # playlists, favourites and play counts).
+#
+# Those three are why the database is backed up (Backup, below): Navidrome
+# writes a consistent copy of it every night, and the media backup takes the
+# copies offsite. To restore one: stop navidrome, copy the chosen
+# backups/navidrome_backup_<date>.db over /var/lib/navidrome/navidrome.db
+# (owner navidrome, and delete navidrome.db-wal and -shm beside it), start
+# navidrome. That is the whole database as of that night.
+#
+# Playlists are managed from a shell, and by an agent, with media-playlist
+# (pkgs/media-playlist, the media-playlist skill), a client like the others.
+# It logs in with the account in /etc/navidrome/login.env, written by hand
+# (README, "desk (once)"): two lines, NAVIDROME_USER=… and
+# NAVIDROME_PASSWORD=…. The media group reads it (hosts/desk/media-group.nix),
+# so whoever asks, it is that one account's playlists that change. Anyone in
+# the group can read the password, and so log in to Navidrome as that
+# account; it reaches nothing but Navidrome.
 
 { ... }:
 
+let
+  backups = "/var/lib/navidrome/backups";
+in
 {
   services.navidrome = {
     enable = true;
@@ -39,6 +58,14 @@
       # New imports appear without a manual rescan; the file watcher is the
       # default, this is the backstop.
       Scanner.Schedule = "@every 6h";
+      # A copy of the database each night, the last two weeks kept. Inside
+      # the state directory: the unit's sandbox lets Navidrome write nowhere
+      # else. Before midnight, so restic's daily run takes the new one.
+      Backup = {
+        Path = backups;
+        Schedule = "30 22 * * *";
+        Count = 14;
+      };
       EnableInsightsCollector = false;
     };
   };
@@ -51,8 +78,20 @@
     requires = [ "srv-media.mount" ];
   };
 
+  # Offsite with the media backup, as /srv/git is (hosts/desk/git.nix says
+  # why not a repository of its own). The copies, not the live database:
+  # restic reading a SQLite file mid-write can save a torn one.
+  services.restic.backups.media.paths = [ backups ];
+
   # beets creates it on the first import; the server should not wait for one.
   systemd.tmpfiles.rules = [
+    # Navidrome makes it at its first backup; restic, which fails on a path
+    # that is missing, may run before that.
+    "d ${backups} 0700 navidrome navidrome -"
+    # Traversable, so the media group can reach login.env. `z` fixes the
+    # file's owner and mode once it has been written.
+    "d /etc/navidrome 0755 root root -"
+    "z /etc/navidrome/login.env 0440 n8 media -"
     # 0775, not 0755: the group bits are the media group's ACL mask
     # (hosts/desk/media-group.nix), and `d` reapplies the mode on every
     # switch, so 0755 took the group's write away. Only the ACL's media

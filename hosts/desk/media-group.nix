@@ -11,7 +11,9 @@
 # and, read-only, the API keys media-fetch uses: slskd's (/etc/slskd/api.env)
 # and itch.io's (/etc/itch/api.env, written by hand: README.md), and the one
 # media-stage asks Kavita to scan with (/etc/kavita/api-key, by hand too:
-# hosts/desk/kavita.nix), each 0440 n8:media.
+# hosts/desk/kavita.nix), each 0440 n8:media. And the Navidrome account
+# media-playlist manages playlists with (/etc/navidrome/login.env, by hand:
+# hosts/desk/music.nix), the same mode.
 #
 # Owners stay what they were — each file is its creator's — and POSIX ACLs
 # give the group the rest: `g:media:rwX` on what is there, and a default ACL
