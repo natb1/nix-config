@@ -27,6 +27,7 @@
     ./music.nix
     ./jellyfin.nix
     ./kavita.nix
+    ./immich.nix
     ./soulseek.nix
     ./icloud.nix
     ./printing.nix

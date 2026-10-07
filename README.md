@@ -101,7 +101,13 @@ short name `desk` works everywhere through MagicDNS.
    Check: the next `media-stage apply` of books or RPGs ends with
    `Kavita: asked to rescan …`. Without the key, Kavita's folder watcher
    finds new files about six minutes later.
-5. **Soulseek (slskd):** write `/etc/slskd/credentials` (root, 0600) with
+5. **Photo server (Immich):** open `http://desk:2283`, create the admin, and
+   under Administration → External Libraries add `/srv/media/icloud` and
+   `/srv/media/flickr` as import paths, then scan
+   ([`hosts/desk/immich.nix`](hosts/desk/immich.nix)). Check: Flickr photos
+   tagged `Flickr/date estimated` sit in their estimated years, not on the
+   day of the scan.
+6. **Soulseek (slskd):** write `/etc/slskd/credentials` (root, 0600) with
    the Soulseek account and a web UI login, then `sudo systemctl restart
    slskd` ([`hosts/desk/soulseek.nix`](hosts/desk/soulseek.nix)):
    `SLSKD_SLSK_USERNAME`, `SLSKD_SLSK_PASSWORD`, `SLSKD_USERNAME`,
@@ -114,13 +120,13 @@ short name `desk` works everywhere through MagicDNS.
    `ITCH_API_KEY=<key>` to `/etc/itch/api.env` (a switch makes it 0440
    n8:media, [`hosts/desk/media-group.nix`](hosts/desk/media-group.nix)).
    Check: `media-fetch search unravel --kind rpg` lists an `itch.io` table.
-6. **iPhone over Bluetooth** (notifications and texts,
+7. **iPhone over Bluetooth** (notifications and texts,
    [`hosts/desk/iphone.nix`](hosts/desk/iphone.nix)):
    `tether --bt-status` should report MAP + PBAP + ANCS. Pair from
    `tether-gtk` (Devices) or `tether --bt-pair <phone address>`, and on the
    phone allow **Show Notifications** and **Sync Contacts**.
    `tether --bt-setup` names anything missing.
-7. The rest (Google Drive, iCloud Photos, the restic backup) have their own
+8. The rest (Google Drive, iCloud Photos, the restic backup) have their own
    steps in [State this repo does not manage](#state-this-repo-does-not-manage).
 
 The printer needs nothing: the queue is declared
@@ -152,6 +158,8 @@ shows `brother` enabled and default.
    `http://desk:8096`, and log in with the Jellyfin account from desk step 3.
 6. **Books:** `http://desk:5000` in a browser, the Kavita account from desk
    step 4.
+7. **Photos:** `http://desk:2283` in a browser, the Immich account from desk
+   step 5.
 
 ### iPhone (once)
 
@@ -169,14 +177,15 @@ shows `brother` enabled and default.
 4. **Music: Amperfy** from the App Store. Server `http://desk:4533`, the
    Navidrome account from desk step 2. Downloads play offline; CarPlay works.
    **Video:** **Jellyfin** from the App Store (free), server
-   `http://desk:8096`. **Books:** `http://desk:5000` in Safari (Add to Home
+   `http://desk:8096`. **Photos:** **Immich** from the App Store, server
+   `http://desk:2283`, the Immich account from desk step 5. **Books:** `http://desk:5000` in Safari (Add to Home
    Screen), or **Readest** from the App Store for offline reading (EPUB, PDF,
    CBZ): add the OPDS URL from Kavita's user settings as an OPDS catalog
    (`http://desk:5000/api/opds/<key>`), and under KOReader Sync the server
    `http://desk:5000/api/koreader/<key>`, the Kavita username, any password,
    checksum **File Content**. Sync carries positions only; books come from the
    catalog, one download at a time.
-5. **Notifications and texts on desk:** pair from desk (desk step 6); allow
+5. **Notifications and texts on desk:** pair from desk (desk step 7); allow
    **Show Notifications** and **Sync Contacts** when the phone asks. If
    notifications stop while texts still arrive, turn Bluetooth off and on
    **on the phone**; desk shows an alert when this happens.
@@ -375,6 +384,11 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   `/var/lib/kavita` (watched state and reading progress are lost with it).
   Kavita's login-signing key, `/etc/kavita/token-key`, is generated on first
   start; deleting it only logs everyone out.
+- `desk`'s Immich accounts and external libraries (`hosts/desk/immich.nix`):
+  the admin is created on the first visit to `http://desk:2283`, and the
+  libraries are added there. Thumbnails in `/var/lib/immich` are rebuilt by
+  a rescan; accounts, albums, faces and favourites are in the `immich`
+  PostgreSQL database and are lost with it.
 - `desk`'s key file for `media-stage`'s Kavita scans, `/etc/kavita/api-key`
   (0440 n8:media, one line; "desk (once, after its first switch)", step 4).
   Without it, new files wait for Kavita's folder watcher.
