@@ -286,6 +286,28 @@
               echo "checked: ${lib.concatStringsSep " " (lib.attrNames units)}"
               touch "$out"
             '';
+          # Zellij, as desk configures it. The shell integrations must stay
+          # off (modules/home/zellij.nix). `setup --check` exits 0 whatever it
+          # finds, but the config is loaded first, and a config.kdl that does
+          # not parse fails there.
+          zellij-config =
+            let
+              lib = nixpkgs.lib;
+              hm = self.nixosConfigurations.desk.config.home-manager.users.n8;
+              z = hm.programs.zellij;
+              on = builtins.filter (n: z.${n})
+                [ "enableZshIntegration" "enableBashIntegration" "enableFishIntegration" ];
+            in
+            pkgs.runCommand "zellij-config" { } ''
+              ${lib.optionalString (on != [ ]) ''
+                echo "zellij shell integrations are on: ${toString on}" >&2
+                exit 1
+              ''}
+              export HOME=$TMPDIR
+              ${z.package}/bin/zellij \
+                --config ${hm.xdg.configFile."zellij/config.kdl".source} setup --check
+              touch "$out"
+            '';
           niri-config =pkgs.runCommand "niri-config-valid" { } ''
             ${pkgs.niri}/bin/niri validate -c ${./hosts/desk/home/niri.kdl}
             touch "$out"
