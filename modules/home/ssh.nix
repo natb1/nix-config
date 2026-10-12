@@ -54,6 +54,17 @@
         IdentityFile = "~/.ssh/id_ed25519";
         IdentitiesOnly = true;
       };
+
+      # desk's zellij session (modules/home/zellij.nix): `ssh desk-term`
+      # attaches to `main`, creating it the first time. A separate name, so
+      # plain `ssh desk` stays a shell and scp, rsync and `ssh desk <command>`
+      # (media-stage) keep working; a RemoteCommand on `desk` would run in
+      # place of each of them. `desk` is the MagicDNS short name, tailnet-only.
+      "desk-term" = {
+        HostName = "desk";
+        RequestTTY = "yes";
+        RemoteCommand = "zellij attach --create main";
+      };
     };
   };
 

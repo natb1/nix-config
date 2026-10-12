@@ -154,6 +154,10 @@ shows `brother` enabled and default.
 4. **Music:** open **Feishin** (in `~/Applications/Home Manager Apps`), add
    the server `http://desk:4533`, and log in with the Navidrome account from
    desk step 2. The web player at `http://desk:4533` works too.
+5. **A shell on desk that outlasts the connection:** `ssh desk-term`
+   attaches to desk's zellij session `main`, creating it the first time
+   ([`modules/home/zellij.nix`](modules/home/zellij.nix)). `Ctrl+o d`
+   detaches and leaves the panes running. Plain `ssh desk` is still a shell.
 5. **Video:** open **Jellyfin Desktop** (beside Feishin), add the server
    `http://desk:8096`, and log in with the Jellyfin account from desk step 3.
 6. **Books:** `http://desk:5000` in a browser, the Kavita account from desk
