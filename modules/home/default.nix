@@ -52,7 +52,6 @@
 
   home.packages = [
     pkgs.jq
-    pkgs.google-cloud-sdk
     pkgs.pass
     pkgs.python3
   ] ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
