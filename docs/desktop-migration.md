@@ -567,7 +567,7 @@ the text was wrong about how the machine behaves.
 | Board revision on the PCB itself | [Firmware update](#firmware-update) | The box says 1.0. `dmidecode` cannot settle it — the board's SMBIOS *Version* reads `x.x` (2026-09-24). The silkscreen (near the bottom edge, "REV: 1.x") is authoritative; worth a glance before the *next* flash. F43c is already on and boots, so this is retrospective now |
 | Linux sees neither the fans nor the DIMM temperatures | [Fan control](#fan-control), [BIOS tuning](#bios-tuning) | Measured 2026-09-24. The board's ITE Super I/O reports **chip ID `0x8689`**, which mainline `it87` does not claim (`modprobe it87` → `No such device`), so no header RPM or PWM shows up in `sensors`. `spd5118` finds no DIMM sensors either. Two consequences: fan control stays firmware-only (already the plan, now forced), and BIOS tuning's "DIMMs under ~55 °C" has to be read from HWiNFO under bare-metal Windows. An OS-side curve would need the out-of-tree `it87` fork |
 | Total size of the media, across all five sources plus iCloud | Media storage, [Step 3](#step-3--bring-the-media-in), [Step 4](#step-4--iphone-photos-from-icloud) | Google Drive + Google Photos + the MacBook + a GCS bucket + Flickr + both iCloud Photos libraries (and the shared library's growth) must fit in ~730 GB after de-duplication — **together with the host-side Steam library**, which shares that volume. If they do not, the root/media split or the drive changes — measure before Phase 2 fixes the split |
-| GCS bucket: which videos have no internet source left | [Step 3](#step-3--bring-the-media-in) | The bucket is listed, not pulled, and the videos are re-downloaded from the internet (*decided 2026-09-25*: cheaper than GCS egress). Anything that has gone from the web is the exception, pulled from GCS by name — check the storage class before that, since Coldline/Archive add per-GB retrieval fees on top of egress |
+| ~~GCS bucket: which videos have no internet source left~~ | ~~[Step 3](#step-3--bring-the-media-in)~~ | **Closed 2026-10-14:** the bucket was deleted with its project after the listing was saved, so a video gone from the web is dropped. Was: the bucket is listed, not pulled, and the videos are re-downloaded from the internet (*decided 2026-09-25*: cheaper than GCS egress). Anything that has gone from the web is the exception, pulled from GCS by name — check the storage class before that, since Coldline/Archive add per-GB retrieval fees on top of egress |
 | Flickr export request | [Step 3](#step-3--bring-the-media-in) | Asynchronous — Flickr prepares the archive over hours to days. Request it early so it is ready by ingest; download links expire |
 | Google Takeout export request | [Step 3](#step-3--bring-the-media-in) | Same shape as Flickr, worse deadline: Takeout is prepared over hours to days and the **download links expire after 7 days**. Request it with *delivery to Google Drive* so it lands somewhere rclone can pull from unattended, instead of a browser download that must finish inside the window |
 | Google Photos library size and item count | [Step 3](#step-3--bring-the-media-in) | Read both off [photos.google.com](https://photos.google.com) before requesting the export — the count is the only verification Takeout admits, and it has to be recorded *before* the library changes under it |
@@ -3447,7 +3447,7 @@ out of GCS.
 | Google Drive | `rclone copy gdrive:<path> /srv/media/<dest> --progress` | Use the Drive remote configured for Phase 3's mount, not the mount itself — `copy` against the API is faster and resumable. Google-native Docs/Sheets are not media; exclude them |
 | Google Photos | **Google Takeout, not `rclone`** ([takeout.google.com](https://takeout.google.com)) → deselect everything, select *Google Photos*, delivery **to Google Drive**, `.tgz`, 50 GB parts. Then pull the parts with the Drive remote already configured above and unpack into `/srv/media/google-photos/` | Do **not** use `rclone`'s `google photos` backend for the archival copy. It can only see the library through the Photos Library API, which **strips GPS EXIF from every download** and re-encodes some originals — the loss is silent and it is not recoverable later. Takeout is the only route that yields the true originals. What it costs: each photo arrives with a **sidecar `.json`** holding the timestamp, GPS, description and album membership, and the metadata has to be merged back into the files (`exiftool`, or `google-photos-takeout-helper`) before the sidecars are worth less than the originals |
 | Google Drive shared drives `print` and `audio` | `rclone copy gdrive,team_drive=<id>: /srv/media/staging/<name>/ --progress`, the ID from `rclone backend drives gdrive:` | Shared drives, not folders — invisible to plain `gdrive:` and to `--drive-shared-with-me`. *2026-09-25:* `print` 182 files, 2.72 GiB; `audio` 800 files, 6.16 GiB. **Not gated on Step 2 or BIOS tuning:** they are copies, Drive keeps the originals until the sources are retired, and `rclone check` catches a corrupt copy |
-| GCS bucket | **List, then re-download from the internet — not `rclone copy`.** `gcloud auth login`, then `gcloud storage ls --long --recursive 'gs://<bucket>/**' > /srv/media/gcs/listing.txt`. Work down the listing, fetching each video from where it came from straight into `movies/` or `tv/` under [the layout below](#layout-on-the-share) | Listing is metadata only: a handful of Class A operations, no egress. The listing is the manifest — keep it, it is the only record of what the bucket held once it is retired. A video with no source left online is pulled by name (`gcloud storage cp gs://<bucket>/<object> <dest>`, then named to the layout), and only those pay egress |
+| GCS bucket | **List, then re-download from the internet — not `rclone copy`.** `gcloud auth login`, then `gcloud storage ls --long --recursive 'gs://<bucket>/**' > /srv/media/gcs/listing.txt`. Work down the listing, fetching each video from where it came from straight into `movies/` or `tv/` under [the layout below](#layout-on-the-share) | Listing is metadata only: a handful of Class A operations, no egress. The listing is the manifest — keep it, it is the only record of what the bucket held once it is retired. *2026-10-14:* the bucket is gone (its project was deleted), so a video with no source left online is dropped rather than pulled by name |
 | MacBook | From the Mac: `rsync -avh --progress ~/<path>/ n8@desk:/srv/media/<dest>/` over Tailscale | Or drag into the SMB share from Finder. `rsync` is resumable and prints what it skipped |
 | Flickr | Account settings → *Your Flickr data* → request the export; download the zip parts when Flickr emails; unzip into `/srv/media/flickr/` | Contains the **originals** plus separate JSON for titles, descriptions, albums and tags — keep the JSON alongside, it is the only copy of that metadata outside Flickr. Fallback if the export is unusable: `gallery-dl` against the account with an API key |
 
@@ -3458,7 +3458,7 @@ rclone check gdrive:<path>        /srv/media/<dest> --one-way   # size + hash
 rclone check gdrive,team_drive=<id>: /srv/media/staging/<name> --one-way   # print, audio
 # GCS: a re-downloaded video will not hash-match the bucket's copy (different
 # encode, container or muxing). Count instead — every object in listing.txt is
-# either on disk, pulled by name, or marked as deliberately dropped.
+# either on disk or marked as deliberately dropped.
 # Mac side: rerun the same rsync with --dry-run --checksum; it should list nothing.
 # Google Photos: no hashes, and `rclone check` against the Photos remote is
 # worse than useless — it compares Takeout's originals to the API's degraded
@@ -4150,11 +4150,15 @@ target: one moves, the other stops on the lock, nothing is overwritten.
       filed and `lint` is clean, so the procedure has been through one real
       batch first. Nothing is lost by waiting: the videos stay in the Mac's
       Downloads, and nothing there is deleted until they are filed
-- [ ] `gcloud auth login`; save the GCS listing to `/srv/media/gcs/listing.txt`
-      and check the storage class (`gcloud storage buckets describe`)
+- [x] `gcloud auth login`; save the GCS listing to `/srv/media/gcs/listing.txt`
+      and check the storage class (`gcloud storage buckets describe`).
+      *2026-10-14:* `gs://rml-media`, STANDARD, 1,659 objects, 146.86 GiB
+      (mostly `audio-backup-20251117-121224/`, 70 under `video/`). The
+      bucket's project (`chalanding`) was then deleted with the rest of the
+      legacy GCP projects, so nothing can be pulled by name any more
 - [ ] Re-download the listed videos from the internet into `movies/` and
-      `tv/`, named to [the layout](#layout-on-the-share); pull by name only
-      the ones with no source left; count against the listing
+      `tv/`, named to [the layout](#layout-on-the-share); a video with no
+      source left is dropped; count against the listing
 - [ ] [BIOS tuning](#bios-tuning) validated — memory proven stable before
       irreplaceable data passes through it
 - [ ] Ingest from Drive, Photos, the MacBook and Flickr into separate
