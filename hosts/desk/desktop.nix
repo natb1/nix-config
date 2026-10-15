@@ -80,9 +80,27 @@
     # "niri", and falls back to `basic` — which keeps saved passwords and
     # cookie keys on disk under a hard-coded key. That would quietly defeat
     # the secondary encryption this no-lock setup depends on.
-    (google-chrome.override {
-      commandLineArgs = "--password-store=gnome-libsecret";
-    })
+    #
+    # Vulkan, not GL: on GL, Chrome has twice faulted the iGPU (a gfxhub page
+    # fault from chrome:cs0), the ring hung and amdgpu reset the GPU, and niri
+    # aborts on a reset — the whole session gone (2026-09-28, 2026-10-15).
+    # ANGLE on Vulkan takes Chrome off that driver path. The RX 6600 XT is on
+    # amdgpu too and Vulkan would happily pick it, so MESA_VK_DEVICE_SELECT
+    # (the `!` hides every other device) keeps Chrome on the iGPU niri renders
+    # with — and, set on Chrome's wrapper only, leaves games their dGPU.
+    # Check it took: chrome://gpu, GL_RENDERER names Vulkan and the Raphael iGPU.
+    ((google-chrome.override {
+      commandLineArgs = lib.concatStringsSep " " [
+        "--password-store=gnome-libsecret"
+        "--use-angle=vulkan"
+        "--enable-features=VulkanFromANGLE,DefaultANGLEVulkan"
+      ];
+    }).overrideAttrs (old: {
+      postFixup = (old.postFixup or "") + ''
+        wrapProgram $out/bin/google-chrome-stable \
+          --set MESA_VK_DEVICE_SELECT '1002:164e!'
+      '';
+    }))
   ];
 
   # operator=n8 lets the panel's Tailscale tile (home/quickshell/Tailscale.qml)
