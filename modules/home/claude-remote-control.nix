@@ -5,6 +5,11 @@
 # per-user service — a systemd user unit on Linux, a launchd agent on macOS — so
 # the machine is always reachable from claude.ai/code and the Claude app, and
 # each session started there gets its own git worktree under .claude/worktrees/.
+#
+# More repos: services.claudeRemoteControl.extraDirectories maps a name to a
+# repo, and each gets its own server, claude-remote-control-<name>, configured
+# like the main one. One rc serves one folder, so it is one service per repo.
+# The main service keeps its unnamed unit so adding a repo never restarts it.
 # It replaces a `claude rc` left running in a terminal; stop any such terminal
 # first; while it runs, the service fails with "This folder is already served"
 # and retries.
@@ -26,15 +31,15 @@
 # --permission-mode auto: sessions spawned from claude.ai start in auto mode
 # rather than asking for each tool call; switch per session from the mode picker.
 #
-# Prerequisite, once per machine: the directory must already be trusted — run
+# Prerequisite, once per machine and repo: the directory must already be trusted — run
 # `claude` there interactively and accept the workspace trust dialog. Until then
 # rc exits with "Workspace not trusted" and the service keeps retrying.
 #
 # Logs: only what rc prints while starting up is kept. Those errors and
 # warnings go to stderr ("Workspace not trusted", "already served", other
 # registration failures, "Could not reuse the previous environment"), and
-# stderr goes to `journalctl --user -u claude-remote-control` on Linux and to
-# ~/Library/Logs/claude-remote-control.log on macOS. stdout is discarded: rc
+# stderr goes to `journalctl --user -u claude-remote-control[-<name>]` on Linux
+# and to ~/Library/Logs/claude-remote-control[-<name>].log on macOS. stdout is discarded: rc
 # redraws its status screen there about once a second even without a terminal,
 # some 2 MB an hour, which would crowd out the rest of the journal and grow the
 # Mac's log file, which nothing rotates, without bound. What rc reports once it
@@ -78,7 +83,13 @@
 }:
 
 let
-  inherit (config.services.claudeRemoteControl) directory;
+  cfg = config.services.claudeRemoteControl;
+
+  # Unit name → repo it serves.
+  servers =
+    { claude-remote-control = cfg.directory; }
+    // lib.mapAttrs' (name: dir: lib.nameValuePair "claude-remote-control-${name}" dir)
+      cfg.extraDirectories;
 
   # Stable anchors only — see the header. The per-user profile is where
   # useUserPackages puts claude and the rest of home.packages. No
@@ -109,49 +120,66 @@ let
   ];
 in
 {
-  options.services.claudeRemoteControl.directory = lib.mkOption {
-    type = lib.types.str;
-    default = "${config.home.homeDirectory}/natb1/nix-config";
-    description = "Git repo the rc server serves; worktree sessions branch from it.";
+  options.services.claudeRemoteControl = {
+    directory = lib.mkOption {
+      type = lib.types.str;
+      default = "${config.home.homeDirectory}/natb1/nix-config";
+      description = "Git repo the rc server serves; worktree sessions branch from it.";
+    };
+    extraDirectories = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = { ledger = "/srv/git/ledger"; };
+      description = "More git repos to serve, each by its own claude-remote-control-<name> server.";
+    };
   };
 
-  config.systemd.user.services.claude-remote-control = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-    Unit = {
-      Description = "Claude Code Remote Control server (worktree spawn mode)";
-    };
-    Service = {
-      Type = "simple";
-      WorkingDirectory = directory;
-      ExecStart = lib.escapeShellArgs args;
-      Environment = [ "PATH=${path}" ];
-      NoNewPrivileges = true;
-      # The status screen, and the runtime errors printed through it, are
-      # dropped; startup errors are kept — see the header. stderr is named
-      # because the user manager's default for it is to follow stdout.
-      StandardOutput = "null";
-      StandardError = "journal";
-      Restart = "always";
-      # rc exits after ~a minute on errors it reports (untrusted folder, folder
-      # already served); don't hammer it beyond that. It also exits at boot when
-      # it starts before DNS works ("getaddrinfo ENOTFOUND"): the user manager
-      # has no network-online.target to wait for, so this retry is what brings
-      # it up.
-      RestartSec = 10;
-    };
-    Install.WantedBy = [ "default.target" ];
-  };
+  config.systemd.user.services = lib.mkIf pkgs.stdenv.hostPlatform.isLinux (
+    lib.mapAttrs (name: directory: {
+      Unit = {
+        # The main unit's text is kept as it was: a change restarts it.
+        Description =
+          if name == "claude-remote-control" then
+            "Claude Code Remote Control server (worktree spawn mode)"
+          else
+            "Claude Code Remote Control server for ${directory} (worktree spawn mode)";
+      };
+      Service = {
+        Type = "simple";
+        WorkingDirectory = directory;
+        ExecStart = lib.escapeShellArgs args;
+        Environment = [ "PATH=${path}" ];
+        NoNewPrivileges = true;
+        # The status screen, and the runtime errors printed through it, are
+        # dropped; startup errors are kept — see the header. stderr is named
+        # because the user manager's default for it is to follow stdout.
+        StandardOutput = "null";
+        StandardError = "journal";
+        Restart = "always";
+        # rc exits after ~a minute on errors it reports (untrusted folder, folder
+        # already served); don't hammer it beyond that. It also exits at boot when
+        # it starts before DNS works ("getaddrinfo ENOTFOUND"): the user manager
+        # has no network-online.target to wait for, so this retry is what brings
+        # it up.
+        RestartSec = 10;
+      };
+      Install.WantedBy = [ "default.target" ];
+    }) servers
+  );
 
-  config.launchd.agents.claude-remote-control = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
-    enable = true;
-    config = {
-      ProgramArguments = args;
-      WorkingDirectory = directory;
-      EnvironmentVariables.PATH = path;
-      RunAtLoad = true;
-      KeepAlive = true;
-      ThrottleInterval = 10;
-      # No StandardOutPath, so launchd sends stdout to /dev/null — see the header.
-      StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/claude-remote-control.log";
-    };
-  };
+  config.launchd.agents = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin (
+    lib.mapAttrs (name: directory: {
+      enable = true;
+      config = {
+        ProgramArguments = args;
+        WorkingDirectory = directory;
+        EnvironmentVariables.PATH = path;
+        RunAtLoad = true;
+        KeepAlive = true;
+        ThrottleInterval = 10;
+        # No StandardOutPath, so launchd sends stdout to /dev/null — see the header.
+        StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/${name}.log";
+      };
+    }) servers
+  );
 }

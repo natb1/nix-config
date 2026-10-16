@@ -14,4 +14,12 @@
     ./desktop.nix
     ./media.nix
   ];
+
+  # rc servers for desk's private repos, beside the nix-config one
+  # (modules/home/claude-remote-control.nix). Each must be trusted once:
+  # `claude` in the repo, accept the dialog.
+  services.claudeRemoteControl.extraDirectories = {
+    ledger = "/srv/git/ledger";
+    archai = "/srv/git/archai";
+  };
 }
