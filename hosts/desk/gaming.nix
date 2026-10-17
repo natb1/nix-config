@@ -22,10 +22,28 @@ let
   # installer and runs it; every run after starts the launcher, and the games
   # install from there into the same prefix. GE-Proton comes from nixpkgs, so
   # umu downloads no Proton of its own and the flake bump updates it.
+  #
+  # It runs as a user service, battlenet.service, not under whatever started
+  # it: Battle.net's own cgroup, and its output in the journal, which keeps
+  # past sessions across boots — `journalctl --user -u battlenet`, `-b -1` for
+  # the boot before. Proton silences Wine and the D3D layers unless told
+  # otherwise; set here to errors and warnings, not PROTON_LOG's full trace
+  # (gigabytes per evening). WoW rewrites its Logs on every start, so each time
+  # the game exits its Logs and Errors are copied to
+  # ~/.local/state/battlenet/wow/<time>-<flavor>, the last 30 kept.
   battlenet = pkgs.writeShellApplication {
     name = "battlenet";
-    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux ];
+    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd ];
     text = ''
+      if [ -z "''${BATTLENET_UNIT:-}" ]; then
+        if systemctl --user is-active -q battlenet.service; then
+          echo "battlenet: already running (journalctl --user -fu battlenet)" >&2
+          exit 0
+        fi
+        exec systemd-run --user --quiet --collect --unit=battlenet \
+          --description=Battle.net --setenv=BATTLENET_UNIT=1 "$0" "$@"
+      fi
+
       # Unmounted, /srv/games is a directory on the root: a fresh install
       # there would fill the root, not find the games.
       if ! mountpoint -q /srv/games; then
@@ -35,10 +53,44 @@ let
       export WINEPREFIX=/srv/games/battlenet
       export PROTONPATH="${pkgs.proton-ge-bin.steamcompattool}"
       export GAMEID=umu-battlenet
+      export WINEDEBUG=+timestamp,fixme-all
+      export DXVK_LOG_LEVEL=warn DXVK_LOG_PATH=none
+      export VKD3D_DEBUG=err VKD3D_SHADER_DEBUG=none
       launcher="$WINEPREFIX/drive_c/Program Files (x86)/Battle.net/Battle.net Launcher.exe"
+      wow="$WINEPREFIX/drive_c/Program Files (x86)/World of Warcraft"
+      saved="''${XDG_STATE_HOME:-$HOME/.local/state}/battlenet/wow"
+
+      save_wow_logs() {
+        stamp=$(date +%F_%H%M%S)
+        for flavor in "$wow"/_*_; do
+          [ -d "$flavor/Logs" ] || continue
+          dest="$saved/$stamp$(basename "$flavor")"
+          mkdir -p "$dest"
+          cp -a "$flavor/Logs" "$dest/"
+          if [ -d "$flavor/Errors" ]; then cp -a "$flavor/Errors" "$dest/"; fi
+          echo "battlenet: WoW exited, logs saved to $dest"
+        done
+        find "$saved" -mindepth 1 -maxdepth 1 -type d | sort | head -n -30 \
+          | xargs -r -d '\n' rm -rf
+      }
 
       if [ -e "$launcher" ]; then
-        exec umu-run "$launcher" "$@"
+        # By process name: Wow.exe, WowClassic.exe, …
+        (
+          running=0
+          while sleep 5; do
+            if pgrep -u "$(id -u)" '^Wow[A-Za-z]*\.exe$' >/dev/null; then
+              running=1
+            elif [ "$running" = 1 ]; then
+              save_wow_logs || true
+              running=0
+            fi
+          done
+        ) &
+        watcher=$!
+        trap 'kill "$watcher" 2>/dev/null || true' EXIT
+        umu-run "$launcher" "$@"
+        exit
       fi
 
       # In the prefix, not /tmp: umu's sandbox has a /tmp of its own.
