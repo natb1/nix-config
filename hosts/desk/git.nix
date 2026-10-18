@@ -1,24 +1,23 @@
-# /srv/git: bare git repositories that live on desk and nowhere else.
+# /srv/git: git repositories that live on desk and nowhere else.
 #
-# For work that should not be on GitHub: the repository is the remote, and
-# the offsite copy is the restic backup (hosts/desk/media.nix), which takes
-# this directory along with /srv/media. A bare repository holds only what
-# was committed and pushed, so the backup never catches a working tree
-# half-edited.
+# For work that should not be on GitHub: the repositories have no remote,
+# and the offsite copy is the restic backup (hosts/desk/media.nix), which
+# takes this directory along with /srv/media. They are working trees, not
+# bare: Claude Remote Control serves them in place (hosts/desk/home), so the
+# backup takes whatever is on disk, uncommitted edits included.
 #
-# n8's alone: 0700, so no other account on desk reads it, and it is not on
-# either SMB share. It is reached as a path on desk and over SSH from the
-# tailnet:
+# 0700 n8, and on neither SMB share. Another account gets in only by an ACL
+# set by hand, as drlindsey's on the repositories it shares. It is reached as
+# a path on desk and over SSH from the tailnet:
 #
-#   git init --bare -b main /srv/git/<name>.git      # once, on desk
-#   git clone /srv/git/<name>.git                    # on desk
-#   git clone desk:/srv/git/<name>.git               # from the Mac
+#   git init -b main /srv/git/<name>                 # once, on desk
+#   git clone desk:/srv/git/<name>                   # from the Mac
 #
 # On the root filesystem, not under /srv/media: media-acl
 # (hosts/desk/media-group.nix) gives the media group everything under there.
 #
-# Not managed by this repo: the repositories themselves. Which ones exist,
-# and what they hold, is not this file's business.
+# Not managed by this repo: the repositories themselves and their ACLs.
+# Which ones exist, and what they hold, is not this file's business.
 
 { ... }:
 
