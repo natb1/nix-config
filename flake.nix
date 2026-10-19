@@ -245,7 +245,7 @@
               ''}
               touch "$out"
             '';
-          # desk's claude-remote-control units, for every user that has one.
+          # desk's claude-remote-control units, every user's and every repo's.
           # Sessions get no root (see the module's "No root from a session"):
           # NoNewPrivileges must be set and PATH must leave out
           # /run/wrappers/bin. A store path in PATH would change the
@@ -255,9 +255,12 @@
           claude-remote-control-unit =
             let
               lib = nixpkgs.lib;
-              units = lib.filterAttrs (_: s: s != null) (lib.mapAttrs
-                (_: u: u.systemd.user.services.claude-remote-control or null)
-                self.nixosConfigurations.desk.config.home-manager.users);
+              # "<user>/<unit>" for every claude-remote-control[-<name>] unit.
+              units = lib.concatMapAttrs (user: u:
+                lib.mapAttrs' (n: s: lib.nameValuePair "${user}/${n}" s)
+                  (lib.filterAttrs (n: _: lib.hasPrefix "claude-remote-control" n)
+                    u.systemd.user.services))
+                self.nixosConfigurations.desk.config.home-manager.users;
               problems = lib.concatLists (lib.mapAttrsToList (user: s:
                 let
                   env = lib.toList (s.Service.Environment or [ ]);
