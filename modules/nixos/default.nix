@@ -43,8 +43,9 @@ in
     home = "/home/${user}";
     extraGroups = [ "wheel" "docker" ];
     shell = pkgs.zsh;
-    # Keep the wezterm-mux-server user service alive across logins declaratively,
-    # replacing the imperative `loginctl enable-linger`.
+    # The user manager runs from boot, not from the first login, and outlives
+    # the last: user services (claude-remote-control on desk) need no one
+    # logged in. Replaces the imperative `loginctl enable-linger`.
     linger = true;
   };
 

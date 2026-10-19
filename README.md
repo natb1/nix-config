@@ -280,7 +280,7 @@ modules/darwin/    shared by every macOS host
 modules/home/      shared by every host, every platform
 tests/             module regression tests, exposed as flake checks
 .github/workflows/ the daily flake.lock bump
-scripts/           maintenance scripts (wezterm pin refresh)
+scripts/           install, bootstrap and one-off maintenance scripts
 docs/              migration plans and design notes
 ```
 
@@ -355,8 +355,8 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   Without it `nix flake update` is rate-limited, but nothing breaks.
 - SSH private keys. Only public keys live here
   (`modules/home/default.nix`).
-- The Windows-side WezTerm GUI install, and the `G:` Google Drive volume that
-  `hosts/wsl/mounts.nix` mounts — both depend on Windows-side software running.
+- The `G:` Google Drive volume that `hosts/wsl/mounts.nix` mounts — it depends
+  on Windows-side software running.
 - `desk`'s Google Drive credentials, which `hosts/desk/gdrive.nix` mounts at
   `/mnt/g`. Two pieces, and each is useless without the other:
   `~/.config/rclone/rclone.conf` (mode 600, **encrypted**: the `gdrive`
@@ -436,9 +436,8 @@ These are provisioned by hand and a clean rebuild will not recreate them:
 ## Naming
 
 The WSL host is `wsl`: that is `networking.hostName`, the Tailscale node name,
-what avahi publishes as `wsl.local`, and the wezterm mux domain the Windows GUI
-auto-connects to. Those move together.
+and what avahi publishes as `wsl.local`. Those move together.
 
 The Windows-registered WSL **distro** name is still `NixOS` — that is registered
 with Windows, not NixOS, so `wsl.exe -d NixOS` and the `//wsl$/NixOS/...` UNC
-paths in `modules/home/wezterm.nix` are unrelated to the hostname.
+paths are unrelated to the hostname.

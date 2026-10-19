@@ -1,8 +1,7 @@
 # Which Windows profile the WSL-only activation steps write into.
 #
-# copyWeztermToWindows (wezterm-windows-config.nix), installWeztermWindows
-# (wezterm-windows.nix) and installClaudeChromeBridge (claude-in-chrome.nix) all
-# write under C:\Users\<you>. This step resolves <you> once, ahead of all three,
+# installClaudeChromeBridge (claude-in-chrome.nix) writes under
+# C:\Users\<you>. This step resolves <you> once, ahead of any step that does,
 # so they cannot pick different profiles, and leaves it in WINDOWS_USER:
 # activation steps run in one shell, the way home-manager's own
 # checkFilesChanged hands changedFiles to onFilesChange. WINDOWS_USER stays

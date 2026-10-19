@@ -169,25 +169,15 @@
           (home {
             hostPlatform = "aarch64-darwin";
             homeDirectory = "/Users/n8";
-            extraModules = [ ./modules/home/claude-remote-control.nix ];
+            extraModules = [
+              ./hosts/mba/home.nix
+              ./modules/home/claude-remote-control.nix
+            ];
           })
-          # macOS uses modules/home/wezterm.nix as-is: it installs the pinned
-          # nightly (modules/home/wezterm-package.nix) as a real WezTerm.app and
-          # generates ~/.config/wezterm/wezterm.lua. Installing the pinned build
-          # here — rather than an out-of-Nix GUI — keeps this Mac's `wezterm
-          # connect` client in version lockstep with the desk and WSL mux
-          # servers, which are built from the same pin. The module's Linux-only
-          # mux service is guarded by pkgs.stdenv.hostPlatform.isLinux; the
-          # Windows-side pieces live in hosts/wsl/home and are not imported here.
         ];
       };
 
-      # The wezterm every host installs, rebuilt from the pinned nightly
-      # (modules/home/wezterm-pin.nix). Exposed so `nix build .#wezterm` can
-      # verify the pin and so scripts/sync-wezterm.sh can resolve the vendor
-      # hash against it.
       packages = forAllSystems ({ pkgs, ... }: {
-        wezterm = pkgs.callPackage ./modules/home/wezterm-package.nix { };
         # Media filing for /srv/media (docs/desktop-migration.md, "Layout on
         # the share"); `nix run .#media-stage -- --help`.
         media-stage = pkgs.callPackage ./pkgs/media-stage { };
@@ -200,18 +190,15 @@
       # Module regression tests. `nix flake check` is the gate before a switch.
       checks = forAllSystems ({ pkgs, ... }:
         let
-          weztermTests = pkgs.callPackage ./tests/wezterm.test.nix { };
           claudeDaemonTests = pkgs.callPackage ./tests/claude-daemon.test.nix { };
         in
         {
-          wezterm-test-suite = weztermTests.wezterm-test-suite;
           claude-daemon-test-suite = claudeDaemonTests.claude-daemon-test-suite;
           # Its unit and pipeline tests run in the build.
           media-stage = pkgs.callPackage ./pkgs/media-stage { };
           media-fetch = pkgs.callPackage ./pkgs/media-fetch { };
           media-playlist = pkgs.callPackage ./pkgs/media-playlist { };
         }
-        // weztermTests.wezterm-tests
         // claudeDaemonTests.claude-daemon-tests
         # desk's niri config, parsed by the niri that will read it. A typo in
         # the KDL is otherwise only found at the next tty1 login, where it is
