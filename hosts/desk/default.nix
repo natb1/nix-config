@@ -38,7 +38,6 @@
     ./rebuild-menu.nix
     ./focus-or-launch.nix
     ./drlindsey.nix
-    ./zellij-web.nix
   ];
 
   # Simultaneously the Tailscale node name, what avahi publishes (desk.local),

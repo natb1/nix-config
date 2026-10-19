@@ -158,11 +158,6 @@ shows `brother` enabled and default.
    attaches to desk's zellij session `main`, creating it the first time
    ([`modules/home/zellij.nix`](modules/home/zellij.nix)). `Ctrl+o d`
    detaches and leaves the panes running. Plain `ssh desk` is still a shell.
-   Or in a browser: `https://desk.<tailnet>.ts.net/main` is the same session
-   ([`hosts/desk/zellij-web.nix`](hosts/desk/zellij-web.nix)). Once per
-   tailnet, turn on HTTPS Certificates (admin console → DNS); once per
-   browser, log in with a token from `zellij web --create-token` on desk,
-   ticking *Remember me*.
 5. **Video:** open **Jellyfin Desktop** (beside Feishin), add the server
    `http://desk:8096`, and log in with the Jellyfin account from desk step 3.
 6. **Books:** `http://desk:5000` in a browser, the Kavita account from desk
