@@ -154,7 +154,8 @@ shows `brother` enabled and default.
 4. **Music:** open **Feishin** (in `~/Applications/Home Manager Apps`), add
    the server `http://desk:4533`, and log in with the Navidrome account from
    desk step 2. The web player at `http://desk:4533` works too.
-5. **A shell on desk that outlasts the connection:** `ssh desk-term`
+5. **A shell on desk that outlasts the connection:** in Ghostty (in
+   `~/Applications/Home Manager Apps`), `ssh desk-term`
    attaches to desk's zellij session `main`, creating it the first time
    ([`modules/home/zellij.nix`](modules/home/zellij.nix)). `Ctrl+o d`
    detaches and leaves the panes running. Plain `ssh desk` is still a shell.
