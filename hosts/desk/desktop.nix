@@ -17,6 +17,13 @@
   # need.
   programs.niri.enable = true;
 
+  # An OOM kill of anything in niri.service's cgroup — and Chrome, spawned
+  # from niri's binds, lives there — kills the session too under the default
+  # OOMPolicy=stop: systemd stops the whole unit. On 2026-10-17 a global OOM
+  # took one Chrome renderer and, with it, niri and every window. continue
+  # leaves the kernel's choice of victim at that one process.
+  systemd.user.services.niri.serviceConfig.OOMPolicy = "continue";
+
   # Autologin on tty1, and no screen lock anywhere. The security story is not
   # "the session is locked"; it is that anything sensitive sits behind its own
   # encryption — gnome-keyring below, holding Chrome's secrets under a

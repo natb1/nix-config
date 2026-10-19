@@ -65,6 +65,13 @@
                 mountpoint = "/srv/media";
                 mountOptions = [ "noatime" "nofail" "x-systemd.before=local-fs.target" ];
               };
+              # Battle.net's prefix (gaming.nix), too big for the root. Added
+              # after install, so disko never created it: gaming.nix's
+              # srv-games-subvolume does, before this mounts. Not backed up.
+              "/games" = {
+                mountpoint = "/srv/games";
+                mountOptions = [ "noatime" "nofail" "x-systemd.before=local-fs.target" ];
+              };
             };
           };
         };
