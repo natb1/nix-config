@@ -290,9 +290,12 @@
               touch "$out"
             '';
           # Zellij, as desk configures it. The shell integrations must stay
-          # off (modules/home/zellij.nix). `setup --check` exits 0 whatever it
-          # finds, but the config is loaded first, and a config.kdl that does
-          # not parse fails there.
+          # off (modules/home/zellij.nix). The browser client needs
+          # web_sharing on, and its unit must stop only the web server, not
+          # the sessions it opened (hosts/desk/zellij-web.nix); both fail
+          # silently. `setup --check` exits 0 whatever it finds, but the
+          # config is loaded first, and a config.kdl that does not parse
+          # fails there.
           zellij-config =
             let
               lib = nixpkgs.lib;
@@ -300,10 +303,17 @@
               z = hm.programs.zellij;
               on = builtins.filter (n: z.${n})
                 [ "enableZshIntegration" "enableBashIntegration" "enableFishIntegration" ];
+              problems =
+                lib.optional (on != [ ]) "shell integrations are on: ${toString on}"
+                ++ lib.optional ((z.settings.web_sharing or null) != "on")
+                  "web_sharing is not \"on\""
+                ++ lib.optional
+                  ((hm.systemd.user.services.zellij-web.Service.KillMode or null) != "process")
+                  "zellij-web's KillMode is not process";
             in
             pkgs.runCommand "zellij-config" { } ''
-              ${lib.optionalString (on != [ ]) ''
-                echo "zellij shell integrations are on: ${toString on}" >&2
+              ${lib.optionalString (problems != [ ]) ''
+                printf 'zellij: %s\n' ${lib.escapeShellArgs problems} >&2
                 exit 1
               ''}
               export HOME=$TMPDIR
