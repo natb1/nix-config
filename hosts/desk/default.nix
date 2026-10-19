@@ -40,9 +40,9 @@
     ./drlindsey.nix
   ];
 
-  # Simultaneously the Tailscale node name, what avahi publishes (desk.local),
-  # and the wezterm mux domain — per the README's rule those three move
-  # together, so change them together. This is a new Tailscale node, not a
+  # Both the Tailscale node name (MagicDNS's `desk`, which ssh.nix's desk-term
+  # and the Mac's share mounts use) and what avahi publishes (desk.local):
+  # change them together. This is a new Tailscale node, not a
   # rename of `wsl`.
   networking.hostName = "desk";
 

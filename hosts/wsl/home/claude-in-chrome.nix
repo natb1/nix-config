@@ -31,9 +31,8 @@ let
 
   # The distro the .bat enters. Chrome starts it with no WSL environment, so it
   # has to name one. This is the name the install is registered under on
-  # Windows, not the NixOS hostname (README "Naming", hosts/wsl/default.nix);
-  # modules/home/wezterm.nix and wezterm-windows-config.nix use the same
-  # literal. Detecting it instead cannot work here: activation runs in
+  # Windows, not the NixOS hostname (README "Naming", hosts/wsl/default.nix).
+  # Detecting it instead cannot work here: activation runs in
   # home-manager-<user>.service, whose environment never has WSL_DISTRO_NAME,
   # and the Windows default distro may be a different one.
   wslDistro = "NixOS";

@@ -9,7 +9,7 @@
 # guard the "symlink-only" and "no Environment" regressions, a store path in
 # PATH, and a unit that would let a background session use sudo.
 #
-# Follows tests/wezterm.test.nix's mock-eval convention: the module is called as
+# Mock-eval: the module is called as
 # a plain function against a mock config + mock pkgs. flake.nix builds `checks`
 # from plain nixpkgs.legacyPackages: no claude-code-nix overlay and no unfree
 # allowance. That nixpkgs does ship claude-code, but forcing pkgs.claude-code

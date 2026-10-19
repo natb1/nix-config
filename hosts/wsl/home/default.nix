@@ -13,8 +13,6 @@
 {
   imports = [
     ./claude-in-chrome.nix
-    ./wezterm-windows.nix
-    ./wezterm-windows-config.nix
     ./windows-user.nix
   ];
 }

@@ -41,8 +41,7 @@ in
 
   xdg.configFile."niri/config.kdl".source = ./niri.kdl;
 
-  # The desktop's terminal. WezTerm stays installed (modules/home/wezterm.nix)
-  # as the mux client for the WSL box; Ghostty is what opens locally. Its
+  # The desktop's terminal; the Mac has it too (hosts/mba/home.nix). Its
   # defaults — bundled JetBrains Mono with Nerd Font symbols — need no
   # settings. Which terminal is "the" terminal is decided once, system-side,
   # by xdg-terminal-exec (../desktop.nix); niri's Mod+Return and the
