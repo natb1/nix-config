@@ -31,11 +31,34 @@ let
   # (gigabytes per evening). WoW rewrites its Logs on every start, so each time
   # the game exits its Logs and Errors are copied to
   # ~/.local/state/battlenet/wow/<time>-<flavor>, the last 30 kept.
+  #
+  # `battlenet --account <label>` signs into one account of two (2026-10-20):
+  # Battle.net logs into the first of its SavedAccountNames when AutoLogin is
+  # on, so the launcher puts that account first and turns AutoLogin on before
+  # starting it, and restarts a Battle.net already running to switch. It needs
+  # each account signed in once with "Keep me logged in". The addresses are not
+  # in this repo: ~/.config/battlenet/accounts maps labels to them, one
+  # `<label> <email>` per line.
+  accounts = [ "1" "2" ];
   battlenet = pkgs.writeShellApplication {
     name = "battlenet";
-    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd ];
+    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd pkgs.jq pkgs.gawk ];
     text = ''
+      account=""
+      if [ "''${1:-}" = "--account" ]; then
+        account="''${2:?battlenet: --account needs a label}"
+        shift 2
+      fi
+
       if [ -z "''${BATTLENET_UNIT:-}" ]; then
+        if [ -n "$account" ]; then
+          # Battle.net rewrites its config on exit, so it is stopped before
+          # the config changes, not after.
+          systemctl --user stop battlenet.service 2>/dev/null || true
+          exec systemd-run --user --quiet --collect --unit=battlenet \
+            --description=Battle.net --setenv=BATTLENET_UNIT=1 \
+            --setenv=BATTLENET_ACCOUNT="$account" "$0" "$@"
+        fi
         if systemctl --user is-active -q battlenet.service; then
           echo "battlenet: already running (journalctl --user -fu battlenet)" >&2
           exit 0
@@ -59,6 +82,23 @@ let
       launcher="$WINEPREFIX/drive_c/Program Files (x86)/Battle.net/Battle.net Launcher.exe"
       wow="$WINEPREFIX/drive_c/Program Files (x86)/World of Warcraft"
       saved="''${XDG_STATE_HOME:-$HOME/.local/state}/battlenet/wow"
+      config="$WINEPREFIX/drive_c/users/steamuser/AppData/Roaming/Battle.net/Battle.net.config"
+
+      if [ -n "''${BATTLENET_ACCOUNT:-}" ]; then
+        accounts="''${XDG_CONFIG_HOME:-$HOME/.config}/battlenet/accounts"
+        email=$(awk -v l="$BATTLENET_ACCOUNT" '$1 == l { print $2; exit }' "$accounts" 2>/dev/null || true)
+        if [ -z "$email" ]; then
+          echo "battlenet: no account '$BATTLENET_ACCOUNT' in $accounts" >&2
+          exit 1
+        fi
+        jq --arg a "$email" '
+          .Client.SavedAccountNames = ([$a] + ((.Client.SavedAccountNames // "")
+            | split(",") | map(select(. != "" and ascii_downcase != ($a | ascii_downcase)))) | join(","))
+          | .Client.AutoLogin = "true"
+        ' "$config" > "$config.new"
+        mv "$config.new" "$config"
+        echo "battlenet: signing into account $BATTLENET_ACCOUNT"
+      fi
 
       save_wow_logs() {
         stamp=$(date +%F_%H%M%S)
@@ -151,5 +191,12 @@ in
       icon = "applications-games";
       categories = [ "Game" ];
     })
-  ];
+  ] ++ map (label: pkgs.makeDesktopItem {
+    name = "battlenet-${label}";
+    desktopName = "Battle.net (account ${label})";
+    comment = "Battle.net, signed into account ${label} (~/.config/battlenet/accounts)";
+    exec = "battlenet --account ${label}";
+    icon = "applications-games";
+    categories = [ "Game" ];
+  }) accounts;
 }
