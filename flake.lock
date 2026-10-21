@@ -164,7 +164,8 @@
         "home-manager": "home-manager",
         "nixos-wsl": "nixos-wsl",
         "nixpkgs": "nixpkgs",
-        "tether": "tether"
+        "tether": "tether",
+        "tsm-app-linux": "tsm-app-linux"
       }
     },
     "systems": {
@@ -200,6 +201,27 @@
         "owner": "zackb",
         "repo": "tether",
         "rev": "779b8a4d970f3aa34f105fc9a84d06f186670ec1",
+        "type": "github"
+      }
+    },
+    "tsm-app-linux": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790274020,
+        "narHash": "sha256-A2KS2agBqJHeM/kc4k0IwXil5gCrXIJx/tchrLEm0SE=",
+        "owner": "exceptionptr",
+        "repo": "tsm-app-linux",
+        "rev": "60ad454b7187c3d2f1e4df36352b2af0fade02a6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "exceptionptr",
+        "repo": "tsm-app-linux",
+        "rev": "60ad454b7187c3d2f1e4df36352b2af0fade02a6",
         "type": "github"
       }
     }

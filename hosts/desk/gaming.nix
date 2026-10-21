@@ -13,9 +13,27 @@
 # unfreePredicate. A second allowUnfreePredicate here would silently replace
 # that one (or be replaced by it), not add to it.
 
-{ pkgs, ... }:
+{ lib, pkgs, inputs, ... }:
 
 let
+  # TSM's price data: the TradeSkillMaster addon reads it from
+  # TradeSkillMaster_AppHelper/AppData.lua, which only the TSM Desktop App
+  # writes. This is the unofficial Linux port (flake.nix), a Qt window and a
+  # tray icon. It signs in to TSM with the account's password, kept in
+  # gnome-keyring, polls hourly, and installs and updates the TSM addons
+  # itself. Set by hand once, in its own window: the sign-in, the realms, and
+  # the WoW folder, /srv/games/battlenet/drive_c/Program Files (x86)/World of
+  # Warcraft, which it does not find on its own (~/.config/tsm-app, unmanaged).
+  #
+  # Its flake hands hatch-vcs the version as a top-level attribute, which
+  # nixpkgs' structuredAttrs no longer exports to the build (and env cannot
+  # carry a name the derivation already has), so the build exports it.
+  tsm-app = inputs.tsm-app-linux.packages.${pkgs.stdenv.hostPlatform.system}.tsm-app.overrideAttrs (old: {
+    preBuild = (old.preBuild or "") + ''
+      export SETUPTOOLS_SCM_PRETEND_VERSION=${old.version}
+    '';
+  });
+
   # Battle.net (WoW Classic and the rest of Blizzard's games) under Proton,
   # outside Steam: umu-launcher runs GE-Proton the way Steam would, in a prefix
   # of its own at /srv/games/battlenet. The first run downloads Blizzard's
@@ -31,11 +49,49 @@ let
   # (gigabytes per evening). WoW rewrites its Logs on every start, so each time
   # the game exits its Logs and Errors are copied to
   # ~/.local/state/battlenet/wow/<time>-<flavor>, the last 30 kept.
+  #
+  # `battlenet --account <label>` signs into one account of two (2026-10-20),
+  # restarting a Battle.net already running to switch. Battle.net remembers
+  # one sign-in, and swapping only its token (the registry's UnifiedAuth key)
+  # was not enough: it then deleted the token on start, "because
+  # !m_lastEmailUsed.empty()", from state it keeps somewhere else (2026-10-21).
+  # So each account has all of Battle.net's own user state, and the prefix
+  # holds one account's at a time, as if it were the only one: AppData's
+  # Roaming/Battle.net and Local/Battle.net, and the registry's Blizzard
+  # Entertainment\Battle.net keys. The games, in Program Files and ProgramData,
+  # are shared. Before Battle.net starts, the state in the prefix is moved to
+  # $WINEPREFIX/accounts/<label> for the label last launched (`current` there)
+  # and the chosen account's moved back, or, for an account with none yet, a
+  # config naming only its address, which brings up the sign-in page with it
+  # filled in. The swap happens at start, not exit, as Wine writes the
+  # registry only once the prefix shuts down. Plain `battlenet` swaps nothing,
+  # so an account changed in Battle.net itself is put away under the wrong
+  # label. The addresses are not in this repo: ~/.config/battlenet/accounts
+  # maps labels to them, one `<label> <email>` per line.
+  # Label (the --account argument and the file names) and the name Mod+D shows.
+  accounts = {
+    nate = "Nate";
+    lindsey = "Lindsey";
+  };
   battlenet = pkgs.writeShellApplication {
     name = "battlenet";
-    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd ];
+    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd pkgs.jq pkgs.gawk ];
     text = ''
+      account=""
+      if [ "''${1:-}" = "--account" ]; then
+        account="''${2:?battlenet: --account needs a label}"
+        shift 2
+      fi
+
       if [ -z "''${BATTLENET_UNIT:-}" ]; then
+        if [ -n "$account" ]; then
+          # Battle.net rewrites its config on exit, so it is stopped before
+          # the config changes, not after.
+          systemctl --user stop battlenet.service 2>/dev/null || true
+          exec systemd-run --user --quiet --collect --unit=battlenet \
+            --description=Battle.net --setenv=BATTLENET_UNIT=1 \
+            --setenv=BATTLENET_ACCOUNT="$account" "$0" "$@"
+        fi
         if systemctl --user is-active -q battlenet.service; then
           echo "battlenet: already running (journalctl --user -fu battlenet)" >&2
           exit 0
@@ -60,6 +116,60 @@ let
       wow="$WINEPREFIX/drive_c/Program Files (x86)/World of Warcraft"
       saved="''${XDG_STATE_HOME:-$HOME/.local/state}/battlenet/wow"
 
+      if [ -n "''${BATTLENET_ACCOUNT:-}" ]; then
+        accounts="''${XDG_CONFIG_HOME:-$HOME/.config}/battlenet/accounts"
+        email=$(awk -v l="$BATTLENET_ACCOUNT" '$1 == l { print $2; exit }' "$accounts" 2>/dev/null || true)
+        if [ -z "$email" ]; then
+          echo "battlenet: no account '$BATTLENET_ACCOUNT' in $accounts" >&2
+          exit 1
+        fi
+        appdata="$WINEPREFIX/drive_c/users/steamuser/AppData"
+        reg="$WINEPREFIX/user.reg"
+        store="$WINEPREFIX/accounts"
+        # Battle.net's registry sections: each header line to the blank line
+        # after it.
+        # shellcheck disable=SC2016 # awk's $0, not the shell's
+        bnet_keys='
+          /^\[/ { in_bnet = index($0, "Blizzard Entertainment") && index($0, "Battle.net") }
+          in_bnet && $0 == "" { in_bnet = 0; if (keep) print; next }
+          (in_bnet && keep) || (!in_bnet && drop)
+        '
+        mkdir -p "$store"
+        current=$(cat "$store/current" 2>/dev/null || true)
+        if [ "$current" != "$BATTLENET_ACCOUNT" ]; then
+          cp -a "$reg" "$store/user.reg.bak"
+          if [ -n "$current" ]; then
+            rm -rf "''${store:?}/$current"
+            mkdir -p "$store/$current"
+            for d in Roaming Local; do
+              if [ -d "$appdata/$d/Battle.net" ]; then
+                mv "$appdata/$d/Battle.net" "$store/$current/$d"
+              fi
+            done
+            awk -v keep=1 "$bnet_keys" "$reg" > "$store/$current/battlenet.reg"
+          fi
+          rm -rf "$appdata/Roaming/Battle.net" "$appdata/Local/Battle.net"
+          awk -v drop=1 "$bnet_keys" "$reg" > "$reg.new"
+          next_="$store/$BATTLENET_ACCOUNT"
+          if [ -d "$next_" ]; then
+            for d in Roaming Local; do
+              if [ -d "$next_/$d" ]; then mv "$next_/$d" "$appdata/$d/Battle.net"; fi
+            done
+            if [ -s "$next_/battlenet.reg" ]; then
+              cat "$next_/battlenet.reg" >> "$reg.new"
+            fi
+            rm -rf "$next_"
+          else
+            mkdir -p "$appdata/Roaming/Battle.net"
+            jq -n --arg a "$email" '{Client: {SavedAccountNames: $a, RememberAccountName: "true", AutoLogin: "true"}}' \
+              > "$appdata/Roaming/Battle.net/Battle.net.config"
+          fi
+          mv "$reg.new" "$reg"
+          echo "$BATTLENET_ACCOUNT" > "$store/current"
+        fi
+        echo "battlenet: signing into account $BATTLENET_ACCOUNT"
+      fi
+
       save_wow_logs() {
         stamp=$(date +%F_%H%M%S)
         for flavor in "$wow"/_*_; do
@@ -75,6 +185,11 @@ let
       }
 
       if [ -e "$launcher" ]; then
+        # The TSM app beside the launcher, in the same unit, so it stops when
+        # Battle.net does. Unless one is already open from the app menu.
+        if ! pgrep -u "$(id -u)" -f '/bin/\.?tsm-app' >/dev/null; then
+          ${pkgs.lib.getExe tsm-app} &
+        fi
         # By process name: Wow.exe, WowClassic.exe, …
         (
           running=0
@@ -140,16 +255,18 @@ in
     '';
   };
 
+  # Mod+D lists the accounts (the Quickshell launcher reads desktop entries);
+  # plain `battlenet` stays on the command line.
   environment.systemPackages = [
     battlenet
-    # Mod+D lists it (the Quickshell launcher reads desktop entries).
-    (pkgs.makeDesktopItem {
-      name = "battlenet";
-      desktopName = "Battle.net";
-      comment = "Blizzard's launcher (WoW Classic) under Proton";
-      exec = "battlenet";
-      icon = "applications-games";
-      categories = [ "Game" ];
-    })
-  ];
+    # Its desktop entry, for opening it without Battle.net.
+    tsm-app
+  ] ++ lib.mapAttrsToList (label: name: pkgs.makeDesktopItem {
+    name = "battlenet-${label}";
+    desktopName = "Battle.net (${name})";
+    comment = "Battle.net, signed into ${name}'s account";
+    exec = "battlenet --account ${label}";
+    icon = "applications-games";
+    categories = [ "Game" ];
+  }) accounts;
 }
