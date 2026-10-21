@@ -113,6 +113,22 @@ let
 in
 {
   hardware.cpu.amd.ryzen-smu.enable = true;
+  # nixpkgs now signs every module with kmodigest, and the module tree wants
+  # a <module>.ko.cer beside each external one (2026-10-21). ryzen-smu
+  # installs its .ko by hand, so it is signed here the way Kbuild's
+  # modules_install would have. Drop this once nixpkgs' ryzen-smu does it.
+  boot.kernelPackages = pkgs.linuxPackages.extend (
+    _: super: {
+      ryzen-smu = super.ryzen-smu.overrideAttrs (old: {
+        postInstall = (old.postInstall or "") + ''
+          ko=$out/lib/modules/${super.kernel.modDirVersion}/kernel/drivers/ryzen_smu/ryzen_smu.ko
+          chmod u+w "$ko"
+          ${pkgs.lib.getExe pkgs.buildPackages.kmodigest} "$ko"
+          chmod a-w "$ko"
+        '';
+      });
+    }
+  );
 
   environment.systemPackages = [ eco ];
 
