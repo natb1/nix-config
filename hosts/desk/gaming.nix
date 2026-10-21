@@ -51,20 +51,23 @@ let
   # ~/.local/state/battlenet/wow/<time>-<flavor>, the last 30 kept.
   #
   # `battlenet --account <label>` signs into one account of two (2026-10-20),
-  # restarting a Battle.net already running to switch. Battle.net keeps one
-  # "Keep me logged in" token, the registry's Battle.net\UnifiedAuth key, and
-  # signs into whichever account it belongs to, whatever SavedAccountNames
-  # says (found 2026-10-21). So each account keeps its own copy in
-  # ~/.local/state/battlenet/auth/<label>.reg: before Battle.net starts, the
-  # token in the registry is put away under the label last launched (`current`
-  # beside it) and the chosen account's copy put back, or none, which brings up
-  # the sign-in page. The swap happens at start, not exit, as Wine writes the
-  # registry only once the prefix shuts down. Plain `battlenet` leaves the
-  # token alone, so an account changed in Battle.net itself is put away under
-  # the wrong label. The chosen address also goes first in SavedAccountNames,
-  # which fills in the sign-in page. The addresses are not in this repo:
-  # ~/.config/battlenet/accounts maps labels to them, one `<label> <email>`
-  # per line.
+  # restarting a Battle.net already running to switch. Battle.net remembers
+  # one sign-in, and swapping only its token (the registry's UnifiedAuth key)
+  # was not enough: it then deleted the token on start, "because
+  # !m_lastEmailUsed.empty()", from state it keeps somewhere else (2026-10-21).
+  # So each account has all of Battle.net's own user state, and the prefix
+  # holds one account's at a time, as if it were the only one: AppData's
+  # Roaming/Battle.net and Local/Battle.net, and the registry's Blizzard
+  # Entertainment\Battle.net keys. The games, in Program Files and ProgramData,
+  # are shared. Before Battle.net starts, the state in the prefix is moved to
+  # $WINEPREFIX/accounts/<label> for the label last launched (`current` there)
+  # and the chosen account's moved back, or, for an account with none yet, a
+  # config naming only its address, which brings up the sign-in page with it
+  # filled in. The swap happens at start, not exit, as Wine writes the
+  # registry only once the prefix shuts down. Plain `battlenet` swaps nothing,
+  # so an account changed in Battle.net itself is put away under the wrong
+  # label. The addresses are not in this repo: ~/.config/battlenet/accounts
+  # maps labels to them, one `<label> <email>` per line.
   # Label (the --account argument and the file names) and the name Mod+D shows.
   accounts = {
     nate = "Nate";
@@ -112,7 +115,6 @@ let
       launcher="$WINEPREFIX/drive_c/Program Files (x86)/Battle.net/Battle.net Launcher.exe"
       wow="$WINEPREFIX/drive_c/Program Files (x86)/World of Warcraft"
       saved="''${XDG_STATE_HOME:-$HOME/.local/state}/battlenet/wow"
-      config="$WINEPREFIX/drive_c/users/steamuser/AppData/Roaming/Battle.net/Battle.net.config"
 
       if [ -n "''${BATTLENET_ACCOUNT:-}" ]; then
         accounts="''${XDG_CONFIG_HOME:-$HOME/.config}/battlenet/accounts"
@@ -121,36 +123,49 @@ let
           echo "battlenet: no account '$BATTLENET_ACCOUNT' in $accounts" >&2
           exit 1
         fi
-        jq --arg a "$email" '
-          .Client.SavedAccountNames = ([$a] + ((.Client.SavedAccountNames // "")
-            | split(",") | map(select(. != "" and ascii_downcase != ($a | ascii_downcase)))) | join(","))
-          | .Client.AutoLogin = "true"
-        ' "$config" > "$config.new"
-        mv "$config.new" "$config"
-
-        auth="''${XDG_STATE_HOME:-$HOME/.local/state}/battlenet/auth"
-        mkdir -p "$auth"
-        chmod 700 "$auth"
+        appdata="$WINEPREFIX/drive_c/users/steamuser/AppData"
         reg="$WINEPREFIX/user.reg"
-        # The UnifiedAuth section: its header line to the blank line after.
+        store="$WINEPREFIX/accounts"
+        # Battle.net's registry sections: each header line to the blank line
+        # after it.
         # shellcheck disable=SC2016 # awk's $0, not the shell's
-        unified='
-          /^\[/ { in_auth = index($0, "Battle.net") && index($0, "UnifiedAuth]") }
-          in_auth && $0 == "" { in_auth = 0; if (drop) next }
-          (in_auth && keep) || (!in_auth && drop)
+        bnet_keys='
+          /^\[/ { in_bnet = index($0, "Blizzard Entertainment") && index($0, "Battle.net") }
+          in_bnet && $0 == "" { in_bnet = 0; if (keep) print; next }
+          (in_bnet && keep) || (!in_bnet && drop)
         '
-        current=$(cat "$auth/current" 2>/dev/null || true)
+        mkdir -p "$store"
+        current=$(cat "$store/current" 2>/dev/null || true)
         if [ "$current" != "$BATTLENET_ACCOUNT" ]; then
-          cp -a "$reg" "$auth/user.reg.bak"
+          cp -a "$reg" "$store/user.reg.bak"
           if [ -n "$current" ]; then
-            awk -v keep=1 "$unified" "$reg" > "$auth/$current.reg"
+            rm -rf "''${store:?}/$current"
+            mkdir -p "$store/$current"
+            for d in Roaming Local; do
+              if [ -d "$appdata/$d/Battle.net" ]; then
+                mv "$appdata/$d/Battle.net" "$store/$current/$d"
+              fi
+            done
+            awk -v keep=1 "$bnet_keys" "$reg" > "$store/$current/battlenet.reg"
           fi
-          awk -v drop=1 "$unified" "$reg" > "$reg.new"
-          if [ -s "$auth/$BATTLENET_ACCOUNT.reg" ]; then
-            { cat "$auth/$BATTLENET_ACCOUNT.reg"; echo; } >> "$reg.new"
+          rm -rf "$appdata/Roaming/Battle.net" "$appdata/Local/Battle.net"
+          awk -v drop=1 "$bnet_keys" "$reg" > "$reg.new"
+          next_="$store/$BATTLENET_ACCOUNT"
+          if [ -d "$next_" ]; then
+            for d in Roaming Local; do
+              if [ -d "$next_/$d" ]; then mv "$next_/$d" "$appdata/$d/Battle.net"; fi
+            done
+            if [ -s "$next_/battlenet.reg" ]; then
+              cat "$next_/battlenet.reg" >> "$reg.new"
+            fi
+            rm -rf "$next_"
+          else
+            mkdir -p "$appdata/Roaming/Battle.net"
+            jq -n --arg a "$email" '{Client: {SavedAccountNames: $a, RememberAccountName: "true", AutoLogin: "true"}}' \
+              > "$appdata/Roaming/Battle.net/Battle.net.config"
           fi
           mv "$reg.new" "$reg"
-          echo "$BATTLENET_ACCOUNT" > "$auth/current"
+          echo "$BATTLENET_ACCOUNT" > "$store/current"
         fi
         echo "battlenet: signing into account $BATTLENET_ACCOUNT"
       fi
