@@ -13,7 +13,7 @@
 # unfreePredicate. A second allowUnfreePredicate here would silently replace
 # that one (or be replaced by it), not add to it.
 
-{ pkgs, inputs, ... }:
+{ lib, pkgs, inputs, ... }:
 
 let
   # TSM's price data: the TradeSkillMaster addon reads it from
@@ -50,14 +50,26 @@ let
   # the game exits its Logs and Errors are copied to
   # ~/.local/state/battlenet/wow/<time>-<flavor>, the last 30 kept.
   #
-  # `battlenet --account <label>` signs into one account of two (2026-10-20):
-  # Battle.net logs into the first of its SavedAccountNames when AutoLogin is
-  # on, so the launcher puts that account first and turns AutoLogin on before
-  # starting it, and restarts a Battle.net already running to switch. It needs
-  # each account signed in once with "Keep me logged in". The addresses are not
-  # in this repo: ~/.config/battlenet/accounts maps labels to them, one
-  # `<label> <email>` per line.
-  accounts = [ "1" "2" ];
+  # `battlenet --account <label>` signs into one account of two (2026-10-20),
+  # restarting a Battle.net already running to switch. Battle.net keeps one
+  # "Keep me logged in" token, the registry's Battle.net\UnifiedAuth key, and
+  # signs into whichever account it belongs to, whatever SavedAccountNames
+  # says (found 2026-10-21). So each account keeps its own copy in
+  # ~/.local/state/battlenet/auth/<label>.reg: before Battle.net starts, the
+  # token in the registry is put away under the label last launched (`current`
+  # beside it) and the chosen account's copy put back, or none, which brings up
+  # the sign-in page. The swap happens at start, not exit, as Wine writes the
+  # registry only once the prefix shuts down. Plain `battlenet` leaves the
+  # token alone, so an account changed in Battle.net itself is put away under
+  # the wrong label. The chosen address also goes first in SavedAccountNames,
+  # which fills in the sign-in page. The addresses are not in this repo:
+  # ~/.config/battlenet/accounts maps labels to them, one `<label> <email>`
+  # per line.
+  # Label (the --account argument and the file names) and the name Mod+D shows.
+  accounts = {
+    nate = "Nate";
+    lindsey = "Lindsey";
+  };
   battlenet = pkgs.writeShellApplication {
     name = "battlenet";
     runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd pkgs.jq pkgs.gawk ];
@@ -115,6 +127,31 @@ let
           | .Client.AutoLogin = "true"
         ' "$config" > "$config.new"
         mv "$config.new" "$config"
+
+        auth="''${XDG_STATE_HOME:-$HOME/.local/state}/battlenet/auth"
+        mkdir -p "$auth"
+        chmod 700 "$auth"
+        reg="$WINEPREFIX/user.reg"
+        # The UnifiedAuth section: its header line to the blank line after.
+        # shellcheck disable=SC2016 # awk's $0, not the shell's
+        unified='
+          /^\[/ { in_auth = index($0, "Battle.net") && index($0, "UnifiedAuth]") }
+          in_auth && $0 == "" { in_auth = 0; if (drop) next }
+          (in_auth && keep) || (!in_auth && drop)
+        '
+        current=$(cat "$auth/current" 2>/dev/null || true)
+        if [ "$current" != "$BATTLENET_ACCOUNT" ]; then
+          cp -a "$reg" "$auth/user.reg.bak"
+          if [ -n "$current" ]; then
+            awk -v keep=1 "$unified" "$reg" > "$auth/$current.reg"
+          fi
+          awk -v drop=1 "$unified" "$reg" > "$reg.new"
+          if [ -s "$auth/$BATTLENET_ACCOUNT.reg" ]; then
+            { cat "$auth/$BATTLENET_ACCOUNT.reg"; echo; } >> "$reg.new"
+          fi
+          mv "$reg.new" "$reg"
+          echo "$BATTLENET_ACCOUNT" > "$auth/current"
+        fi
         echo "battlenet: signing into account $BATTLENET_ACCOUNT"
       fi
 
@@ -203,23 +240,16 @@ in
     '';
   };
 
+  # Mod+D lists the accounts (the Quickshell launcher reads desktop entries);
+  # plain `battlenet` stays on the command line.
   environment.systemPackages = [
     battlenet
     # Its desktop entry, for opening it without Battle.net.
     tsm-app
-    # Mod+D lists it (the Quickshell launcher reads desktop entries).
-    (pkgs.makeDesktopItem {
-      name = "battlenet";
-      desktopName = "Battle.net";
-      comment = "Blizzard's launcher (WoW Classic) under Proton";
-      exec = "battlenet";
-      icon = "applications-games";
-      categories = [ "Game" ];
-    })
-  ] ++ map (label: pkgs.makeDesktopItem {
+  ] ++ lib.mapAttrsToList (label: name: pkgs.makeDesktopItem {
     name = "battlenet-${label}";
-    desktopName = "Battle.net (account ${label})";
-    comment = "Battle.net, signed into account ${label} (~/.config/battlenet/accounts)";
+    desktopName = "Battle.net (${name})";
+    comment = "Battle.net, signed into ${name}'s account";
     exec = "battlenet --account ${label}";
     icon = "applications-games";
     categories = [ "Game" ];
