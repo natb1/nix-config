@@ -13,9 +13,27 @@
 # unfreePredicate. A second allowUnfreePredicate here would silently replace
 # that one (or be replaced by it), not add to it.
 
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
 
 let
+  # TSM's price data: the TradeSkillMaster addon reads it from
+  # TradeSkillMaster_AppHelper/AppData.lua, which only the TSM Desktop App
+  # writes. This is the unofficial Linux port (flake.nix), a Qt window and a
+  # tray icon. It signs in to TSM with the account's password, kept in
+  # gnome-keyring, polls hourly, and installs and updates the TSM addons
+  # itself. Set by hand once, in its own window: the sign-in, the realms, and
+  # the WoW folder, /srv/games/battlenet/drive_c/Program Files (x86)/World of
+  # Warcraft, which it does not find on its own (~/.config/tsm-app, unmanaged).
+  #
+  # Its flake hands hatch-vcs the version as a top-level attribute, which
+  # nixpkgs' structuredAttrs no longer exports to the build (and env cannot
+  # carry a name the derivation already has), so the build exports it.
+  tsm-app = inputs.tsm-app-linux.packages.${pkgs.stdenv.hostPlatform.system}.tsm-app.overrideAttrs (old: {
+    preBuild = (old.preBuild or "") + ''
+      export SETUPTOOLS_SCM_PRETEND_VERSION=${old.version}
+    '';
+  });
+
   # Battle.net (WoW Classic and the rest of Blizzard's games) under Proton,
   # outside Steam: umu-launcher runs GE-Proton the way Steam would, in a prefix
   # of its own at /srv/games/battlenet. The first run downloads Blizzard's
@@ -115,6 +133,11 @@ let
       }
 
       if [ -e "$launcher" ]; then
+        # The TSM app beside the launcher, in the same unit, so it stops when
+        # Battle.net does. Unless one is already open from the app menu.
+        if ! pgrep -u "$(id -u)" -f '/bin/\.?tsm-app' >/dev/null; then
+          ${pkgs.lib.getExe tsm-app} &
+        fi
         # By process name: Wow.exe, WowClassic.exe, …
         (
           running=0
@@ -182,6 +205,8 @@ in
 
   environment.systemPackages = [
     battlenet
+    # Its desktop entry, for opening it without Battle.net.
+    tsm-app
     # Mod+D lists it (the Quickshell launcher reads desktop entries).
     (pkgs.makeDesktopItem {
       name = "battlenet";

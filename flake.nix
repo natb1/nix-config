@@ -42,6 +42,14 @@
       url = "github:zackb/tether/779b8a4d970f3aa34f105fc9a84d06f186670ec1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # TSM's price data for WoW (hosts/desk/gaming.nix): an unofficial Linux
+    # port of the TSM Desktop App. Pinned to the rev that was read before it
+    # was given the TSM password (2026-10-21), so a bump is a deliberate edit
+    # and a fresh read, not something the daily `nix flake update` does.
+    tsm-app-linux = {
+      url = "github:exceptionptr/tsm-app-linux/60ad454b7187c3d2f1e4df36352b2af0fade02a6";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, home-manager, claude-code-nix, darwin, nixos-wsl, ... }:
