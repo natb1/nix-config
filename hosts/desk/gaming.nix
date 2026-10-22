@@ -190,14 +190,16 @@ let
         if ! pgrep -u "$(id -u)" -f '/bin/\.?tsm-app' >/dev/null; then
           ${pkgs.lib.getExe tsm-app} &
         fi
-        # By process name: Wow.exe, WowClassic.exe, …
+        # By process name, any case: Wow.exe, WoWClassic.exe, …
         (
           running=0
           while sleep 5; do
-            if pgrep -u "$(id -u)" '^Wow[A-Za-z]*\.exe$' >/dev/null; then
+            if pgrep -i -u "$(id -u)" '^wow[a-z]*\.exe$' >/dev/null; then
               running=1
             elif [ "$running" = 1 ]; then
               save_wow_logs || true
+              # Auctionator's scans, saved on the way out (tsm-history.nix).
+              systemctl --user start --no-block auctionator-history.service || true
               running=0
             fi
           done
