@@ -201,7 +201,7 @@ in
   #
   # - No mDNS announcement: stop avahi publishing *application* services on
   #   desk. That is only Tether here — CUPS browsing is off and Samba has no
-  #   mDNS — and desk.local itself (publish.addresses) is unaffected.
+  #   mDNS — and desk.local itself (publish-addresses) is unaffected.
   # - No port 5134 on the tailnet, which is otherwise open. Dropped in the
   #   raw table, not refused in nixos-fw: tailscaled hooks its own ts-input
   #   chain in at the top of INPUT, and it accepts everything on tailscale0
@@ -210,7 +210,7 @@ in
   #   REJECT is not allowed there. Deleted before it is inserted, since
   #   firewall-start rebuilds nixos-fw but leaves raw as it finds it. Wi-Fi
   #   never had the port.
-  services.avahi.publish.userServices = lib.mkForce false;
+  services.avahi.settings.publish.disable-user-service-publishing = lib.mkForce true;
   networking.firewall.extraCommands = ''
     ip46tables -t raw -D PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP 2>/dev/null || true
     ip46tables -t raw -I PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP

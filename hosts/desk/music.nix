@@ -47,6 +47,11 @@ in
       MusicFolder = "/srv/media/music";
       Address = "0.0.0.0";
       Port = 4533;
+      # No plugins here. nixpkgs turns plugin support on by default with its
+      # folder in the package (share/plugins), which exists only when
+      # withPlugins adds some; without, Navidrome tries to create it in the
+      # store and exits (navidrome 0.64.2, 2026-10-27).
+      Plugins.Enabled = false;
       # Albums as beets filed them, with nothing to set: Navidrome's default
       # PID.Album keys an album on its MusicBrainz album id first, which
       # groups the discs of a set and keeps two releases of one title apart.
