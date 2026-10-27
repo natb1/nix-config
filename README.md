@@ -106,7 +106,9 @@ short name `desk` works everywhere through MagicDNS.
    `/srv/media/flickr` as import paths, then scan
    ([`hosts/desk/immich.nix`](hosts/desk/immich.nix)). Check: Flickr photos
    tagged `Flickr/date estimated` sit in their estimated years, not on the
-   day of the scan.
+   day of the scan. Then, for the phones' backup: an account per person,
+   partner sharing both ways, the storage template on, and the database
+   backup left on ([Step 6](docs/desktop-migration.md#step-6--from-icloud-photos-to-the-immich-app)).
 6. **Soulseek (slskd):** write `/etc/slskd/credentials` (root, 0600) with
    the Soulseek account and a web UI login, then `sudo systemctl restart
    slskd` ([`hosts/desk/soulseek.nix`](hosts/desk/soulseek.nix)):
@@ -183,7 +185,11 @@ shows `brother` enabled and default.
    Navidrome account from desk step 2. Downloads play offline; CarPlay works.
    **Video:** **Jellyfin** from the App Store (free), server
    `http://desk:8096`. **Photos:** **Immich** from the App Store, server
-   `http://desk:2283`, the Immich account from desk step 5. **Books:** `http://desk:5000` in Safari (Add to Home
+   `http://desk:2283`, the phone owner's Immich account from desk step 5.
+   It is also the phone's photo backup: Backup → *Recents*, Background
+   Backup on, Background App Refresh on, and Tailscale's *VPN On Demand* on
+   so it can reach desk; the first upload in the foreground, on the charger
+   ([Step 6](docs/desktop-migration.md#step-6--from-icloud-photos-to-the-immich-app)). **Books:** `http://desk:5000` in Safari (Add to Home
    Screen), or **Readest** from the App Store for offline reading (EPUB, PDF,
    CBZ): add the OPDS URL from Kavita's user settings as an OPDS catalog
    (`http://desk:5000/api/opds/<key>`), and under KOReader Sync the server
@@ -389,11 +395,14 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   `/var/lib/kavita` (watched state and reading progress are lost with it).
   Kavita's login-signing key, `/etc/kavita/token-key`, is generated on first
   start; deleting it only logs everyone out.
-- `desk`'s Immich accounts and external libraries (`hosts/desk/immich.nix`):
-  the admin is created on the first visit to `http://desk:2283`, and the
-  libraries are added there. Thumbnails in `/var/lib/immich` are rebuilt by
-  a rescan; accounts, albums, faces and favourites are in the `immich`
-  PostgreSQL database and are lost with it.
+- `desk`'s Immich accounts, external libraries and settings
+  (`hosts/desk/immich.nix`): the admin is created on the first visit to
+  `http://desk:2283`, and the libraries are added there. The phones' uploads
+  are in `/srv/media/immich` (immich's, 0700), backed up by restic with its
+  nightly database dump in `backups/`; its `thumbs/` and `encoded-video/` are
+  rebuilt by a rescan. Accounts, albums, faces, favourites and which upload
+  is whose are in the `immich` PostgreSQL database: restored from that dump,
+  or lost with it.
 - `desk`'s key file for `media-stage`'s Kavita scans, `/etc/kavita/api-key`
   (0440 n8:media, one line; "desk (once, after its first switch)", step 4).
   Without it, new files wait for Kavita's folder watcher.
