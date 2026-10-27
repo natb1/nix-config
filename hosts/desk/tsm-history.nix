@@ -17,7 +17,7 @@
 { pkgs, ... }:
 
 let
-  wow = "/srv/games/battlenet/drive_c/Program Files (x86)/World of Warcraft";
+  wow = "/srv/games/wow";
   appData = "${wow}/_classic_era_/Interface/AddOns/TradeSkillMaster_AppHelper/AppData.lua";
 
   tsm-history = pkgs.writers.writePython3Bin "tsm-history" {

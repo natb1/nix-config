@@ -6,8 +6,8 @@
 # It runs under xwayland-satellite (desktop.nix), and its tray icon shows in
 # the Quickshell panel (Mod+Shift+N) while it runs.
 #
-# Battle.net's prefix is on /srv/games instead (2026-10-16): WoW Forever wants
-# 128 GB, more than the root has free.
+# Battle.net's prefixes and WoW are on /srv/games instead (2026-10-16): WoW
+# Forever wants 128 GB, more than the root has free.
 #
 # Unfree: steam and steam-unwrapped are allowed by name in flake.nix's
 # unfreePredicate. A second allowUnfreePredicate here would silently replace
@@ -22,8 +22,8 @@ let
   # tray icon. It signs in to TSM with the account's password, kept in
   # gnome-keyring, polls hourly, and installs and updates the TSM addons
   # itself. Set by hand once, in its own window: the sign-in, the realms, and
-  # the WoW folder, /srv/games/battlenet/drive_c/Program Files (x86)/World of
-  # Warcraft, which it does not find on its own (~/.config/tsm-app, unmanaged).
+  # the WoW folder, /srv/games/wow, which it does not find on its own
+  # (~/.config/tsm-app, unmanaged).
   #
   # Its flake hands hatch-vcs the version as a top-level attribute, which
   # nixpkgs' structuredAttrs no longer exports to the build (and env cannot
@@ -35,40 +35,46 @@ let
   });
 
   # Battle.net (WoW Classic and the rest of Blizzard's games) under Proton,
-  # outside Steam: umu-launcher runs GE-Proton the way Steam would, in a prefix
-  # of its own at /srv/games/battlenet. The first run downloads Blizzard's
-  # installer and runs it; every run after starts the launcher, and the games
-  # install from there into the same prefix. GE-Proton comes from nixpkgs, so
-  # umu downloads no Proton of its own and the flake bump updates it.
+  # outside Steam: umu-launcher runs GE-Proton the way Steam would. The first
+  # run downloads Blizzard's installer and runs it; every run after starts the
+  # launcher, and the games install from there. GE-Proton comes from nixpkgs,
+  # so umu downloads no Proton of its own and the flake bump updates it.
   #
-  # It runs as a user service, battlenet.service, not under whatever started
-  # it: Battle.net's own cgroup, and its output in the journal, which keeps
-  # past sessions across boots — `journalctl --user -u battlenet`, `-b -1` for
-  # the boot before. Proton silences Wine and the D3D layers unless told
+  # One Battle.net per account, so both can play at once — multiboxing
+  # (2026-10-27). `battlenet --account <label>` runs that account's in a
+  # prefix of its own, /srv/games/battlenet-<label>, as the user service
+  # battlenet-<label>.service. Battle.net remembers one sign-in per prefix,
+  # and one prefix runs one Battle.net, so a prefix each is what lets two run
+  # side by side; it replaces swapping one prefix's Battle.net state between
+  # accounts (2026-10-20 to 2026-10-27), which had to stop Battle.net, and the
+  # games with it, to switch. Battle.net's local ports are random, so two do
+  # not collide.
+  #
+  # The games are shared, not installed twice: WoW is /srv/games/wow, and each
+  # prefix's Program Files (x86)/World of Warcraft links to it, so Battle.net
+  # sees it where it installed it. The link is made before Proton creates a
+  # new prefix, and a new prefix's Battle.net does not know the game is there
+  # until told: "Locate the game" in it, with no WoW running. Both Battle.nets
+  # update the one folder, so after a patch let one finish before starting
+  # the other. WTF/Config.wtf (window size and position, the last account) is
+  # shared too, as on Windows.
+  #
+  # A new prefix starts with Battle.net's config naming only the account's
+  # address, which brings up the sign-in page with it filled in. The addresses
+  # are not in this repo: ~/.config/battlenet/accounts maps labels to them,
+  # one `<label> <email>` per line.
+  #
+  # Each runs as its own user service, not under whatever started it:
+  # Battle.net's own cgroup, and its output in the journal, which keeps past
+  # sessions across boots — `journalctl --user -u battlenet-<label>`, `-b -1`
+  # for the boot before. Proton silences Wine and the D3D layers unless told
   # otherwise; set here to errors and warnings, not PROTON_LOG's full trace
   # (gigabytes per evening). WoW rewrites its Logs on every start, so each time
-  # the game exits its Logs and Errors are copied to
-  # ~/.local/state/battlenet/wow/<time>-<flavor>, the last 30 kept.
+  # an account's game exits its Logs and Errors are copied to
+  # ~/.local/state/battlenet/wow/<time>-<label><flavor>, the last 30 kept.
   #
-  # `battlenet --account <label>` signs into one account of two (2026-10-20),
-  # restarting a Battle.net already running to switch. Battle.net remembers
-  # one sign-in, and swapping only its token (the registry's UnifiedAuth key)
-  # was not enough: it then deleted the token on start, "because
-  # !m_lastEmailUsed.empty()", from state it keeps somewhere else (2026-10-21).
-  # So each account has all of Battle.net's own user state, and the prefix
-  # holds one account's at a time, as if it were the only one: AppData's
-  # Roaming/Battle.net and Local/Battle.net, and the registry's Blizzard
-  # Entertainment\Battle.net keys. The games, in Program Files and ProgramData,
-  # are shared. Before Battle.net starts, the state in the prefix is moved to
-  # $WINEPREFIX/accounts/<label> for the label last launched (`current` there)
-  # and the chosen account's moved back, or, for an account with none yet, a
-  # config naming only its address, which brings up the sign-in page with it
-  # filled in. The swap happens at start, not exit, as Wine writes the
-  # registry only once the prefix shuts down. Plain `battlenet` swaps nothing,
-  # so an account changed in Battle.net itself is put away under the wrong
-  # label. The addresses are not in this repo: ~/.config/battlenet/accounts
-  # maps labels to them, one `<label> <email>` per line.
-  # Label (the --account argument and the file names) and the name Mod+D shows.
+  # Label (the --account argument and the prefix and unit names) and the name
+  # Mod+D shows.
   accounts = {
     nate = "Nate";
     lindsey = "Lindsey";
@@ -77,27 +83,22 @@ let
     name = "battlenet";
     runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd pkgs.jq pkgs.gawk ];
     text = ''
-      account=""
-      if [ "''${1:-}" = "--account" ]; then
-        account="''${2:?battlenet: --account needs a label}"
-        shift 2
+      if [ "''${1:-}" != "--account" ] || [ -z "''${2:-}" ]; then
+        echo "usage: battlenet --account <label> [launcher arguments]" >&2
+        exit 2
       fi
+      account=$2
+      shift 2
+      unit="battlenet-$account"
 
       if [ -z "''${BATTLENET_UNIT:-}" ]; then
-        if [ -n "$account" ]; then
-          # Battle.net rewrites its config on exit, so it is stopped before
-          # the config changes, not after.
-          systemctl --user stop battlenet.service 2>/dev/null || true
-          exec systemd-run --user --quiet --collect --unit=battlenet \
-            --description=Battle.net --setenv=BATTLENET_UNIT=1 \
-            --setenv=BATTLENET_ACCOUNT="$account" "$0" "$@"
-        fi
-        if systemctl --user is-active -q battlenet.service; then
-          echo "battlenet: already running (journalctl --user -fu battlenet)" >&2
+        if systemctl --user is-active -q "$unit.service"; then
+          echo "battlenet: $account already running (journalctl --user -fu $unit)" >&2
           exit 0
         fi
-        exec systemd-run --user --quiet --collect --unit=battlenet \
-          --description=Battle.net --setenv=BATTLENET_UNIT=1 "$0" "$@"
+        exec systemd-run --user --quiet --collect --unit="$unit" \
+          --description="Battle.net ($account)" --setenv=BATTLENET_UNIT=1 \
+          "$0" --account "$account" "$@"
       fi
 
       # Unmounted, /srv/games is a directory on the root: a fresh install
@@ -106,75 +107,45 @@ let
         echo "battlenet: /srv/games is not mounted" >&2
         exit 1
       fi
-      export WINEPREFIX=/srv/games/battlenet
+      export WINEPREFIX="/srv/games/battlenet-$account"
       export PROTONPATH="${pkgs.proton-ge-bin.steamcompattool}"
       export GAMEID=umu-battlenet
       export WINEDEBUG=+timestamp,fixme-all
       export DXVK_LOG_LEVEL=warn DXVK_LOG_PATH=none
       export VKD3D_DEBUG=err VKD3D_SHADER_DEBUG=none
       launcher="$WINEPREFIX/drive_c/Program Files (x86)/Battle.net/Battle.net Launcher.exe"
+      wow_shared=/srv/games/wow
       wow="$WINEPREFIX/drive_c/Program Files (x86)/World of Warcraft"
+      config="$WINEPREFIX/drive_c/users/steamuser/AppData/Roaming/Battle.net/Battle.net.config"
       saved="''${XDG_STATE_HOME:-$HOME/.local/state}/battlenet/wow"
 
-      if [ -n "''${BATTLENET_ACCOUNT:-}" ]; then
-        accounts="''${XDG_CONFIG_HOME:-$HOME/.config}/battlenet/accounts"
-        email=$(awk -v l="$BATTLENET_ACCOUNT" '$1 == l { print $2; exit }' "$accounts" 2>/dev/null || true)
-        if [ -z "$email" ]; then
-          echo "battlenet: no account '$BATTLENET_ACCOUNT' in $accounts" >&2
+      mkdir -p "$wow_shared"
+      if [ ! -L "$wow" ]; then
+        if [ -e "$wow" ]; then
+          echo "battlenet: $wow is not a link to $wow_shared" >&2
           exit 1
         fi
-        appdata="$WINEPREFIX/drive_c/users/steamuser/AppData"
-        reg="$WINEPREFIX/user.reg"
-        store="$WINEPREFIX/accounts"
-        # Battle.net's registry sections: each header line to the blank line
-        # after it.
-        # shellcheck disable=SC2016 # awk's $0, not the shell's
-        bnet_keys='
-          /^\[/ { in_bnet = index($0, "Blizzard Entertainment") && index($0, "Battle.net") }
-          in_bnet && $0 == "" { in_bnet = 0; if (keep) print; next }
-          (in_bnet && keep) || (!in_bnet && drop)
-        '
-        mkdir -p "$store"
-        current=$(cat "$store/current" 2>/dev/null || true)
-        if [ "$current" != "$BATTLENET_ACCOUNT" ]; then
-          cp -a "$reg" "$store/user.reg.bak"
-          if [ -n "$current" ]; then
-            rm -rf "''${store:?}/$current"
-            mkdir -p "$store/$current"
-            for d in Roaming Local; do
-              if [ -d "$appdata/$d/Battle.net" ]; then
-                mv "$appdata/$d/Battle.net" "$store/$current/$d"
-              fi
-            done
-            awk -v keep=1 "$bnet_keys" "$reg" > "$store/$current/battlenet.reg"
-          fi
-          rm -rf "$appdata/Roaming/Battle.net" "$appdata/Local/Battle.net"
-          awk -v drop=1 "$bnet_keys" "$reg" > "$reg.new"
-          next_="$store/$BATTLENET_ACCOUNT"
-          if [ -d "$next_" ]; then
-            for d in Roaming Local; do
-              if [ -d "$next_/$d" ]; then mv "$next_/$d" "$appdata/$d/Battle.net"; fi
-            done
-            if [ -s "$next_/battlenet.reg" ]; then
-              cat "$next_/battlenet.reg" >> "$reg.new"
-            fi
-            rm -rf "$next_"
-          else
-            mkdir -p "$appdata/Roaming/Battle.net"
-            jq -n --arg a "$email" '{Client: {SavedAccountNames: $a, RememberAccountName: "true", AutoLogin: "true"}}' \
-              > "$appdata/Roaming/Battle.net/Battle.net.config"
-          fi
-          mv "$reg.new" "$reg"
-          echo "$BATTLENET_ACCOUNT" > "$store/current"
+        mkdir -p "$(dirname "$wow")"
+        ln -s "$wow_shared" "$wow"
+      fi
+
+      if [ ! -e "$config" ]; then
+        accounts="''${XDG_CONFIG_HOME:-$HOME/.config}/battlenet/accounts"
+        email=$(awk -v l="$account" '$1 == l { print $2; exit }' "$accounts" 2>/dev/null || true)
+        if [ -z "$email" ]; then
+          echo "battlenet: no account '$account' in $accounts" >&2
+          exit 1
         fi
-        echo "battlenet: signing into account $BATTLENET_ACCOUNT"
+        mkdir -p "$(dirname "$config")"
+        jq -n --arg a "$email" '{Client: {SavedAccountNames: $a, RememberAccountName: "true", AutoLogin: "true"}}' \
+          > "$config"
       fi
 
       save_wow_logs() {
         stamp=$(date +%F_%H%M%S)
         for flavor in "$wow"/_*_; do
           [ -d "$flavor/Logs" ] || continue
-          dest="$saved/$stamp$(basename "$flavor")"
+          dest="$saved/$stamp-$account$(basename "$flavor")"
           mkdir -p "$dest"
           cp -a "$flavor/Logs" "$dest/"
           if [ -d "$flavor/Errors" ]; then cp -a "$flavor/Errors" "$dest/"; fi
@@ -186,15 +157,18 @@ let
 
       if [ -e "$launcher" ]; then
         # The TSM app beside the launcher, in the same unit, so it stops when
-        # Battle.net does. Unless one is already open from the app menu.
+        # this Battle.net does. Unless one is already open, from the app menu
+        # or the other account's.
         if ! pgrep -u "$(id -u)" -f '/bin/\.?tsm-app' >/dev/null; then
           ${pkgs.lib.getExe tsm-app} &
         fi
-        # By process name, any case: Wow.exe, WoWClassic.exe, …
+        # By process name, any case, Wow.exe, WoWClassic.exe, …, in this
+        # unit's cgroup only: the other account's game is not this one's.
+        cgroup=$(sed -n 's/^0:://p' /proc/self/cgroup)
         (
           running=0
           while sleep 5; do
-            if pgrep -i -u "$(id -u)" '^wow[a-z]*\.exe$' >/dev/null; then
+            if pgrep -i --cgroup "$cgroup" '^wow[a-z]*\.exe$' >/dev/null; then
               running=1
             elif [ "$running" = 1 ]; then
               save_wow_logs || true
@@ -258,7 +232,7 @@ in
   };
 
   # Mod+D lists the accounts (the Quickshell launcher reads desktop entries);
-  # plain `battlenet` stays on the command line.
+  # the same `battlenet --account <label>` works from a terminal.
   environment.systemPackages = [
     battlenet
     # Its desktop entry, for opening it without Battle.net.
