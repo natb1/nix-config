@@ -216,7 +216,14 @@ in
     # which is backed up. And media-stage moving a file mid-run makes restic
     # exit 3 (snapshot saved, a file unreadable), a failure to systemd — the
     # 2026-09-26 false alarm.
-    exclude = [ "/srv/media/staging" ];
+    exclude = [
+      "/srv/media/staging"
+      # Immich's previews and playback encodes, rebuilt from the originals
+      # by a rescan (hosts/desk/immich.nix). Its upload/, library/ and
+      # backups/ (the database dumps) are kept.
+      "/srv/media/immich/thumbs"
+      "/srv/media/immich/encoded-video"
+    ];
     repository = "rclone:";
     passwordFile = "/etc/restic/media.password";
     extraOptions = [

@@ -3106,6 +3106,9 @@ A fourth, [Step 4](#step-4--iphone-photos-from-icloud), added 2026-09-25, covers
 two iPhones: a one-time copy of each personal iCloud library, then an ongoing copy
 of a shared one. A fifth, [Step 5](#step-5--clear-icloud-storage-automatically),
 comes last of all: once the backup is trusted, iCloud is trimmed to recent photos.
+A sixth, [Step 6](#step-6--from-icloud-photos-to-the-immich-app), added
+2026-10-27, replaces Step 5: the phones back up to Immich instead, and iCloud
+Photos is switched off.
 
 **Where the media is today** (2026-09-21): spread across five places —
 **Google Drive**, **Google Photos**, **the MacBook's internal storage**, a **GCS
@@ -4434,6 +4437,10 @@ up to the date recorded above.
 
 ### Step 5 — clear iCloud storage automatically
 
+*Superseded 2026-10-27 by [Step 6](#step-6--from-icloud-photos-to-the-immich-app),
+before any of it was built: with iCloud Photos off there is nothing to trim.
+Kept for its reasoning, and in case Step 6 is abandoned.*
+
 Added 2026-09-25. **Goal: iCloud holds only recent photos, and `/srv/media`
 plus Hetzner holds everything.** The daily `shared` run gets a second job:
 after downloading, it deletes from iCloud whatever is older than
@@ -4526,6 +4533,196 @@ defence is Apple's, not ours. The quota is freed once they leave it.
       Recently Deleted holds only items older than the window, and every one
       of them is in `/srv/media/icloud/shared/` and in the latest restic
       snapshot
+
+### Step 6 — from iCloud Photos to the Immich app
+
+Added 2026-10-27. **Goal: each phone backs up to Immich on desk, iCloud
+Photos is switched off on both, and `icloudpd` retires.** This replaces
+[Step 5](#step-5--clear-icloud-storage-automatically): once iCloud no longer
+holds the library there is nothing to trim, and the gated delete pass is
+never built.
+
+**Why.** Step 4's design exists to work around iCloud: a session that lapses
+every couple of months and needs n8's phone for a 2FA code, a Shared Library
+whose Camera button has to stay on, and a quota someone pays for. The Immich
+app uploads straight from each phone's camera roll to desk, one account per
+person, with no third party in between.
+
+**What it gives up, and what replaces it.**
+
+| | iCloud Photos + icloudpd (today) | Immich app (after) |
+| --- | --- | --- |
+| Copies of a new photo | Phone, iCloud, desk (daily), Hetzner | Phone, desk (when the app runs), Hetzner |
+| What makes it run | Apple, always; icloudpd's daily timer | iOS's background scheduling of the app, and **Tailscale connected** on the phone (desk is tailnet-only) |
+| When it silently stops | The 2FA session lapses (the pop-up says so) | The app is not opened for a long while, Background App Refresh is off, Low Power Mode, Tailscale off. Nothing on desk notices yet |
+| Old photos on the phone | Whatever iCloud's *Optimize* keeps | Only what fits: every original stays on the phone once iCloud Photos is off. Older years can be deleted from the phone, since Immich (and its app) shows them |
+| Seeing each other's photos | The Shared Library | Immich **partner sharing**, both ways, shown in each timeline |
+
+The one real loss is a window with no second copy: a photo taken out of
+reach of the tailnet is only on the phone until the app next uploads. The
+app's background runs are up to iOS, more frequent the more the app is
+opened, so a weekly glance at it is the habit that closes the window. An
+alert for "no upload from this account in N days" (a timer on desk reading
+Immich's API) is an [optional follow-up](#optional-follow-ups).
+
+#### On desk: the media location moves to the bulk SSD
+
+*Landed 2026-10-27, in [`hosts/desk/immich.nix`](../hosts/desk/immich.nix).*
+Uploads go into Immich's media location, which was the NixOS default,
+`/var/lib/immich` on the root disk, outside restic. It is now
+`/srv/media/immich`:
+
+- **Backed up by Step 2.** restic's `/srv/media` snapshot covers `upload/`,
+  `library/` and `backups/` (Immich's nightly `pg_dumpall`, so the albums,
+  faces and the record of whose photo is whose go offsite too). `thumbs/` and
+  `encoded-video/` are rebuilt from the originals and are excluded.
+- **Immich's alone.** `immich:immich`, 0700, no ACLs. `media-acl` skips it,
+  and the server strips anything inherited before each start, because a
+  default ACL from `/srv/media` would override Immich's `UMask`. These are
+  the household's personal photos: not the media group's, not visible over
+  the SMB share.
+- **Space.** Both personal libraries were 4.6 GB at the backfill
+  (2026-09-26); two phones add a few GB a year. The bulk SSD had 124 GB free
+  on 2026-10-27.
+
+Immich since 1.136 detects a moved media location and rewrites the paths in
+its database itself, so the move is stop, copy, switch. Once, on desk:
+
+```sh
+sudo systemctl stop immich-server immich-machine-learning
+sudo mkdir /srv/media/immich
+sudo cp -a /var/lib/immich/. /srv/media/immich/
+rebuild                                   # starts Immich on the new location
+journalctl -u immich-server -b | grep -i 'media location'
+```
+
+Check: the web UI's thumbnails and the Flickr and iCloud libraries are all
+there, and Administration → Jobs shows nothing missing. A week later,
+`sudo rm -rf /var/lib/immich/*` (the directory itself stays: the module's
+`StateDirectory`). If it goes wrong, revert the commit, `rebuild`, and the
+old copy is still in place.
+
+#### In Immich's web UI (`http://desk:2283`, as the admin)
+
+1. **An account per person.** Administration → Users → create Lindsey's.
+   Each phone backs up to its owner's account, and Immich's duplicate check
+   (a checksum per account) skips what that account already has.
+2. **Partner sharing, both ways.** Each user: Account Settings → Partner
+   Sharing → add the other, then turn on *Show in timeline*.
+3. **Storage template on.** Administration → Settings → Storage Template,
+   for example `{{y}}/{{MM}}/{{dd}}/{{filename}}`. It files each upload under
+   `library/<user>/` by date instead of leaving it under a random path in
+   `upload/`, so a restic restore is readable without Immich. Run its job
+   once afterwards.
+4. **The database backup is on.** Administration → Settings → Backup: daily,
+   14 kept, into `/srv/media/immich/backups/`. It is on by default; check it
+   has not been turned off, and that the folder has a dump after a night.
+
+#### Duplicates: the iCloud library and the Shared Library
+
+The phones' camera rolls hold everything `icloudpd` already put in
+`/srv/media/icloud/` (both personal libraries and the Shared Library), so
+every photo would show twice in Immich, once from the external library and
+once uploaded. And each phone sees the whole Shared Library, so each would
+upload the other person's shared photos into its own account as well.
+
+- **The Shared Library goes first,** before either phone installs the app.
+  On the creator's phone: Settings → Photos → Shared Library → *Delete Shared
+  Library*, and each participant chooses to keep **only what they
+  contributed**. Every photo then sits in exactly one personal library: its
+  photographer's, the account that uploads it. Nothing is lost: iCloud keeps
+  each personal library, and `/srv/media/icloud/shared/` keeps everything to
+  date. Turn the Camera's Shared Library button off. `icloudpd@shared` then
+  finds nothing new, and its `icloudpd-verify` still passes.
+  *Decided by:* both participants, since the Shared Library disappears from
+  both phones.
+- **The iCloud external library comes out of Immich** once the uploads are
+  complete (below). Administration → External Libraries → iCloud → delete:
+  Immich forgets those assets, the files stay in `/srv/media/icloud/`, which
+  stays in restic as the archive. Albums or favourites made on those assets
+  are lost with them, so make them on the uploaded copies.
+
+#### On each phone, with iCloud Photos still on
+
+1. **Tailscale stays connected.** Tailscale app → Settings → *VPN On Demand*
+   on, and the VPN on. Without it the app cannot reach `desk:2283`.
+2. **Immich** from the App Store (already there from
+   [Setting up a device](../README.md#setting-up-a-device)), signed in as its
+   owner.
+3. **Backup:** Backup → select *Recents* (iOS's every-photo album) and turn
+   backup on. Then Background Backup on. In iOS Settings → Immich: Background
+   App Refresh on, Photos access *Full Access*.
+4. **The first upload in the foreground,** on Wi-Fi and the charger, the app
+   open, with the screen kept on. With *Optimize iPhone Storage* the app has
+   to pull each original from iCloud before uploading it, which iOS's
+   background slots will not get through.
+5. Check: the app's backup screen shows nothing left, and the account's photo
+   and video counts in the web UI match the Photos app's "N Photos, M
+   Videos" (Live Photos count once).
+
+#### The gates, before iCloud Photos goes off anywhere
+
+Turning iCloud Photos off retires a copy, so these are Step 5's gates, minus
+the ones that only guarded icloudpd's delete:
+
+- [ ] [Step 2](#step-2--backup-for-when-the-bulk-ssd-dies) complete and its
+      restore proofs passed, one of them restoring a file from
+      `/srv/media/immich/library/` byte-identical, and one restoring
+      `backups/`' latest dump into a scratch PostgreSQL
+- [ ] The [retirement gate](#before-any-original-is-retired) closed: the
+      restic password off `desk`, the recovery plan written
+- [ ] Two weeks of overlap: new photos from **both** phones reach Immich
+      without the app being opened by hand, at least once while away from
+      home
+- [ ] Both participants agree, knowing iCloud.com and other Apple devices
+      (a Mac, an iPad) stop seeing the library
+
+#### Cutover, per phone
+
+1. **Make the phone hold every original:** Settings → Photos → *Download and
+   Keep Originals*, and wait for it to finish (Settings → Photos shows the
+   progress). It needs the space; delete older years from the phone first if
+   not, as long as Immich has them.
+2. **iCloud Photos off:** Settings → *Apple Account* → iCloud → Photos →
+   *Sync this iPhone* off, and choose **Download Photos & Videos**.
+3. **Keep photos out of the device's iCloud Backup:** Settings → *Apple
+   Account* → iCloud → iCloud Backup → this iPhone → *Photo Library* off.
+   With iCloud Photos off, iOS starts including the library in the device
+   backup, which would refill the quota Step 6 frees.
+4. Check the next morning: a new photo is in Immich, and Settings still shows
+   iCloud Photos off.
+
+#### Afterwards, on desk and in iCloud
+
+1. **A last `icloudpd`:** `systemctl --user start icloudpd@shared`, and for a
+   top-up of the personal libraries `icloudpd@n8` (and `icloudpd@lindsey`,
+   with one more `icloudpd-login lindsey` and `icloudpd-forget lindsey`
+   straight after). Each ends in `icloudpd-verify`, which must exit 0.
+2. **Retire the module:** drop `./icloud.nix` from
+   [`hosts/desk/default.nix`](../hosts/desk/default.nix) (the timer goes with
+   it), then `icloudpd-forget n8` before the switch removes the command.
+   `/srv/media/icloud/` stays as an archive, read by nothing.
+3. **Free the quota, last:** on iCloud.com (or Settings → *Apple Account* →
+   iCloud → Manage → Photos) *Turn Off & Delete*, once per Apple ID. Apple
+   keeps the library 30 days, so that is the last undo.
+
+#### Checklist
+
+- [x] Media location on the bulk SSD, in restic, Immich-only — *2026-10-27,
+      the module change; the move itself below*
+- [ ] Move done on desk (`cp -a`, `rebuild`), thumbnails and both external
+      libraries intact
+- [ ] Lindsey's account; partner sharing both ways; storage template on;
+      a database dump in `backups/`
+- [ ] Shared Library deleted, each keeping their own contributions; Camera
+      button off
+- [ ] Both phones: Tailscale on demand, Immich backing up *Recents*, first
+      upload done in the foreground, counts match
+- [ ] iCloud external library removed from Immich
+- [ ] The gates above
+- [ ] Cutover on both phones
+- [ ] Last `icloudpd` runs verified, `icloud.nix` removed, `icloudpd-forget n8`
+- [ ] *Turn Off & Delete* on both Apple IDs; 30 days later, the quota is free
 
 ---
 
@@ -5757,6 +5954,16 @@ Still to do, after Phase 8:
 
 Not part of the cutover. Each is recorded so the reasoning isn't lost, and
 none is scheduled.
+
+### An alert when a phone stops backing up to Immich
+
+From [Step 6](#step-6--from-icloud-photos-to-the-immich-app): the phones'
+uploads depend on iOS running the Immich app in the background, and when it
+stops nothing on desk notices. The shape: a daily timer on desk that asks
+Immich's API for each account's newest upload and fails, raising the same
+`OnFailure` alert as restic's, when one is older than about a week. It
+needs an Immich API key (admin, read-only scopes) on desk, which joins the
+unmanaged-state list.
 
 ### Push alerts to the phone (ntfy)
 

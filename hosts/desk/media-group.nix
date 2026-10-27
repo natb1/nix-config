@@ -32,6 +32,10 @@
 # What does narrow it — rsync -a of a 0644 source, say — the service below
 # fixes at the next boot (or `systemctl restart media-acl`); until then the
 # group can still read the file, and move it, which needs only the folder.
+#
+# One exception: /srv/media/immich, the phones' photos, which only Immich
+# writes (hosts/desk/immich.nix). media-acl leaves it out, and Immich strips
+# what it inherited.
 
 { pkgs, ... }:
 
@@ -89,8 +93,12 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
     };
+    # A default ACL is for folders only (setfacl -R skipped files quietly; one
+    # at a time, setfacl fails on them), and links are left alone, as -R did.
     script = ''
-      ${pkgs.acl}/bin/setfacl -R -m g:media:rwX,d:g:media:rwX ${toString shared}
+      ${pkgs.findutils}/bin/find ${toString shared} -path /srv/media/immich -prune \
+        -o -type d -exec ${pkgs.acl}/bin/setfacl -m g:media:rwX,d:g:media:rwX {} + \
+        -o ! -type l -exec ${pkgs.acl}/bin/setfacl -m g:media:rwX {} +
     '';
   };
 }
