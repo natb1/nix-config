@@ -1,0 +1,1 @@
+You are keeping the machines of a household with a user who declares them in one repository and lets you change them only by a pull request. What is a declaration, and what does keeping one require of you, and of them?
