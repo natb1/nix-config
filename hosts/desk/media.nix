@@ -19,6 +19,11 @@
 { pkgs, ... }:
 
 let
+  # restic's -o for the Storage Box, shared by the backup and its unlock
+  # (below). BatchMode: an ssh prompt inside restic's pipe cannot be answered
+  # and surfaces as an HTTP timeout; fail fast with ssh's own error instead.
+  rcloneProgram = "rclone.program='ssh -p 23 -i /etc/restic/id_ed25519 -o BatchMode=yes u676942@u676942.your-storagebox.de'";
+
   # The alert for a failed unit (restic's and the scrub's, below): an email
   # with the failed run's log (mail.nix), then a desktop pop-up. These are
   # system units, so the pop-up has to reach into n8's session bus, and fails
@@ -226,11 +231,14 @@ in
     ];
     repository = "rclone:";
     passwordFile = "/etc/restic/media.password";
-    extraOptions = [
-      # BatchMode: an ssh prompt inside restic's pipe cannot be answered and
-      # surfaces as an HTTP timeout; fail fast with ssh's own error instead.
-      "rclone.program='ssh -p 23 -i /etc/restic/id_ed25519 -o BatchMode=yes u676942@u676942.your-storagebox.de'"
-    ];
+    extraOptions = [ rcloneProgram ];
+    # A run whose connection drops leaves its lock behind, and an exclusive
+    # one (check's) blocks every later run until someone unlocks by hand: the
+    # 2026-10-30 network drop mid-check. Plain unlock removes only stale
+    # locks (on this host, a dead PID; elsewhere, over 30 minutes old), never
+    # a live run's. Append-only still lets locks be deleted, proved that day.
+    # The env has the repository and password; the -o has to be repeated.
+    backupPrepareCommand = "${pkgs.restic}/bin/restic -o ${rcloneProgram} unlock";
     extraBackupArgs = [ "--exclude-caches" "--one-file-system" ];
     runCheck = true;
     # Samples, not a full download: ~15 GB/day at 730 GB, over Wi-Fi.
