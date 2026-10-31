@@ -91,6 +91,8 @@ let
         focus "$main"
         act move-column-to-index 1
         act set-column-width "66.667%"
+        # A height set on a window stays with it, also into this column.
+        act reset-window-height --id "$main"
 
         if [ -n "$right" ]; then
           focus "$right"
@@ -108,15 +110,19 @@ let
         focus "$main"
       }
 
-      # Column and row of each, as "col,row" — "1,1 2,1 2,2" is the layout.
+      # Column and row of each, as "col,row" — "1,1 2,1 2,2" is the layout —
+      # and the two in the right column within a few pixels of one height.
       arranged() {
         local want="1,1"
         [ -n "$right" ] && want="$want 2,1"
         [ -n "$second" ] && [ -n "$chrome" ] && want="$want 2,2"
-        sleep 0.2
-        [ "$(niri msg --json windows | jq -r --argjson ids "[$main''${right:+,$right}''${second:+''${chrome:+,$chrome}}]" '
-          [$ids[] as $i | first(.[] | select(.id == $i)).layout.pos_in_scrolling_layout | map(tostring) | join(",")]
-          | join(" ")')" = "$want" ]
+        sleep 0.5
+        niri msg --json windows | jq -e --arg want "$want" \
+          --argjson ids "[$main''${right:+,$right}''${second:+''${chrome:+,$chrome}}]" '
+          [$ids[] as $i | first(.[] | select(.id == $i))] as $w
+          | ([$w[].layout.pos_in_scrolling_layout | map(tostring) | join(",")] | join(" ")) == $want
+            and ($w | length < 3 or (($w[1].layout.tile_size[1] - $w[2].layout.tile_size[1]) | fabs) <= 4)' \
+          >/dev/null
       }
 
       right=''${second:-$chrome}
