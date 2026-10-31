@@ -94,6 +94,17 @@ window-rule {
     default-column-width { proportion 0.5; }
 }
 
+// WoW (gaming.nix) is tiled by Mod+Shift+M's multibox-layout, which sets its
+// width. Config.wtf (shared by both accounts) has GxMaximize 1, and a
+// maximized or fullscreen window would ignore that width. The title is the
+// only thing that tells the game from Battle.net: both are
+// steam_app_battlenet.
+window-rule {
+    match title="^World of Warcraft$"
+    open-maximized-to-edges false
+    open-fullscreen false
+}
+
 // No bar, and no spawn-at-startup for the shell. Quickshell (the panel,
 // notifications and pop-ups — home/quickshell/) is a user unit WantedBy
 // graphical-session.target, which niri raises. A spawn line here as well
@@ -175,6 +186,10 @@ binds {
     Mod+Alt+3 { focus-workspace 3; }
     Mod+Alt+4 { focus-workspace 4; }
     Mod+Alt+5 { focus-workspace 5; }
+
+    // Main WoW (the one focused last) at 2/3, the other WoW over Chrome in
+    // the last third, on the "multibox" workspace — hosts/desk/multibox-layout.nix.
+    Mod+Shift+M hotkey-overlay-title="Multibox layout" { spawn "multibox-layout"; }
 
     Mod+W hotkey-overlay-title="Toggle width ½ / ¼" { switch-preset-column-width; }
     Mod+F { maximize-column; }
