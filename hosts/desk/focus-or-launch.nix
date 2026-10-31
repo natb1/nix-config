@@ -6,6 +6,12 @@
 # comes from niri.kdl (the default column width, or a window rule), not from
 # here, so it holds for the window however it was opened.
 #
+# The exception is a window on the "multibox" workspace (multibox-layout.nix,
+# Mod+Shift+M, which takes a Chrome window there): it is brought home, to
+# column COLUMN of the first workspace at the default quarter width, and
+# focused there. Of several windows with the app_id, that one is the one
+# taken.
+#
 # Web apps need no "Install page as app": `google-chrome-stable --app=URL`
 # opens a bare app window with an app_id derived from the URL —
 # https://claude.ai/artifact/X gives chrome-claude.ai__artifact_X-Default
@@ -22,14 +28,36 @@ let
       app_id=$2
       shift 2
 
+      multibox=$(niri msg --json workspaces |
+        jq 'first(.[] | select(.name == "multibox") | .id) // null')
+
       window_id() {
         niri msg --json windows |
-          jq -r --arg a "$app_id" 'first(.[] | select(.app_id == $a) | .id) // empty'
+          jq -r --arg a "$app_id" --argjson m "$multibox" '
+            [.[] | select(.app_id == $a)] | sort_by(.workspace_id != $m)
+            | first(.[].id) // empty'
+      }
+
+      # niri can apply an action after replying to it, so wait for the focus
+      # before acting on the focused column.
+      focus() {
+        niri msg action focus-window --id "$1"
+        for _ in $(seq 20); do
+          [ "$(niri msg --json focused-window | jq '.id')" = "$1" ] && return
+          sleep 0.05
+        done
       }
 
       id=$(window_id)
       if [ -n "$id" ]; then
-        exec niri msg action focus-window --id "$id"
+        on=$(niri msg --json windows | jq --argjson i "$id" 'first(.[] | select(.id == $i)).workspace_id')
+        if [ "$on" != "$multibox" ]; then
+          exec niri msg action focus-window --id "$id"
+        fi
+        niri msg action move-window-to-workspace --window-id "$id" --focus false 1
+        focus "$id"
+        niri msg action move-column-to-index "$column"
+        exec niri msg action set-column-width "25%"
       fi
 
       setsid -f "$@" >/dev/null 2>&1
