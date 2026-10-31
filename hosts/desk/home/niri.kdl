@@ -53,11 +53,14 @@ input {
         natural-scroll
     }
 
-    // Focus follows the click, not the pointer. `focus-follows-mouse` is a
-    // presence flag in niri's KDL, not a boolean — it takes no argument, and
-    // off is simply the absence of the node. `focus-follows-mouse off` is a
-    // parse error, which is fatal: niri.service exits before it ever opens a
-    // DRM device.
+    // Focus follows the pointer, for multiboxing (multibox-layout.nix): the
+    // WoW and the Chrome under the pointer get the keys, no click or alt-tab.
+    // max-scroll-amount 0% keeps a window partly off screen from scrolling
+    // the view to it when the pointer crosses it; those still take a click.
+    // `focus-follows-mouse` is a presence flag in niri's KDL, not a boolean —
+    // `focus-follows-mouse off` is a parse error, which is fatal: niri.service
+    // exits before it ever opens a DRM device. Off is leaving it out.
+    focus-follows-mouse max-scroll-amount="0%"
 }
 
 // The display is a 3440x1440 ultrawide (Phase 0 read the modes off it).
