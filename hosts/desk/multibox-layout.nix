@@ -9,9 +9,10 @@
 #     +----------------------+----------+
 #              2/3               1/3
 #
-# WoW 1, the main window, is the WoW focused last: focus the one to play from
-# and press the key. Chrome is the Chrome window focused last. Run it again
-# to swap the WoWs or after one restarts; it starts from whatever is there.
+# WoW 1, the main window, is the focused WoW (or else the one focused last):
+# focus the one to play from and press the key, and it moves to the left.
+# Chrome is the Chrome window focused last. Run it again to swap the WoWs or
+# after one restarts; it starts from whatever is there.
 #
 # The WoWs are told apart from Battle.net by title alone: under umu every
 # window of both Battle.nets and both games has the app_id
@@ -26,18 +27,23 @@ let
     text = ''
       ws=multibox
 
-      # Most recently focused first.
-      by_title() {
-        niri msg --json windows | jq -r --arg t "$1" '
-          [.[] | select(.title | test($t))]
-          | sort_by(-(.focus_timestamp.secs // 0), -(.focus_timestamp.nanos // 0))
-          | .[].id'
-      }
-      mapfile -t wows < <(by_title '^World of Warcraft$')
-      chrome=$(niri msg --json windows | jq -r '
+      # One read, before any action: niri answers queries at once but may
+      # apply an action a moment later, so a read between actions can see
+      # the layout from before them.
+      windows=$(niri msg --json windows)
+      # The focused WoW first, then by when they were focused: a window's
+      # focus_timestamp is only set once it has kept the focus a moment, so
+      # a WoW clicked just before the key can still look like the older one.
+      mapfile -t wows < <(jq -r '
+        [.[] | select(.title == "World of Warcraft")]
+        | sort_by(if .is_focused then 0 else 1 end,
+                  -(.focus_timestamp.secs // 0), -(.focus_timestamp.nanos // 0))
+        | .[].id' <<<"$windows")
+      chrome=$(jq -r '
         [.[] | select(.app_id == "google-chrome")]
-        | sort_by(-(.focus_timestamp.secs // 0), -(.focus_timestamp.nanos // 0))
-        | first(.[].id) // empty')
+        | sort_by(if .is_focused then 0 else 1 end,
+                  -(.focus_timestamp.secs // 0), -(.focus_timestamp.nanos // 0))
+        | first(.[].id) // empty' <<<"$windows")
 
       if [ "''${#wows[@]}" -eq 0 ]; then
         echo "multibox-layout: no World of Warcraft window" >&2
@@ -57,37 +63,69 @@ let
         act set-workspace-name --workspace "$last" "$ws"
       fi
 
-      # Each to the workspace, alone in a column of its own.
-      for id in "$main" $second $chrome; do
-        act move-window-to-workspace --window-id "$id" --focus false "$ws"
-        act focus-window --id "$id"
-        col=$(niri msg --json windows | jq --argjson id "$id" '
-          (.[] | select(.id == $id)) as $w
-          | [.[] | select(.workspace_id == $w.workspace_id and .is_floating == false
-                          and .layout.pos_in_scrolling_layout[0] == $w.layout.pos_in_scrolling_layout[0])]
-          | length')
-        if [ "$col" -gt 1 ]; then act expel-window-from-column; fi
-      done
+      ws_id=$(niri msg --json workspaces | jq --arg n "$ws" 'first(.[] | select(.name == $n)).id')
 
-      act focus-window --id "$main"
-      act move-column-to-index 1
-      act set-column-width "66.667%"
+      # niri can run an action after the next one's reply, so each focus is
+      # waited for before acting on the focused column, and the result is
+      # read back and the whole thing run again if it came out wrong.
+      focus() {
+        act focus-window --id "$1"
+        for _ in $(seq 20); do
+          [ "$(niri msg --json focused-window | jq '.id')" = "$1" ] && return
+          sleep 0.05
+        done
+      }
+
+      arrange() {
+        local id
+        # Each to the workspace, alone in a column of its own. Expelling a
+        # window already alone in its column does nothing.
+        for id in "$main" $second $chrome; do
+          if [ "$(niri msg --json windows | jq --argjson i "$id" 'first(.[] | select(.id == $i)).workspace_id')" != "$ws_id" ]; then
+            act move-window-to-workspace --window-id "$id" --focus false "$ws"
+          fi
+          focus "$id"
+          act expel-window-from-column
+        done
+
+        focus "$main"
+        act move-column-to-index 1
+        act set-column-width "66.667%"
+
+        if [ -n "$right" ]; then
+          focus "$right"
+          act move-column-to-index 2
+          act set-column-width "33.333%"
+          act reset-window-height --id "$right"
+        fi
+        if [ -n "$second" ] && [ -n "$chrome" ]; then
+          focus "$chrome"
+          act move-column-to-index 3
+          act consume-or-expel-window-left --id "$chrome"
+          act reset-window-height --id "$chrome"
+        fi
+
+        focus "$main"
+      }
+
+      # Column and row of each, as "col,row" — "1,1 2,1 2,2" is the layout.
+      arranged() {
+        local want="1,1"
+        [ -n "$right" ] && want="$want 2,1"
+        [ -n "$second" ] && [ -n "$chrome" ] && want="$want 2,2"
+        sleep 0.2
+        [ "$(niri msg --json windows | jq -r --argjson ids "[$main''${right:+,$right}''${second:+''${chrome:+,$chrome}}]" '
+          [$ids[] as $i | first(.[] | select(.id == $i)).layout.pos_in_scrolling_layout | map(tostring) | join(",")]
+          | join(" ")')" = "$want" ]
+      }
 
       right=''${second:-$chrome}
-      if [ -n "$right" ]; then
-        act focus-window --id "$right"
-        act move-column-to-index 2
-        act set-column-width "33.333%"
-        act reset-window-height --id "$right"
-      fi
-      if [ -n "$second" ] && [ -n "$chrome" ]; then
-        act focus-window --id "$chrome"
-        act move-column-to-index 3
-        act consume-or-expel-window-left --id "$chrome"
-        act reset-window-height --id "$chrome"
-      fi
-
-      act focus-window --id "$main"
+      for _ in 1 2 3; do
+        arrange
+        arranged && exit 0
+      done
+      echo "multibox-layout: the windows did not end up in place" >&2
+      exit 1
     '';
   };
 in
