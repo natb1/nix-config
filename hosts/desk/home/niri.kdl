@@ -53,11 +53,14 @@ input {
         natural-scroll
     }
 
-    // Focus follows the click, not the pointer. `focus-follows-mouse` is a
-    // presence flag in niri's KDL, not a boolean — it takes no argument, and
-    // off is simply the absence of the node. `focus-follows-mouse off` is a
-    // parse error, which is fatal: niri.service exits before it ever opens a
-    // DRM device.
+    // Focus follows the pointer, for multiboxing (multibox-layout.nix): the
+    // WoW and the Chrome under the pointer get the keys, no click or alt-tab.
+    // max-scroll-amount 0% keeps a window partly off screen from scrolling
+    // the view to it when the pointer crosses it; those still take a click.
+    // `focus-follows-mouse` is a presence flag in niri's KDL, not a boolean —
+    // `focus-follows-mouse off` is a parse error, which is fatal: niri.service
+    // exits before it ever opens a DRM device. Off is leaving it out.
+    focus-follows-mouse max-scroll-amount="0%"
 }
 
 // The display is a 3440x1440 ultrawide (Phase 0 read the modes off it).
@@ -92,6 +95,17 @@ layout {
 window-rule {
     match app-id=r#"^chrome-claude\.ai__code-Default$"#
     default-column-width { proportion 0.5; }
+}
+
+// WoW (gaming.nix) is tiled by Mod+Shift+M's multibox-layout, which sets its
+// width. Config.wtf (shared by both accounts) has GxMaximize 1, and a
+// maximized or fullscreen window would ignore that width. The title is the
+// only thing that tells the game from Battle.net: both are
+// steam_app_battlenet.
+window-rule {
+    match title="^World of Warcraft$"
+    open-maximized-to-edges false
+    open-fullscreen false
 }
 
 // No bar, and no spawn-at-startup for the shell. Quickshell (the panel,
@@ -175,6 +189,10 @@ binds {
     Mod+Alt+3 { focus-workspace 3; }
     Mod+Alt+4 { focus-workspace 4; }
     Mod+Alt+5 { focus-workspace 5; }
+
+    // Main WoW (the one focused last) at 2/3, the other WoW over Chrome in
+    // the last third, on the "multibox" workspace — hosts/desk/multibox-layout.nix.
+    Mod+Shift+M hotkey-overlay-title="Multibox layout" { spawn "multibox-layout"; }
 
     Mod+W hotkey-overlay-title="Toggle width ½ / ¼" { switch-preset-column-width; }
     Mod+F { maximize-column; }

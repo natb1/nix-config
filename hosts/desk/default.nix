@@ -38,6 +38,7 @@
     ./power-menu.nix
     ./rebuild-menu.nix
     ./focus-or-launch.nix
+    ./multibox-layout.nix
     ./drlindsey.nix
   ];
 
