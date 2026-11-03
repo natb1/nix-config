@@ -54,7 +54,7 @@ input {
     }
 
     // Focus follows the pointer, for multiboxing (multibox-layout.nix): the
-    // WoW and the Chrome under the pointer get the keys, no click or alt-tab.
+    // WoW under the pointer gets the keys, no click or alt-tab.
     // max-scroll-amount 0% keeps a window partly off screen from scrolling
     // the view to it when the pointer crosses it; those still take a click.
     // `focus-follows-mouse` is a presence flag in niri's KDL, not a boolean —
@@ -190,8 +190,8 @@ binds {
     Mod+Alt+4 { focus-workspace 4; }
     Mod+Alt+5 { focus-workspace 5; }
 
-    // Main WoW (the one focused last) at 2/3, the other WoW over Chrome in
-    // the last third, on the "multibox" workspace — hosts/desk/multibox-layout.nix.
+    // The two WoWs side by side, half the screen each, the main one (focused
+    // last) on the left, on the "multibox" workspace — hosts/desk/multibox-layout.nix.
     Mod+Shift+M hotkey-overlay-title="Multibox layout" { spawn "multibox-layout"; }
 
     Mod+W hotkey-overlay-title="Toggle width ½ / ¼" { switch-preset-column-width; }

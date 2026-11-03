@@ -7,10 +7,9 @@
 # here, so it holds for the window however it was opened.
 #
 # The exception is a window on the "multibox" workspace (multibox-layout.nix,
-# Mod+Shift+M, which takes a Chrome window there): it is brought home, to
-# column COLUMN of the first workspace at the default quarter width, and
-# focused there. Of several windows with the app_id, that one is the one
-# taken.
+# Mod+Shift+M): it is brought home, to column COLUMN of the first workspace
+# at the default quarter width, and focused there. Of several windows with
+# the app_id, that one is the one taken.
 #
 # Web apps need no "Install page as app": `google-chrome-stable --app=URL`
 # opens a bare app window with an app_id derived from the URL —
