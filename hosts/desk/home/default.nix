@@ -21,5 +21,6 @@
   services.claudeRemoteControl.extraDirectories = {
     ledger = "/srv/git/ledger";
     archai = "/srv/git/archai";
+    wow-plan = "/srv/git/wow-plan";
   };
 }
