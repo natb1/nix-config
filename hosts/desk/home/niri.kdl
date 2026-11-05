@@ -98,12 +98,23 @@ window-rule {
 }
 
 // WoW (gaming.nix) is tiled by Mod+Shift+M's multibox-layout, which sets its
-// width. Config.wtf (shared by both accounts) has GxMaximize 1, and a
-// maximized or fullscreen window would ignore that width. The title is the
-// only thing that tells the game from Battle.net: both are
+// width. A maximized or fullscreen window would ignore that width; Config.wtf
+// (shared by both accounts) may still ask for one (GxMaximize 1), as Forever's
+// did until 2026-11-05. In Windowed mode the game draws its
+// GxWindowedResolution's shape into whatever the tile is, so that is set to
+// the half-screen tile, 1708x1424, or the picture is letterboxed. The title
+// is the only thing that tells the game from Battle.net: both are
 // steam_app_battlenet.
 window-rule {
     match title="^World of Warcraft$"
+    open-maximized-to-edges false
+    open-fullscreen false
+}
+
+// The Battle.net launchers, so battlenet-all (gaming.nix) can stack them in
+// one column.
+window-rule {
+    match app-id="^steam_app_battlenet$" title="^Battle\\.net$"
     open-maximized-to-edges false
     open-fullscreen false
 }
