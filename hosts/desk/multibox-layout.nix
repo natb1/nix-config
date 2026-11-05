@@ -1,18 +1,18 @@
 # Mod+Shift+M in niri (hosts/desk/home/niri.kdl) runs `multibox-layout`: it
-# moves both WoW windows and a Chrome window to the "multibox" workspace and
-# lays them out for multiboxing (gaming.nix) —
+# moves both WoW windows to the "multibox" workspace and lays them out side
+# by side for multiboxing (gaming.nix) —
 #
-#     +----------------------+----------+
-#     |                      |  WoW 2   |
-#     |        WoW 1         +----------+
-#     |                      |  Chrome  |
-#     +----------------------+----------+
-#              2/3               1/3
+#     +----------------+----------------+
+#     |                |                |
+#     |     WoW 1      |     WoW 2      |
+#     |                |                |
+#     +----------------+----------------+
+#            1/2              1/2
 #
 # WoW 1, the main window, is the focused WoW (or else the one focused last):
 # focus the one to play from and press the key, and it moves to the left.
-# Chrome is the Chrome window focused last. Run it again to swap the WoWs or
-# after one restarts; it starts from whatever is there.
+# Run it again to swap the WoWs or after one restarts; it starts from
+# whatever is there. Nothing else is touched: Chrome stays where it is.
 #
 # The WoWs are told apart from Battle.net by title alone: under umu every
 # window of both Battle.nets and both games has the app_id
@@ -39,11 +39,6 @@ let
         | sort_by(if .is_focused then 0 else 1 end,
                   -(.focus_timestamp.secs // 0), -(.focus_timestamp.nanos // 0))
         | .[].id' <<<"$windows")
-      chrome=$(jq -r '
-        [.[] | select(.app_id == "google-chrome")]
-        | sort_by(if .is_focused then 0 else 1 end,
-                  -(.focus_timestamp.secs // 0), -(.focus_timestamp.nanos // 0))
-        | first(.[].id) // empty' <<<"$windows")
 
       if [ "''${#wows[@]}" -eq 0 ]; then
         echo "multibox-layout: no World of Warcraft window" >&2
@@ -80,7 +75,7 @@ let
         local id
         # Each to the workspace, alone in a column of its own. Expelling a
         # window already alone in its column does nothing.
-        for id in "$main" $second $chrome; do
+        for id in "$main" $second; do
           if [ "$(niri msg --json windows | jq --argjson i "$id" 'first(.[] | select(.id == $i)).workspace_id')" != "$ws_id" ]; then
             act move-window-to-workspace --window-id "$id" --focus false "$ws"
           fi
@@ -90,42 +85,34 @@ let
 
         focus "$main"
         act move-column-to-index 1
-        act set-column-width "66.667%"
+        act set-column-width "50%"
         # A height set on a window stays with it, also into this column.
         act reset-window-height --id "$main"
 
-        if [ -n "$right" ]; then
-          focus "$right"
+        if [ -n "$second" ]; then
+          focus "$second"
           act move-column-to-index 2
-          act set-column-width "33.333%"
-          act reset-window-height --id "$right"
-        fi
-        if [ -n "$second" ] && [ -n "$chrome" ]; then
-          focus "$chrome"
-          act move-column-to-index 3
-          act consume-or-expel-window-left --id "$chrome"
-          act reset-window-height --id "$chrome"
+          act set-column-width "50%"
+          act reset-window-height --id "$second"
         fi
 
         focus "$main"
       }
 
-      # Column and row of each, as "col,row" — "1,1 2,1 2,2" is the layout —
-      # and the two in the right column within a few pixels of one height.
+      # Column and row of each, as "col,row" — "1,1 2,1" is the layout — and
+      # the two within a few pixels of one width.
       arranged() {
         local want="1,1"
-        [ -n "$right" ] && want="$want 2,1"
-        [ -n "$second" ] && [ -n "$chrome" ] && want="$want 2,2"
+        [ -n "$second" ] && want="$want 2,1"
         sleep 0.5
         niri msg --json windows | jq -e --arg want "$want" \
-          --argjson ids "[$main''${right:+,$right}''${second:+''${chrome:+,$chrome}}]" '
+          --argjson ids "[$main''${second:+,$second}]" '
           [$ids[] as $i | first(.[] | select(.id == $i))] as $w
           | ([$w[].layout.pos_in_scrolling_layout | map(tostring) | join(",")] | join(" ")) == $want
-            and ($w | length < 3 or (($w[1].layout.tile_size[1] - $w[2].layout.tile_size[1]) | fabs) <= 4)' \
+            and ($w | length < 2 or (($w[0].layout.tile_size[0] - $w[1].layout.tile_size[0]) | fabs) <= 4)' \
           >/dev/null
       }
 
-      right=''${second:-$chrome}
       for _ in 1 2 3; do
         arrange
         arranged && exit 0

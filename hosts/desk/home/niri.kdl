@@ -54,7 +54,7 @@ input {
     }
 
     // Focus follows the pointer, for multiboxing (multibox-layout.nix): the
-    // WoW and the Chrome under the pointer get the keys, no click or alt-tab.
+    // WoW under the pointer gets the keys, no click or alt-tab.
     // max-scroll-amount 0% keeps a window partly off screen from scrolling
     // the view to it when the pointer crosses it; those still take a click.
     // `focus-follows-mouse` is a presence flag in niri's KDL, not a boolean —
@@ -98,12 +98,23 @@ window-rule {
 }
 
 // WoW (gaming.nix) is tiled by Mod+Shift+M's multibox-layout, which sets its
-// width. Config.wtf (shared by both accounts) has GxMaximize 1, and a
-// maximized or fullscreen window would ignore that width. The title is the
-// only thing that tells the game from Battle.net: both are
+// width. A maximized or fullscreen window would ignore that width; Config.wtf
+// (shared by both accounts) may still ask for one (GxMaximize 1), as Forever's
+// did until 2026-11-05. In Windowed mode the game draws its
+// GxWindowedResolution's shape into whatever the tile is, so that is set to
+// the half-screen tile, 1708x1424, or the picture is letterboxed. The title
+// is the only thing that tells the game from Battle.net: both are
 // steam_app_battlenet.
 window-rule {
     match title="^World of Warcraft$"
+    open-maximized-to-edges false
+    open-fullscreen false
+}
+
+// The Battle.net launchers, so battlenet-all (gaming.nix) can stack them in
+// one column.
+window-rule {
+    match app-id="^steam_app_battlenet$" title="^Battle\\.net$"
     open-maximized-to-edges false
     open-fullscreen false
 }
@@ -190,8 +201,8 @@ binds {
     Mod+Alt+4 { focus-workspace 4; }
     Mod+Alt+5 { focus-workspace 5; }
 
-    // Main WoW (the one focused last) at 2/3, the other WoW over Chrome in
-    // the last third, on the "multibox" workspace — hosts/desk/multibox-layout.nix.
+    // The two WoWs side by side, half the screen each, the main one (focused
+    // last) on the left, on the "multibox" workspace — hosts/desk/multibox-layout.nix.
     Mod+Shift+M hotkey-overlay-title="Multibox layout" { spawn "multibox-layout"; }
 
     Mod+W hotkey-overlay-title="Toggle width ½ / ¼" { switch-preset-column-width; }

@@ -73,8 +73,8 @@ let
   # an account's game exits its Logs and Errors are copied to
   # ~/.local/state/battlenet/wow/<time>-<label><flavor>, the last 30 kept.
   #
-  # Label (the --account argument and the prefix and unit names) and the name
-  # Mod+D shows.
+  # Label (the --account argument and the prefix and unit names) and the
+  # account's name.
   accounts = {
     nate = "Nate";
     lindsey = "Lindsey";
@@ -193,6 +193,98 @@ let
       umu-run "$setup/Battle.net-Setup.exe" --lang=enUS
     '';
   };
+  # Mod+D has one Battle.net entry, which runs `battlenet-all`: every
+  # account's Battle.net (an account already running is left as it is), and
+  # their windows stacked in one niri column, on the workspace of the first
+  # to open. It waits for the windows, up to two minutes, and is done once
+  # they have stayed in one column for a few seconds: a Battle.net that opens
+  # its sign-in page first and then its main window is caught. A window
+  # Battle.net opens after that, from restarting itself, say, is not moved.
+  #
+  # Every window of every Battle.net and game has the app_id
+  # steam_app_battlenet (multibox-layout.nix); the launchers are the ones
+  # titled "Battle.net". Which window is which account does not matter here.
+  battlenetAll = pkgs.writeShellApplication {
+    name = "battlenet-all";
+    runtimeInputs = [ battlenet pkgs.niri pkgs.jq pkgs.coreutils ];
+    text = ''
+      accounts=(${lib.concatStringsSep " " (lib.attrNames accounts)})
+      for a in "''${accounts[@]}"; do
+        battlenet --account "$a"
+      done
+
+      act() { niri msg action "$@"; }
+      # niri can apply an action after replying to it, so wait for the focus
+      # before acting on the focused column.
+      focus() {
+        act focus-window --id "$1"
+        for _ in $(seq 20); do
+          [ "$(niri msg --json focused-window | jq '.id')" = "$1" ] && return
+          sleep 0.05
+        done
+      }
+
+      launchers() {
+        niri msg --json windows | jq -c '
+          [.[] | select(.app_id == "steam_app_battlenet" and .title == "Battle.net")]
+          | sort_by(.id)
+          | map({id, ws: .workspace_id, col: .layout.pos_in_scrolling_layout[0]})'
+      }
+
+      # The rest each into the first one's column, below it: next to it
+      # first, then consumed leftwards into it.
+      arrange() {
+        local w=$1 first ws idx n i id col first_col
+        first=$(jq '.[0].id' <<<"$w")
+        ws=$(jq '.[0].ws' <<<"$w")
+        idx=$(niri msg --json workspaces | jq --argjson i "$ws" 'first(.[] | select(.id == $i)).idx')
+        n=$(jq length <<<"$w")
+        for ((i = 1; i < n; i++)); do
+          id=$(jq --argjson i "$i" '.[$i].id' <<<"$w")
+          if [ "$(jq --argjson i "$i" '.[$i].ws' <<<"$w")" != "$ws" ]; then
+            act move-window-to-workspace --window-id "$id" --focus false "$idx"
+            sleep 0.2
+          fi
+          focus "$id"
+          act expel-window-from-column
+          sleep 0.2
+          read -r col first_col < <(niri msg --json windows | jq -r --argjson a "$id" --argjson f "$first" '
+            [(first(.[] | select(.id == $a)) | .layout.pos_in_scrolling_layout[0]),
+             (first(.[] | select(.id == $f)) | .layout.pos_in_scrolling_layout[0])] | @tsv')
+          focus "$id"
+          # Taking a column out from the left of the first shifts it left.
+          if [ "$col" -lt "$first_col" ]; then
+            act move-column-to-index "$first_col"
+          else
+            act move-column-to-index "$((first_col + 1))"
+          fi
+          act consume-or-expel-window-left --id "$id"
+          sleep 0.2
+        done
+        for ((i = 0; i < n; i++)); do
+          act reset-window-height --id "$(jq --argjson i "$i" '.[$i].id' <<<"$w")"
+        done
+        focus "$first"
+      }
+
+      settled=0
+      for _ in $(seq 120); do
+        w=$(launchers)
+        if [ "$(jq length <<<"$w")" -ge "''${#accounts[@]}" ]; then
+          if jq -e '(map(.ws) | unique | length) == 1 and (map(.col) | unique | length) == 1' <<<"$w" >/dev/null; then
+            settled=$((settled + 1))
+            [ "$settled" -ge 5 ] && exit 0
+          else
+            settled=0
+            arrange "$w"
+          fi
+        fi
+        sleep 1
+      done
+      echo "battlenet-all: the Battle.net windows did not end up in one column" >&2
+      exit 1
+    '';
+  };
 in
 {
   # Also turns on 32-bit graphics drivers and Steam's controller udev rules.
@@ -231,18 +323,21 @@ in
     '';
   };
 
-  # Mod+D lists the accounts (the Quickshell launcher reads desktop entries);
-  # the same `battlenet --account <label>` works from a terminal.
+  # One Mod+D entry for all the accounts (the Quickshell launcher reads
+  # desktop entries); `battlenet --account <label>` still starts one from a
+  # terminal.
   environment.systemPackages = [
     battlenet
+    battlenetAll
     # Its desktop entry, for opening it without Battle.net.
     tsm-app
-  ] ++ lib.mapAttrsToList (label: name: pkgs.makeDesktopItem {
-    name = "battlenet-${label}";
-    desktopName = "Battle.net (${name})";
-    comment = "Battle.net, signed into ${name}'s account";
-    exec = "battlenet --account ${label}";
-    icon = "applications-games";
-    categories = [ "Game" ];
-  }) accounts;
+    (pkgs.makeDesktopItem {
+      name = "battlenet";
+      desktopName = "Battle.net";
+      comment = "Battle.net, one for each of ${lib.concatStringsSep " and " (lib.attrValues accounts)}";
+      exec = "battlenet-all";
+      icon = "applications-games";
+      categories = [ "Game" ];
+    })
+  ];
 }
