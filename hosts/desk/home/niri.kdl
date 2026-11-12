@@ -101,12 +101,14 @@ window-rule {
 // width. A maximized or fullscreen window would ignore that width; Config.wtf
 // (shared by both accounts) may still ask for one (GxMaximize 1), as Forever's
 // did until 2026-11-05. In Windowed mode the game draws its
-// GxWindowedResolution's shape into whatever the tile is, so that is set to
-// the half-screen tile, 1708x1424, or the picture is letterboxed. The title
-// is the only thing that tells the game from Battle.net: both are
-// steam_app_battlenet.
+// GxWindowedResolution's shape into whatever the tile is, and on every focus
+// change resizes itself to that shape at the tile's width, so the battlenet
+// launcher (gaming.nix) keeps it at the half-screen tile, 1708x1424. It opens
+// at half width so it never records another shape. The title is the only
+// thing that tells the game from Battle.net: both are steam_app_battlenet.
 window-rule {
     match title="^World of Warcraft$"
+    default-column-width { proportion 0.5; }
     open-maximized-to-edges false
     open-fullscreen false
 }
