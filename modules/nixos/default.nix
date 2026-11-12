@@ -58,4 +58,19 @@ in
 
   # Eastern time. America/New_York tracks EST/EDT automatically.
   time.timeZone = "America/New_York";
+
+  # Keep the store from filling the root disk. Every switch adds a system
+  # generation, and each one pins its whole closure; with no GC, desk's root
+  # filled at 116 generations (~100G of /nix/store). Weekly, drop generations
+  # older than two weeks — that still leaves recent ones to roll back to.
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 14d";
+  };
+  # Hard-link identical store files as they are added.
+  nix.settings.auto-optimise-store = true;
+
+  # Cap the persistent journal; unbounded it had grown to 3.7G on desk.
+  services.journald.settings.Journal.SystemMaxUse = "1G";
 }
