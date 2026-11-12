@@ -81,7 +81,7 @@ let
   };
   battlenet = pkgs.writeShellApplication {
     name = "battlenet";
-    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd pkgs.jq pkgs.gawk ];
+    runtimeInputs = [ pkgs.umu-launcher pkgs.curl pkgs.coreutils pkgs.util-linux pkgs.procps pkgs.systemd pkgs.jq pkgs.gawk pkgs.gnused pkgs.gnugrep ];
     text = ''
       if [ "''${1:-}" != "--account" ] || [ -z "''${2:-}" ]; then
         echo "usage: battlenet --account <label> [launcher arguments]" >&2
@@ -155,6 +155,25 @@ let
           | xargs -r -d '\n' rm -rf
       }
 
+      # WoW reasserts its window size when it is focused, keeping the tile's
+      # width and the shape of GxWindowedResolution, the size it last
+      # recorded. Once that was ultrawide (3395x1406, 2026-11-11), every
+      # focus change made the half-screen tile 1707x707. So the shape is put
+      # back to the multibox tile (multibox-layout.nix), 1708x1424, whenever
+      # no WoW is running: WoW reads Config.wtf at start and writes it at exit.
+      pin_wow_window() {
+        local f
+        for f in "$wow_shared"/_*_/WTF/Config.wtf; do
+          [ -f "$f" ] || continue
+          grep -qx 'SET GxWindowedResolution "1708x1424"' "$f" && continue
+          if grep -q '^SET GxWindowedResolution ' "$f"; then
+            sed -i 's/^SET GxWindowedResolution .*/SET GxWindowedResolution "1708x1424"/' "$f"
+          else
+            echo 'SET GxWindowedResolution "1708x1424"' >>"$f"
+          fi
+        done
+      }
+
       if [ -e "$launcher" ]; then
         # The TSM app beside the launcher, in the same unit, so it stops when
         # this Battle.net does. Unless one is already open, from the app menu
@@ -175,6 +194,10 @@ let
               # Auctionator's scans, saved on the way out (tsm-history.nix).
               systemctl --user start --no-block auctionator-history.service || true
               running=0
+            fi
+            # Any account's game, not just this unit's: one shared Config.wtf.
+            if ! pgrep -i '^wow[a-z]*\.exe$' >/dev/null; then
+              pin_wow_window || true
             fi
           done
         ) &
