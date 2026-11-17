@@ -7,8 +7,8 @@
 # module, and does the same ANCS notification mirroring plus MAP/PBAP
 # messages and contacts. None of that needs an iPhone app: iOS serves it to
 # any bonded Bluetooth accessory. Tether's iOS app is for its Wi-Fi features
-# (clipboard, files), which are fenced off below — they would need a LAN port and mDNS,
-# and desk's services are tailnet-only.
+# (clipboard, files): open on the home Wi-Fi since 2026-11-17, fenced off the
+# tailnet (below).
 #
 # Two things change for the whole machine, both required by Tether:
 # - bluetoothd runs with Experimental = true. ANCS needs BlueZ's bearer API,
@@ -194,23 +194,28 @@ in
     };
   };
 
-  # tetherd's Wi-Fi half has no off switch: it always listens on 5134 and
-  # always publishes _tether._tcp through avahi, whatever programs.tether.wifi
-  # says (that option only configures avahi and the firewall). Scope it from
-  # outside instead, the same tailnet-only rule as media.nix and printing.nix:
+  # tetherd's Wi-Fi half: it always listens on 5134 and publishes
+  # _tether._tcp through avahi, whatever programs.tether.wifi says (that
+  # option only configures avahi and the firewall). Fenced off from
+  # 2026-09-24; opened on the home Wi-Fi 2026-11-17, so the iOS app can find
+  # desk and pair (clipboard and files). Like Kavita's 5000 (kavita.nix),
+  # anyone on the Wi-Fi reaches the port; tetherd answers only devices whose
+  # pairing was accepted on desk (`tether pending`, `tether accept`).
   #
-  # - No mDNS announcement: stop avahi publishing *application* services on
-  #   desk. That is only Tether here — CUPS browsing is off and Samba has no
-  #   mDNS — and desk.local itself (publish-addresses) is unaffected.
+  # - The mDNS announcement: avahi publishes application services again
+  #   (modules/nixos's default). Tether is the only one on desk — CUPS
+  #   browsing is off and Samba has no mDNS. tailscale0 has no multicast, so
+  #   it is never announced there; the VM sees it on virbr0, but that
+  #   interface keeps 5134 closed.
+  # - 5134 open on wlp14s0 only.
   # - No port 5134 on the tailnet, which is otherwise open. Dropped in the
   #   raw table, not refused in nixos-fw: tailscaled hooks its own ts-input
   #   chain in at the top of INPUT, and it accepts everything on tailscale0
   #   before nixos-fw is consulted — a nixos-fw rule here never matched. raw
   #   comes before INPUT, and tailscaled leaves it alone; DROP, because
   #   REJECT is not allowed there. Deleted before it is inserted, since
-  #   firewall-start rebuilds nixos-fw but leaves raw as it finds it. Wi-Fi
-  #   never had the port.
-  services.avahi.settings.publish.disable-user-service-publishing = lib.mkForce true;
+  #   firewall-start rebuilds nixos-fw but leaves raw as it finds it.
+  networking.firewall.interfaces.wlp14s0.allowedTCPPorts = [ 5134 ];
   networking.firewall.extraCommands = ''
     ip46tables -t raw -D PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP 2>/dev/null || true
     ip46tables -t raw -I PREROUTING -i tailscale0 -p tcp --dport 5134 -j DROP
