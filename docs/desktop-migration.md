@@ -2848,7 +2848,8 @@ actively developed, ships a NixOS module (a flake input, pinned by rev in the
 URL so the weekly bump leaves it alone), and does the same ANCS mirroring plus
 SMS/iMessage read and reply and contacts (MAP/PBAP). No iPhone app is needed for
 any of that; Tether's iOS app only does its Wi-Fi features (clipboard, files),
-which stay off because they would need a LAN port and mDNS. Notifications go
+off at first because they need a LAN port and mDNS, and opened on the home
+Wi-Fi on 2026-11-17 (below). Notifications go
 through libnotify, so swaync draws them as planned.
 
 What Tether costs, all machine-wide:
@@ -2878,7 +2879,11 @@ Two surprises from the first switch, both fixed in `iphone.nix`:
   raw table. (First it was refused in `nixos-fw`, ahead of the
   trusted-interface accept, which never matched: tailscaled's own `ts-input`
   chain, at the top of INPUT, accepts all `tailscale0` traffic before
-  `nixos-fw` sees it.)
+  `nixos-fw` sees it.) **On 2026-11-17 the Wi-Fi half was opened on the
+  home Wi-Fi**, so the iOS app can find `desk`: 5134 is open on `wlp14s0`
+  and avahi publishes user services again. The tailnet drop stays. A new
+  phone's pairing waits on `desk` until accepted (`tether pending`,
+  `tether accept <fingerprint>`).
 
 **Pairing, once, after the switch:** `tether --bt-status` should report full
 mode (MAP + PBAP + ANCS). Then pair from the GTK app (`tether-gtk`, Devices) or
