@@ -36,8 +36,25 @@
 let
   user = "drlindsey";
   reviewPage = "https://claude.ai/artifact/D4LiLNMwES1pCW8iHebEqC";
+
+  # `drlindsey-login`, run by n8: renew drlindsey's Claude sign-in when it has
+  # expired. A running rc keeps its old token until it restarts, and a restart
+  # ends the sessions open under it, so that part is asked. An rc that is
+  # already failing picks the new sign-in up on its next retry.
+  login = pkgs.writeShellApplication {
+    name = "${user}-login";
+    text = ''
+      sudo machinectl shell ${user}@ /bin/sh -lc 'claude auth login'
+      read -r -p "Restart ${user}'s rc now? It ends their open sessions. [y/N] " answer
+      if [ "$answer" = y ] || [ "$answer" = Y ]; then
+        sudo systemctl --user -M ${user}@ restart claude-remote-control
+      fi
+    '';
+  };
 in
 {
+  environment.systemPackages = [ login ];
+
   users.users.${user} = {
     isNormalUser = true;
     home = "/home/${user}";
