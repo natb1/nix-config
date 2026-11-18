@@ -11,6 +11,11 @@
 #   in gaming.nix) and daily. Query the `auctionator` view: realm, day,
 #   item, name, low and high (the day's lowest buyout, lowest and highest
 #   seen), available.
+# - ForeverPlanLog (WoW Forever): the addon's own full auction scans, which
+#   it keeps in a ring and drops the oldest from. Its saved variables are
+#   read when WoW exits and hourly, so every scan is kept here once. Query
+#   the `fpl` view (realm, scanned, item, name, min, units, auctions,
+#   sellers, cheap) or the fpl_day table.
 #
 # Prices are in copper. Names are only those the TSM app has shown.
 
@@ -29,6 +34,13 @@ let
     shopt -s nullglob
     files=("${wow}"/_classic_era_/WTF/Account/*/SavedVariables/Auctionator.lua)
     exec ${pkgs.lib.getExe tsm-history} auctionator "$STATE_DIRECTORY/history.db" "''${files[@]}"
+  '';
+
+  fpl-history = pkgs.writeShellScript "fpl-history" ''
+    shopt -s nullglob
+    files=("${wow}"/_forever_/WTF/Account/*/SavedVariables/ForeverPlanLog.lua)
+    [ ''${#files[@]} -gt 0 ] || exit 0
+    exec ${pkgs.lib.getExe tsm-history} fpl "$STATE_DIRECTORY/history.db" "''${files[@]}"
   '';
 in
 {
@@ -63,6 +75,26 @@ in
     wantedBy = [ "timers.target" ];
     timerConfig = {
       OnCalendar = "daily";
+      Persistent = true;
+    };
+  };
+
+  systemd.user.services.fpl-history = {
+    description = "Record ForeverPlanLog's auction scans into the price history";
+    unitConfig.RequiresMountsFor = "/srv/games";
+    serviceConfig = {
+      Type = "oneshot";
+      StateDirectory = "tsm-history";
+      ExecStart = fpl-history;
+    };
+  };
+
+  # Besides WoW's exit: a /reload or a character logout writes the file too.
+  systemd.user.timers.fpl-history = {
+    description = "Record ForeverPlanLog's auction scans hourly";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "hourly";
       Persistent = true;
     };
   };
