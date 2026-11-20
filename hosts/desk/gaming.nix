@@ -13,26 +13,39 @@
 # unfreePredicate. A second allowUnfreePredicate here would silently replace
 # that one (or be replaced by it), not add to it.
 
-{ lib, pkgs, inputs, ... }:
+{ lib, pkgs, ... }:
 
 let
   # TSM's price data: the TradeSkillMaster addon reads it from
   # TradeSkillMaster_AppHelper/AppData.lua, which only the TSM Desktop App
-  # writes. This is the unofficial Linux port (flake.nix), a Qt window and a
-  # tray icon. It signs in to TSM with the account's password, kept in
-  # gnome-keyring, polls hourly, and installs and updates the TSM addons
-  # itself. Set by hand once, in its own window: the sign-in, the realms, and
-  # the WoW folder, /srv/games/wow, which it does not find on its own
-  # (~/.config/tsm-app, unmanaged).
+  # writes. This is TSM's official Linux app, their Electron AppImage
+  # (2026-11-17). It replaces the unofficial Linux port, whose use TSM's terms
+  # forbid and which TSM had started disabling accounts for. The official app
+  # supports WoW Forever; the port did not before 2.0. It signs in through
+  # TSM's browser login, and it installs and updates the TSM addons itself.
+  # Set by hand once, in its own window: the sign-in, the realms (Classic Era
+  # and Forever), and the WoW folder, /srv/games/wow, if it does not find it.
   #
-  # Its flake hands hatch-vcs the version as a top-level attribute, which
-  # nixpkgs' structuredAttrs no longer exports to the build (and env cannot
-  # carry a name the derivation already has), so the build exports it.
-  tsm-app = inputs.tsm-app-linux.packages.${pkgs.stdenv.hostPlatform.system}.tsm-app.overrideAttrs (old: {
-    preBuild = (old.preBuild or "") + ''
-      export SETUPTOOLS_SCM_PRETEND_VERSION=${old.version}
+  # The download link (desktop-backend.tradeskillmaster.com/app-downloads/linux)
+  # redirects to a file per version, pinned here. A bump is a deliberate edit:
+  # the new version from that redirect, and its hash.
+  tsm-app = let
+    pname = "tradeskillmaster";
+    version = "1.0.14";
+    src = pkgs.fetchurl {
+      url = "https://tsm-desktop-app-builds-production.nyc3.cdn.digitaloceanspaces.com/versions/${version}/TradeSkillMaster.AppImage";
+      hash = "sha256-t8WPpGzP3twpjDfv/rUHopej00Srh6ab7VJaRRldpog=";
+    };
+    contents = pkgs.appimageTools.extract { inherit pname version src; };
+  in pkgs.appimageTools.wrapType2 {
+    inherit pname version src;
+    extraInstallCommands = ''
+      install -Dm444 ${contents}/TradeSkillMaster.desktop $out/share/applications/tradeskillmaster.desktop
+      substituteInPlace $out/share/applications/tradeskillmaster.desktop \
+        --replace-fail 'Exec=AppRun --no-sandbox' 'Exec=${pname}'
+      install -Dm444 ${contents}/tradeskillmaster.png $out/share/pixmaps/tradeskillmaster.png
     '';
-  });
+  };
 
   # Battle.net (WoW Classic and the rest of Blizzard's games) under Proton,
   # outside Steam: umu-launcher runs GE-Proton the way Steam would. The first
@@ -178,7 +191,7 @@ let
         # The TSM app beside the launcher, in the same unit, so it stops when
         # this Battle.net does. Unless one is already open, from the app menu
         # or the other account's.
-        if ! pgrep -u "$(id -u)" -f '/bin/\.?tsm-app' >/dev/null; then
+        if ! pgrep -u "$(id -u)" -f '/tradeskillmaster( |$)' >/dev/null; then
           ${pkgs.lib.getExe tsm-app} &
         fi
         # By process name, any case, Wow.exe, WoWClassic.exe, …, in this
@@ -193,6 +206,8 @@ let
               save_wow_logs || true
               # Auctionator's scans, saved on the way out (tsm-history.nix).
               systemctl --user start --no-block auctionator-history.service || true
+              # ForeverPlanLog's scans, before the addon's ring drops one.
+              systemctl --user start --no-block fpl-history.service || true
               running=0
             fi
             # Any account's game, not just this unit's: one shared Config.wtf.
