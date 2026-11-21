@@ -276,6 +276,70 @@
               echo "checked: ${lib.concatStringsSep " " (lib.attrNames units)}"
               touch "$out"
             '';
+          # desk's WoW desk refresh (hosts/desk/home/wow-desk-refresh.nix):
+          # an unattended Claude session, so it must never prompt, never skip
+          # permission checks, load no user or repo settings, and get no
+          # root, like the rc units. Checked on the rendered unit files, the
+          # built script and the settings it passes, not on the .nix source.
+          wow-desk-refresh-unit =
+            let
+              lib = nixpkgs.lib;
+              hm = self.nixosConfigurations.desk.config.home-manager.users.n8;
+              unit = n: hm.xdg.configFile."systemd/user/${n}".source;
+              script = lib.head (lib.splitString " " (lib.head (lib.toList
+                hm.systemd.user.services.wow-desk-refresh.Service.ExecStart)));
+            in
+            pkgs.runCommand "wow-desk-refresh-unit" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              fail() { echo "wow-desk-refresh: $*" >&2; exit 1; }
+              svc=${unit "wow-desk-refresh.service"}
+              timer=${unit "wow-desk-refresh.timer"}
+              grep -qx 'NoNewPrivileges=true' "$svc" || fail "NoNewPrivileges is not set"
+              grep '^Environment=PATH=' "$svc" | grep -q /run/wrappers && fail "PATH has /run/wrappers"
+              grep -qx 'OnCalendar=\*-\*-\* \*:50:00' "$timer" || fail "the fallback timer is not at :50"
+              grep -qx 'Persistent=true' "$timer" || fail "the fallback timer is not Persistent"
+              grep -q '^PathChanged=.*/%I/SavedVariables/ForeverPlanLog.lua$' ${unit "wow-desk-refresh-sv@.path"} ||
+                fail "no per-account path template"
+
+              # The session's command line, from the built script.
+              s=${script}
+              grep -qi -e dangerously -e bypassPermissions "$s" && fail "the script can skip permission checks"
+              args=$(grep '^claude_args=(' "$s") || fail "no claude_args line in $s"
+              grep -q '"''${claude_args\[@\]}"' "$s" || fail "the session is not started with claude_args"
+              for want in "--bg " "--permission-mode dontAsk " "--setting-sources local " "--settings /nix/store/"; do
+                case " ''${args#claude_args=(}" in *" $want"*) ;; *) fail "the session is not started with $want" ;; esac
+              done
+
+              # The settings it loads.
+              set=$(sed -n "s|.*--settings \(/nix/store/[^ ]*\.json\).*|\1|p" <<<"$args")
+              [ -f "$set" ] || fail "no settings file in claude_args"
+              jq -e '.disableBypassPermissionsMode == "disable" and .permissions.defaultMode == "dontAsk"' "$set" >/dev/null ||
+                fail "bypass mode is not disabled"
+              jq -e '.permissions.allow | map(select(startswith("Bash("))) ==
+                ["Bash(python3 -I forever/t52p/desk_refresh.py prepare:*)", "Bash(python3 -I forever/t52p/desk_refresh.py run:*)", "Bash(python3 -I forever/t52p/desk_refresh.py done:*)"]' "$set" >/dev/null ||
+                fail "Bash is allowed more than the three desk_refresh.py steps"
+              jq -e '.permissions.allow | map(select(test("^(Edit|Write)") and (test("wow-desk-refresh/\\*\\*\\)$|worktrees/desk-refresh/\\*\\*\\)$") | not))) == []' "$set" >/dev/null ||
+                fail "writes are allowed outside the state dir and the worktree"
+              jq -e '.permissions.deny | index("Bash(git:*)") and index("Bash(gh:*)")' "$set" >/dev/null ||
+                fail "git and gh are not denied"
+
+              # The hook, run on sample calls.
+              hook=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "^(Artifact|Bash)$") | .hooks[0].command' "$set")
+              [ -x "$hook" ] || fail "no PreToolUse hook on Artifact and Bash"
+              try() { local rc=0; printf '%s' "$2" | "$hook" 2>/dev/null || rc=$?; [ "$rc" = "$1" ] || fail "hook: expected exit $1, got $rc, for $2"; }
+              try 0 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py prepare"}}'
+              try 2 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py prepare; ls"}}'
+              try 0 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py run --out W/out"}}'
+              try 0 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py done --out W/out"}}'
+              try 2 '{"tool_name":"Bash","tool_input":{"command":"git push"}}'
+              try 2 '{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+              try 2 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py run; git push"}}'
+              try 2 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py run $(git push)"}}'
+              try 2 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py run\ngit push"}}'
+              try 0 '{"tool_name":"Artifact","tool_input":{"url":"u","file_path":"f","asset":true}}'
+              try 2 '{"tool_name":"Artifact","tool_input":{"action":"delete","url":"u"}}'
+              try 2 '{"tool_name":"Artifact","tool_input":{"action":"delete","url":"u","path":"0123"}}'
+              touch "$out"
+            '';
           # Zellij, as desk configures it. The shell integrations must stay
           # off (modules/home/zellij.nix). `setup --check` exits 0 whatever it
           # finds, but the config is loaded first, and a config.kdl that does
