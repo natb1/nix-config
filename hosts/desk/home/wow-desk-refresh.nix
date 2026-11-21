@@ -2,43 +2,59 @@
 # whenever a local data source changes, so no interactive session has to stay
 # open. What the session does is defined by the private wow-plan repo
 # (/srv/git/wow-plan, README.md "The desk refresh"); this module only decides
-# when it runs and how it is started. Nothing from the plan (its data, its
-# results, its accounts) is in this repo.
+# when it runs, how it is started and what it may do. Nothing from the plan
+# (its data, its results, its accounts, its email recipient) is in this repo.
+#
+# ── Once by hand ──────────────────────────────────────────────────────────────
+#
+# Create ~/.local/state/wow-desk-refresh/recipient, holding the address the
+# refresh emails (one line). It is kept out of this public repo; the
+# procedure reads it from there. Without it the service still runs, and says
+# in the journal that the file is missing.
 #
 # ── Sources ───────────────────────────────────────────────────────────────────
 #
-# - TSM's AppData.lua (TradeSkillMaster_AppHelper), rewritten by the TSM
-#   desktop app on every sync: wow-desk-refresh-tsm.path.
+# - TSM's AppData.lua (TradeSkillMaster_AppHelper): wow-desk-refresh-tsm.path.
 # - The ForeverPlanLog addon's SavedVariables, one per WoW account, rewritten
 #   on a /reload, a logout and the addon's Save scan button:
 #   wow-desk-refresh-sv@<account>.path, one instance per account directory.
+#
+# ── Content, not mtime ────────────────────────────────────────────────────────
+#
+# The TSM desktop app rewrites AppData.lua about twice an hour all day, mostly
+# its realm blocks, which the refresh does not use. So a trigger only wakes
+# the script: it hashes what the refresh reads (each ForeverPlanLog.lua, and
+# AppData.lua's Forever-US region sale and region stat lines, or the whole
+# file if those lines are not found) and starts a session only when a hash
+# differs from the last finished run's, kept in the state directory
+# (source-hashes). An unchanged write costs a few hashes and no session.
+# `wow-desk-refresh --force` runs regardless.
 #
 # ── Why a template for the accounts ───────────────────────────────────────────
 #
 # PathChanged= takes no glob, and the account directory names are game
 # account ids, which stay out of this public repo. So the per-account path
 # unit is a template, and wow-desk-refresh-accounts.service starts one
-# instance for each WTF/Account/*/SavedVariables directory it finds: at login,
-# and whenever WTF/Account itself changes (a new account), through
-# wow-desk-refresh-accounts.path. Watching each SavedVariables directory
-# instead would fire on every other addon's file too; watching the file itself
-# fires only for this addon. The instances are started, not enabled, so they
-# last until logout and are rediscovered at the next login.
+# instance for each WTF/Account/<account> directory, whether or not its
+# SavedVariables exist yet (a path unit on a missing file watches the nearest
+# existing parent and fires when the file appears). It runs at login, when
+# WTF/Account itself changes (wow-desk-refresh-accounts.path), and with every
+# refresh run (Wants=), so the hourly timer also catches a new account.
+# Watching the file rather than its directory means other addons' files never
+# fire it. The instances are started, not enabled, so they last until logout.
 #
 # ── Debounce and no overlap ───────────────────────────────────────────────────
 #
-# One logout writes every character's files within seconds, and the TSM app
-# writes in bursts. The service waits until no source has changed for 45
-# seconds (at most 15 minutes) before it starts the session. A trigger while
+# One logout writes every character's files within seconds. Once a hash has
+# changed, the service waits until no source has been written for 45 seconds
+# (at most 15 minutes), hashes again and starts the session. A trigger while
 # the service is running starts nothing, because systemd does not start a unit
-# that is already activating; the run then checks before exiting whether a
-# source changed during it and goes again (up to three passes). A flock covers
-# a manual run from a shell (`wow-desk-refresh`) alongside the service.
+# that is already activating; the run checks before exiting whether a hash
+# changed during it and goes again (up to three passes). A flock covers a
+# manual run from a shell (`wow-desk-refresh`) alongside the service.
 #
-# The hourly timer (:25, before the cloud run at :30) is the fallback for a
-# missed event. It does nothing when no source has changed since the last
-# finished run, so an idle desk costs no session; `wow-desk-refresh --force`
-# runs regardless.
+# The hourly timer (:50, away from the cloud run at :30) is the fallback for a
+# missed event; with Persistent= it also runs once after a boot that missed it.
 #
 # ── Why a background session, not `claude -p` ─────────────────────────────────
 #
@@ -47,29 +63,45 @@
 # Artifact or ArtifactData tools, and the refresh writes to an artifact's
 # database. A background session (`claude --bg`, hosted by claude-daemon.service,
 # modules/home/claude-daemon.nix) has all three. So the service starts one,
-# waits for it to finish, copies its last message to the journal and removes it
-# from the session list (`claude agents`).
+# waits for it to finish, copies its last message to the journal, then stops
+# it and removes it from the session list (`claude agents`).
+#
+# Finished means the session's `status` (from `claude agents --json --all`)
+# went from busy to idle, or the session exited (no status). Its `state` is
+# the post-turn verdict and can stay "working" on an idle session, so it is
+# not used.
 #
 # Because the session lives in the daemon's cgroup, TimeoutStartSec cannot kill
-# it; the script stops it itself (`claude stop`) at its 30-minute deadline.
-# The daemon has NoNewPrivileges and no setuid wrappers on PATH, so the session
-# gets no root, like every background session.
+# it; the script stops it itself (`claude stop`) at its 30-minute deadline, and
+# on any exit, error or signal before it was removed. The daemon has
+# NoNewPrivileges and no setuid wrappers on PATH, so the session gets no root.
 #
 # ── Permissions ───────────────────────────────────────────────────────────────
 #
-# --permission-mode dontAsk: nothing prompts (no one is there to answer), and
-# anything not allowed by the settings is denied rather than run. What the
-# refresh may do is the allow list in wow-plan's .claude/settings.json, which
-# is reviewed with the procedure it serves. No --dangerously-skip-permissions.
+# The session gets exactly the grants on its own command line, nothing from
+# the user's or the repo's settings files:
+# - `--setting-sources local` drops ~/.claude/settings.json (whose allow
+#   rules include git commit and push and gh) and wow-plan's checked-in
+#   .claude/settings.json. The worktree is cleaned each run, so it has no
+#   .claude/settings.local.json, and the session may not write one.
+# - `--settings` loads the settings below from the store: the allow list, the
+#   deny list and a PreToolUse hook. The hook refuses every Artifact delete,
+#   and every Bash command except the two desk_refresh.py steps, written
+#   plainly (no ; & | $ ` ( ) < > \ or newline). Claude Code would otherwise
+#   run read-only commands such as ls or cat without a rule.
+# - `--permission-mode dontAsk`: nothing prompts (no one is there to answer),
+#   and anything not allowed is denied rather than run.
 #
 # ── The worktree ──────────────────────────────────────────────────────────────
 #
-# Each run gets a detached worktree of origin/main under
-# /srv/git/wow-plan/.claude/worktrees/desk-refresh-<time>, so it runs the
-# merged procedure, not whatever the main checkout has. It is removed after
-# the run; leftovers from a crashed run are removed by the next one. The
-# procedure's own state between runs belongs in ~/.local/state/wow-desk-refresh
-# (StateDirectory), which the session is told in its system prompt.
+# Every run uses the one worktree /srv/git/wow-plan/.claude/worktrees/desk-refresh,
+# detached at origin/main and cleaned (checkout --force, clean -ffdx), so it
+# runs the merged procedure, not whatever the main checkout has, and
+# ~/.claude/projects keeps one directory for it. It is reset only when no
+# live session has its cwd there: a busy one makes the run wait for the next
+# trigger, and an idle leftover from a killed run is stopped and removed first.
+# The worktree is kept between runs. The procedure's own state between runs
+# belongs in ~/.local/state/wow-desk-refresh, which the session is told.
 #
 # Logs: `journalctl --user -u wow-desk-refresh`. The full transcript stays in
 # ~/.claude/projects/ (`claude --resume` lists it).
@@ -81,7 +113,10 @@ let
   appData = "${forever}/Interface/AddOns/TradeSkillMaster_AppHelper/AppData.lua";
   accounts = "${forever}/WTF/Account";
   repo = "/srv/git/wow-plan";
+  worktree = "${repo}/.claude/worktrees/desk-refresh";
+  stateDir = "${config.home.homeDirectory}/.local/state/wow-desk-refresh";
   prompt = "Run the desk refresh exactly as README.md 'The desk refresh' says.";
+  step = "python3 -I forever/t52p/desk_refresh.py";
 
   # Stable anchors only, as in claude-daemon.nix; no /run/wrappers/bin.
   path = lib.concatStringsSep ":" (lib.unique [
@@ -90,15 +125,101 @@ let
     "/run/current-system/sw/bin"
   ]);
 
+  # The PreToolUse hook (see Permissions above). Exit 2 blocks the call and
+  # shows the session the message.
+  guard = pkgs.writeShellApplication {
+    name = "wow-desk-refresh-guard";
+    runtimeInputs = [ pkgs.jq ];
+    text = ''
+      input=$(cat)
+      block() { echo "wow-desk-refresh: $1" >&2; exit 2; }
+      case "$(jq -r '.tool_name // ""' <<<"$input")" in
+        Artifact)
+          [ "$(jq -r '.tool_input.action // "publish"' <<<"$input")" != delete ] ||
+            block "the desk refresh never deletes an artifact or an asset"
+          ;;
+        Bash)
+          cmd=$(jq -r '.tool_input.command // ""' <<<"$input")
+          if [[ $cmd == *[\;\&\|\`\$\(\)\<\>\\]* || $cmd == *$'\n'* ]]; then
+            block "only plain '${step} run ...' and '${step} done ...' commands, from the worktree root, with no other shell syntax"
+          fi
+          case "$cmd" in
+            "${step} run" | "${step} run "* | "${step} done" | "${step} done "*) ;;
+            *) block "Bash may only run '${step} run ...' and '${step} done ...'" ;;
+          esac
+          ;;
+      esac
+      exit 0
+    '';
+  };
+
+  # Absolute paths in permission rules start with // (a single / is relative
+  # to the settings file).
+  settings = pkgs.writeText "wow-desk-refresh-settings.json" (builtins.toJSON {
+    disableBypassPermissionsMode = "disable";
+    permissions = {
+      defaultMode = "dontAsk";
+      allow = [
+        "ArtifactData"
+        "Artifact"
+        "mcp__claude_ai_Gmail__send_message"
+        "ToolSearch"
+        "Read"
+        "Edit(/${stateDir}/**)"
+        "Write(/${stateDir}/**)"
+        "Edit(/${worktree}/**)"
+        "Write(/${worktree}/**)"
+        "Bash(${step} run:*)"
+        "Bash(${step} done:*)"
+      ];
+      deny = [
+        "Bash(git:*)"
+        "Bash(gh:*)"
+        "Edit(/${worktree}/.claude/**)"
+        "Write(/${worktree}/.claude/**)"
+        "Edit(/${worktree}/.git)"
+        "Write(/${worktree}/.git)"
+        "Read(~/.config/blizzard/**)"
+        "Read(~/.claude/.credentials.json)"
+        "Read(~/.ssh/**)"
+      ];
+    };
+    hooks.PreToolUse = [{
+      matcher = "^(Artifact|Bash)$";
+      hooks = [{ type = "command"; command = "${guard}/bin/wow-desk-refresh-guard"; }];
+    }];
+  });
+
+  systemPrompt = lib.concatStringsSep " " [
+    "This is an unattended desk refresh started by wow-desk-refresh.service."
+    "No one is watching and nothing can be asked: finish, or stop and say why."
+    "The state directory is ${stateDir}: keep the procedure's state between runs there."
+    "The email recipient is the one line of ${stateDir}/recipient."
+    "Bash may run only '${step} run ...' and '${step} done ...', from the worktree root, with no cd, pipes, redirects or other shell syntax."
+    "Write only under the state directory or this worktree. Never delete an artifact or an asset."
+  ];
+
+  # The session's command line, as a list; the flake check reads it back from
+  # the built script.
+  claudeArgs = [
+    "--bg"
+    "--permission-mode" "dontAsk"
+    "--setting-sources" "local"
+    "--settings" "${settings}"
+    "--append-system-prompt" systemPrompt
+  ];
+
   refresh = pkgs.writeShellApplication {
     name = "wow-desk-refresh";
-    runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.git pkgs.jq pkgs.util-linux ];
+    runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.git pkgs.jq pkgs.util-linux ];
     text = ''
       force=0
       [ "''${1:-}" = --force ] && force=1
-      state="''${STATE_DIRECTORY:-$HOME/.local/state/wow-desk-refresh}"
+      state=${lib.escapeShellArg stateDir}
+      wt=${lib.escapeShellArg worktree}
       mkdir -p "$state"
-      stamp="$state/last-source-mtime"
+      hashes="$state/source-hashes"
+      claude_args=(${lib.escapeShellArgs claudeArgs})
 
       exec 9>"''${XDG_RUNTIME_DIR:-/tmp}/wow-desk-refresh.lock"
       if ! flock -n 9; then
@@ -106,13 +227,31 @@ let
         exit 0
       fi
 
-      newest() {
-        local files=("${appData}")
+      svs() {
         shopt -s nullglob
-        files+=("${accounts}"/*/SavedVariables/ForeverPlanLog.lua)
+        local f=("${accounts}"/*/SavedVariables/ForeverPlanLog.lua)
         shopt -u nullglob
+        [ "''${#f[@]}" = 0 ] || printf '%s\n' "''${f[@]}"
+      }
+
+      # What the refresh reads: each ForeverPlanLog.lua whole, and TSM's
+      # Forever-US region blocks (one line each), or all of AppData.lua if
+      # its format changed.
+      current_hashes() {
+        local f h
+        while read -r f; do
+          sha256sum "$f"
+        done < <(svs)
+        if [ -f "${appData}" ]; then
+          h=$(grep -E '^select\(2, \.\.\.\)\.LoadData\("AUCTIONDB_REGION_(SALE|STAT)","Forever-US"' "${appData}" | sha256sum) ||
+            h=$(sha256sum <"${appData}")
+          echo "''${h%% *}  TSM region data"
+        fi
+      }
+
+      newest() {
         local n
-        n=$({ stat -c %Y "''${files[@]}" 2>/dev/null || true; } | sort -n | tail -1)
+        n=$({ svs; echo "${appData}"; } | xargs -d '\n' stat -c %Y 2>/dev/null | sort -n | tail -1) || true
         echo "''${n:-0}"
       }
 
@@ -125,81 +264,133 @@ let
         done
       }
 
-      # Leftover worktrees of a crashed run (none is in use: we hold the lock).
-      for old in "${repo}"/.claude/worktrees/desk-refresh-*; do
-        [ -d "$old" ] || continue
-        echo "removing leftover worktree $old"
-        git -C "${repo}" worktree remove --force "$old" || true
-      done
-      git -C "${repo}" worktree prune
+      unchanged() {
+        [ "$force" = 0 ] && [ -f "$hashes" ] && [ "$1" = "$(cat "$hashes")" ]
+      }
+
+      # The session started by this run, until it is removed. Stopped on any
+      # exit, so it never outlives the script (it lives in the daemon's cgroup).
+      id=""
+      finish_session() {
+        [ -n "$id" ] || return 0
+        claude stop "$id" >/dev/null 2>&1 || true
+        claude rm "$id" >/dev/null 2>&1 || true
+        echo "session $id stopped and removed"
+        id=""
+      }
+      trap finish_session EXIT
+      trap 'exit 143' TERM INT HUP
+
+      # Reset the worktree, but only when no live session has its cwd there.
+      prepare_worktree() {
+        local json busy idle i
+        json=$(claude agents --json) || { echo "claude agents failed; not touching $wt"; return 1; }
+        busy=$(jq -r --arg w "$wt" '[.[] | select((.cwd // "") as $c | $c == $w or ($c | startswith($w + "/")))
+          | select(.kind != "background" or .status == "busy") | .id // .sessionId] | join(" ")' <<<"$json")
+        if [ -n "$busy" ]; then
+          echo "a session is still running in $wt ($busy); leaving it, the next trigger tries again"
+          exit 0
+        fi
+        idle=$(jq -r --arg w "$wt" '.[] | select((.cwd // "") as $c | $c == $w or ($c | startswith($w + "/")))
+          | select(.kind == "background") | .id' <<<"$json")
+        for i in $idle; do
+          echo "stopping leftover idle session $i in $wt"
+          claude stop "$i" >/dev/null 2>&1 || true
+          claude rm "$i" >/dev/null 2>&1 || true
+        done
+        git -C "${repo}" fetch --quiet origin main
+        if git -C "${repo}" worktree list --porcelain | grep -qxF "worktree $wt"; then
+          git -C "$wt" checkout --quiet --force --detach origin/main
+          git -C "$wt" clean -ffdxq
+        else
+          git -C "${repo}" worktree prune
+          if [ -e "$wt" ]; then
+            echo "$wt exists but is not a worktree of ${repo}; remove it by hand"
+            return 1
+          fi
+          git -C "${repo}" worktree add --quiet --detach "$wt" origin/main
+        fi
+        echo "worktree $wt at $(git -C "$wt" rev-parse --short HEAD)"
+        if ! grep -qE '^#{2,4} The desk refresh' "$wt/README.md"; then
+          echo "wow-plan main has no 'The desk refresh' section in README.md; not starting a session"
+          return 1
+        fi
+      }
 
       run_session() {
-        local wt out sid id rec st status seen t0 deadline result transcript
-        git -C "${repo}" fetch --quiet origin main
-        wt="${repo}/.claude/worktrees/desk-refresh-$(date +%Y%m%dT%H%M%S)"
-        git -C "${repo}" worktree add --quiet --detach "$wt" origin/main
-        echo "worktree $wt at $(git -C "$wt" rev-parse --short HEAD)"
+        local out json rec st sid seen t0 now deadline transcript result
+        [ -s "$state/recipient" ] || echo "warning: $state/recipient is missing; the refresh has no one to email"
         # --bg picks the session id itself (it ignores --session-id) and
         # prints it: "backgrounded · <id> · <name>".
-        out=$(cd "$wt" && claude --bg -n "desk-refresh-$(date +%H%M)" \
-          --permission-mode dontAsk \
-          --append-system-prompt "This is an unattended desk refresh started by wow-desk-refresh.service. No one is watching and nothing can be asked: finish, or stop and say why. Keep the procedure's state between runs in $state." \
-          "${prompt}" </dev/null 2>&1) || { printf '%s\n' "$out"; return 1; }
+        out=$(cd "$wt" && claude "''${claude_args[@]}" -n "desk-refresh-$(date +%H%M)" "${prompt}" </dev/null 2>&1) ||
+          { printf '%s\n' "$out"; return 1; }
         id=$(sed -n 's/^backgrounded · \([0-9a-f]*\).*/\1/p' <<<"$out" | head -1)
         if [ -z "$id" ]; then
           printf 'could not start the session:\n%s\n' "$out"
-          git -C "${repo}" worktree remove --force "$wt" || true
           return 1
         fi
         echo "session $id started"
-        t0=$(date +%s) deadline=$(( $(date +%s) + 1800 ))
-        sid="" status=0 seen=0
+        t0=$(date +%s) deadline=$(($(date +%s) + 1800)) sid="" seen=0 json=""
+        # Finished once `status` is idle after it was seen busy, or once the
+        # session has exited (no status). Before it is first seen busy, only
+        # after two minutes, so a session still starting up is not taken for
+        # a finished one. A failed or garbled poll is retried.
         while :; do
-          rec=$(claude agents --json 2>/dev/null | jq -c --arg i "$id" 'map(select(.id == $i)) | .[0] // empty')
-          [ -n "$rec" ] || break
-          sid=$(jq -r '.sessionId // empty' <<<"$rec")
-          st=$(jq -r '"\(.status // "")/\(.state // "")"' <<<"$rec")
-          # Finished once it is no longer working, but only after it was
-          # seen working (or two minutes passed), so a session that is still
-          # starting up never has its worktree removed under it.
-          case "$st" in
-            */working | busy/*) seen=1 ;;
-            *) [ "$seen" = 1 ] || [ $(( $(date +%s) - t0 )) -ge 120 ] && break ;;
-          esac
-          if [ "$(date +%s)" -ge "$deadline" ]; then
+          now=$(date +%s)
+          if [ "$now" -ge "$deadline" ]; then
             echo "deadline reached; stopping session $id"
-            claude stop "$id" || true
-            status=1
+            finish_session
+            return 1
+          fi
+          if json=$(claude agents --json --all 2>/dev/null) &&
+             rec=$(jq -ce --arg i "$id" 'map(select(.id == $i)) | .[0]' <<<"$json" 2>/dev/null); then
+            sid=$(jq -r '.sessionId // empty' <<<"$rec")
+            st=$(jq -r '.status // ""' <<<"$rec")
+            if [ "$st" = busy ]; then
+              seen=1
+            elif { [ "$st" = idle ] || [ -z "$st" ]; } && { [ "$seen" = 1 ] || [ $((now - t0)) -ge 120 ]; }; then
+              break
+            fi
+          elif jq -e 'type == "array"' <<<"$json" >/dev/null 2>&1 && [ $((now - t0)) -ge 120 ]; then
+            echo "session $id is no longer listed"
             break
           fi
           sleep 15
         done
         transcript=""
         [ -n "$sid" ] && transcript=$(find "$HOME/.claude/projects" -name "$sid.jsonl" -print -quit)
-        if [ -n "$transcript" ]; then
-          result=$(jq -rs '[.[] | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text] | last // ""' "$transcript")
+        if [ -n "$transcript" ] &&
+           result=$(jq -rs '[.[] | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text] | last // ""' "$transcript"); then
           echo "session $id ended; its last message:"
           printf '%s\n' "$result"
+          finish_session
         else
-          echo "session $id left no transcript"
-          status=1
+          echo "session $id ended but its transcript could not be read"
+          finish_session
+          return 1
         fi
-        claude rm "$id" >/dev/null 2>&1 || true
-        git -C "${repo}" worktree remove --force "$wt" || true
-        return "$status"
       }
 
-      if [ "$force" = 0 ] && [ -f "$stamp" ] && [ "$(newest)" -le "$(cat "$stamp")" ]; then
+      if unchanged "$(current_hashes)"; then
         echo "no source changed since the last refresh"
         exit 0
       fi
       for pass in 1 2 3; do
         settle
-        mark=$(newest)
-        echo "pass $pass: newest source $(date -d "@$mark" '+%F %T')"
+        mark=$(current_hashes)
+        if [ "$pass" = 1 ] && unchanged "$mark"; then
+          echo "no source changed since the last refresh"
+          exit 0
+        fi
+        echo "pass $pass: newest source $(date -d "@$(newest)" '+%F %T')"
+        prepare_worktree
         run_session
-        echo "$mark" >"$stamp"
-        [ "$(newest)" -gt "$mark" ] || exit 0
+        printf '%s\n' "$mark" >"$hashes.tmp"
+        mv "$hashes.tmp" "$hashes"
+        force=0
+        if unchanged "$(current_hashes)"; then
+          exit 0
+        fi
         echo "a source changed during the run; going again"
       done
     '';
@@ -209,9 +400,10 @@ let
     name = "wow-desk-refresh-accounts";
     runtimeInputs = [ pkgs.coreutils ];
     text = ''
-      for sv in "${accounts}"/*/SavedVariables; do
-        [ -d "$sv" ] || continue
-        acct=$(basename "$(dirname "$sv")")
+      for dir in "${accounts}"/*/; do
+        acct=$(basename "$dir")
+        # WTF/Account/SavedVariables is the account-wide one, not an account.
+        [ "$acct" != SavedVariables ] || continue
         unit="wow-desk-refresh-sv@$(systemd-escape "$acct").path"
         systemctl --user start "$unit"
         echo "watching $unit"
@@ -225,7 +417,7 @@ in
   systemd.user.services.wow-desk-refresh = {
     Unit = {
       Description = "WoW Forever desk refresh (headless Claude Code session)";
-      Wants = [ "claude-daemon.service" ];
+      Wants = [ "claude-daemon.service" "wow-desk-refresh-accounts.service" ];
       After = [ "claude-daemon.service" ];
       RequiresMountsFor = [ "/srv/games" "/srv/git" ];
     };
@@ -243,7 +435,7 @@ in
   systemd.user.timers.wow-desk-refresh = {
     Unit.Description = "WoW Forever desk refresh, hourly fallback";
     Timer = {
-      OnCalendar = "*-*-* *:25:00";
+      OnCalendar = "*-*-* *:50:00";
       Persistent = true;
     };
     Install.WantedBy = [ "timers.target" ];
