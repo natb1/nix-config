@@ -315,8 +315,8 @@
               jq -e '.disableBypassPermissionsMode == "disable" and .permissions.defaultMode == "dontAsk"' "$set" >/dev/null ||
                 fail "bypass mode is not disabled"
               jq -e '.permissions.allow | map(select(startswith("Bash("))) ==
-                ["Bash(python3 -I forever/t52p/desk_refresh.py run:*)", "Bash(python3 -I forever/t52p/desk_refresh.py done:*)"]' "$set" >/dev/null ||
-                fail "Bash is allowed more than the two desk_refresh.py steps"
+                ["Bash(python3 -I forever/t52p/desk_refresh.py prepare:*)", "Bash(python3 -I forever/t52p/desk_refresh.py run:*)", "Bash(python3 -I forever/t52p/desk_refresh.py done:*)"]' "$set" >/dev/null ||
+                fail "Bash is allowed more than the three desk_refresh.py steps"
               jq -e '.permissions.allow | map(select(test("^(Edit|Write)") and (test("wow-desk-refresh/\\*\\*\\)$|worktrees/desk-refresh/\\*\\*\\)$") | not))) == []' "$set" >/dev/null ||
                 fail "writes are allowed outside the state dir and the worktree"
               jq -e '.permissions.deny | index("Bash(git:*)") and index("Bash(gh:*)")' "$set" >/dev/null ||
@@ -326,6 +326,8 @@
               hook=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "^(Artifact|Bash)$") | .hooks[0].command' "$set")
               [ -x "$hook" ] || fail "no PreToolUse hook on Artifact and Bash"
               try() { local rc=0; printf '%s' "$2" | "$hook" 2>/dev/null || rc=$?; [ "$rc" = "$1" ] || fail "hook: expected exit $1, got $rc, for $2"; }
+              try 0 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py prepare"}}'
+              try 2 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py prepare; ls"}}'
               try 0 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py run --out W/out"}}'
               try 0 '{"tool_name":"Bash","tool_input":{"command":"python3 -I forever/t52p/desk_refresh.py done --out W/out"}}'
               try 2 '{"tool_name":"Bash","tool_input":{"command":"git push"}}'

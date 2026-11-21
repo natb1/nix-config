@@ -86,7 +86,7 @@
 #   .claude/settings.local.json, and the session may not write one.
 # - `--settings` loads the settings below from the store: the allow list, the
 #   deny list and a PreToolUse hook. The hook refuses every Artifact delete,
-#   and every Bash command except the two desk_refresh.py steps, written
+#   and every Bash command except the three desk_refresh.py steps (prepare, run, done), written
 #   plainly (no ; & | $ ` ( ) < > \ or newline). Claude Code would otherwise
 #   run read-only commands such as ls or cat without a rule.
 # - `--permission-mode dontAsk`: nothing prompts (no one is there to answer),
@@ -141,11 +141,11 @@ let
         Bash)
           cmd=$(jq -r '.tool_input.command // ""' <<<"$input")
           if [[ $cmd == *[\;\&\|\`\$\(\)\<\>\\]* || $cmd == *$'\n'* ]]; then
-            block "only plain '${step} run ...' and '${step} done ...' commands, from the worktree root, with no other shell syntax"
+            block "only plain '${step} prepare', '${step} run ...' and '${step} done ...' commands, from the worktree root, with no other shell syntax"
           fi
           case "$cmd" in
-            "${step} run" | "${step} run "* | "${step} done" | "${step} done "*) ;;
-            *) block "Bash may only run '${step} run ...' and '${step} done ...'" ;;
+            "${step} prepare" | "${step} prepare "* | "${step} run" | "${step} run "* | "${step} done" | "${step} done "*) ;;
+            *) block "Bash may only run '${step} prepare', '${step} run ...' and '${step} done ...'" ;;
           esac
           ;;
       esac
@@ -169,6 +169,7 @@ let
         "Write(/${stateDir}/**)"
         "Edit(/${worktree}/**)"
         "Write(/${worktree}/**)"
+        "Bash(${step} prepare:*)"
         "Bash(${step} run:*)"
         "Bash(${step} done:*)"
       ];
@@ -195,7 +196,7 @@ let
     "No one is watching and nothing can be asked: finish, or stop and say why."
     "The state directory is ${stateDir}: keep the procedure's state between runs there."
     "The email recipient is the one line of ${stateDir}/recipient."
-    "Bash may run only '${step} run ...' and '${step} done ...', from the worktree root, with no cd, pipes, redirects or other shell syntax."
+    "Bash may run only '${step} prepare', '${step} run ...' and '${step} done ...', from the worktree root, with no cd, pipes, redirects or other shell syntax."
     "Write only under the state directory or this worktree. Never delete an artifact or an asset."
   ];
 
