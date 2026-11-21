@@ -276,6 +276,32 @@
               echo "checked: ${lib.concatStringsSep " " (lib.attrNames units)}"
               touch "$out"
             '';
+          # desk's WoW desk refresh (hosts/desk/home/wow-desk-refresh.nix):
+          # an unattended Claude session, so it must never prompt and never
+          # skip permission checks, and it gets no root, like the rc units.
+          wow-desk-refresh-unit =
+            let
+              lib = nixpkgs.lib;
+              hm = self.nixosConfigurations.desk.config.home-manager.users.n8;
+              s = hm.systemd.user.services.wow-desk-refresh;
+              env = lib.toList (s.Service.Environment or [ ]);
+              path = lib.findFirst (lib.hasPrefix "PATH=") "" env;
+              script = builtins.readFile ./hosts/desk/home/wow-desk-refresh.nix;
+              problems =
+                lib.optional ((s.Service.NoNewPrivileges or false) != true) "NoNewPrivileges is not set"
+                ++ lib.optional (lib.hasInfix "/run/wrappers" path) "PATH has /run/wrappers: ${path}"
+                ++ lib.optional (!(lib.hasInfix "--permission-mode dontAsk" script)) "the session is not started with --permission-mode dontAsk"
+                ++ lib.optional (lib.hasInfix "--dangerously-skip-permissions\"" script || lib.hasInfix "bypassPermissions\"" script) "the session skips permission checks"
+                ++ lib.optional ((hm.systemd.user.timers.wow-desk-refresh.Timer.OnCalendar or "") != "*-*-* *:25:00") "the fallback timer is not at :25"
+                ++ lib.optional (!(hm.systemd.user.paths ? "wow-desk-refresh-sv@")) "no per-account path template";
+            in
+            pkgs.runCommand "wow-desk-refresh-unit" { } ''
+              ${lib.optionalString (problems != [ ]) ''
+                printf '%s\n' ${lib.escapeShellArgs problems} >&2
+                exit 1
+              ''}
+              touch "$out"
+            '';
           # Zellij, as desk configures it. The shell integrations must stay
           # off (modules/home/zellij.nix). `setup --check` exits 0 whatever it
           # finds, but the config is loaded first, and a config.kdl that does
