@@ -46,7 +46,7 @@
 # ── Debounce and no overlap ───────────────────────────────────────────────────
 #
 # One logout writes every character's files within seconds. Once a hash has
-# changed, the service waits until no source has been written for 45 seconds
+# changed, the service waits until no source has been written for 10 seconds
 # (at most 15 minutes), hashes again and starts the session. A trigger while
 # the service is running starts nothing, because systemd does not start a unit
 # that is already activating; the run checks before exiting whether a hash
@@ -256,12 +256,13 @@ let
         echo "''${n:-0}"
       }
 
-      # Debounce: wait for 45 quiet seconds, at most 15 minutes.
+      # Debounce: wait for 10 quiet seconds, at most 15 minutes. A /reload writes its
+      # file in one go, and a logout writes every account's files within seconds.
       settle() {
         local t0 now
         t0=$(date +%s)
-        while now=$(date +%s); [ $((now - $(newest))) -lt 45 ] && [ $((now - t0)) -lt 900 ]; do
-          sleep 5
+        while now=$(date +%s); [ $((now - $(newest))) -lt 10 ] && [ $((now - t0)) -lt 900 ]; do
+          sleep 2
         done
       }
 
