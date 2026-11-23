@@ -14,6 +14,7 @@
     ./desktop.nix
     ./media.nix
     ./wow-desk-refresh.nix
+    ./wow-sales-rp.nix
   ];
 
   # rc servers for desk's private repos, beside the nix-config one
