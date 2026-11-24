@@ -299,6 +299,11 @@
               grep -qx 'Persistent=true' "$timer" || fail "the fallback timer is not Persistent"
               grep -q '^PathChanged=.*/%I/SavedVariables/ForeverPlanLog.lua$' ${unit "wow-desk-refresh-sv@.path"} ||
                 fail "no per-account path template"
+              grep -q '^PathChanged=.*/\.local/state/wow-desk-refresh/snapshot$' ${unit "wow-desk-refresh-snapshot.path"} ||
+                fail "the snapshot stamp does not trigger the refresh"
+              grep -qx 'NoNewPrivileges=true' ${unit "wow-desk-refresh-snapshot.service"} || fail "the snapshot watcher has no NoNewPrivileges"
+              grep -q 'state/snapshot' ${script} || fail "the snapshot stamp is not in the hashes"
+              grep -q 'state/retry' ${script} || fail "the script does not go again on a retry"
 
               # The session's command line, from the built script.
               s=${script}

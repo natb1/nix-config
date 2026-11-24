@@ -18,14 +18,25 @@
 # - The ForeverPlanLog addon's SavedVariables, one per WoW account, rewritten
 #   on a /reload, a logout and the addon's Save scan button:
 #   wow-desk-refresh-sv@<account>.path, one instance per account directory.
+# - A new hourly Battle.net auction snapshot: wow-desk-refresh-snapshot.service
+#   runs wow-plan's forever/t52p/snapshot_watch.py, which polls the snapshot
+#   every minute with If-Modified-Since (an unchanged one answers 304, no body)
+#   and rewrites <state dir>/snapshot when it changes;
+#   wow-desk-refresh-snapshot.path watches that file. Like wow-sales-rp, the
+#   watcher is copied out of wow-plan's origin/main into its own state
+#   directory (~/.local/state/wow-desk-refresh-snapshot), which the session
+#   cannot write, and run from there; until it is on main, the service says so
+#   and waits. It reads ~/.config/blizzard/credentials and keeps its token in
+#   memory only.
 #
 # ── Content, not mtime ────────────────────────────────────────────────────────
 #
 # The TSM desktop app rewrites AppData.lua about twice an hour all day, mostly
 # its realm blocks, which the refresh does not use. So a trigger only wakes
-# the script: it hashes what the refresh reads (each ForeverPlanLog.lua, and
+# the script: it hashes what the refresh reads (each ForeverPlanLog.lua,
 # AppData.lua's Forever-US region sale and region stat lines, or the whole
-# file if those lines are not found) and starts a session only when a hash
+# file if those lines are not found, and the snapshot stamp) and starts a
+# session only when a hash
 # differs from the last finished run's, kept in the state directory
 # (source-hashes). An unchanged write costs a few hashes and no session.
 # `wow-desk-refresh --force` runs regardless.
@@ -50,8 +61,11 @@
 # (at most 15 minutes), hashes again and starts the session. A trigger while
 # the service is running starts nothing, because systemd does not start a unit
 # that is already activating; the run checks before exiting whether a hash
-# changed during it and goes again (up to three passes). A flock covers a
-# manual run from a shell (`wow-desk-refresh`) alongside the service.
+# changed during it and goes again (up to three passes). It also goes again
+# when the run left <state dir>/retry: a refused batch (a version conflict
+# with another writer) ends a run early, and the next pass reads in full. A
+# flock covers a manual run from a shell (`wow-desk-refresh`) alongside the
+# service.
 #
 # The hourly timer (:50, away from the cloud run at :30) is the fallback for a
 # missed event; with Persistent= it also runs once after a boot that missed it.
@@ -92,6 +106,13 @@
 # - `--permission-mode dontAsk`: nothing prompts (no one is there to answer),
 #   and anything not allowed is denied rather than run.
 #
+# ── The prompt ────────────────────────────────────────────────────────────────
+#
+# wow-plan's `desk_refresh.py prepare` prints the run's steps, filled in, so
+# the session reads nothing else (wow-plan README "The desk refresh"). The
+# prompt says to follow them when the worktree's desk_refresh.py has the
+# steps marker; an older main gets the README prompt as before.
+#
 # ── The worktree ──────────────────────────────────────────────────────────────
 #
 # Every run uses the one worktree /srv/git/wow-plan/.claude/worktrees/desk-refresh,
@@ -116,6 +137,9 @@ let
   worktree = "${repo}/.claude/worktrees/desk-refresh";
   stateDir = "${config.home.homeDirectory}/.local/state/wow-desk-refresh";
   prompt = "Run the desk refresh exactly as README.md 'The desk refresh' says.";
+  promptSteps = "Run the desk refresh: run the command python3 -I forever/t52p/desk_refresh.py prepare and follow the steps it prints, exactly.";
+  stepsMarker = "desk refresh steps v2";
+  snapshotState = "${config.home.homeDirectory}/.local/state/wow-desk-refresh-snapshot";
   step = "python3 -I forever/t52p/desk_refresh.py";
 
   # Stable anchors only, as in claude-daemon.nix; no /run/wrappers/bin.
@@ -248,6 +272,10 @@ let
             h=$(sha256sum <"${appData}")
           echo "''${h%% *}  TSM region data"
         fi
+        if [ -f "$state/snapshot" ]; then
+          h=$(sha256sum <"$state/snapshot")
+          echo "''${h%% *}  Battle.net snapshot"
+        fi
       }
 
       newest() {
@@ -320,11 +348,13 @@ let
       }
 
       run_session() {
-        local out json rec st sid seen t0 now deadline transcript result
+        local out json rec st sid seen t0 now deadline transcript result p
         [ -s "$state/recipient" ] || echo "warning: $state/recipient is missing; the refresh has no one to email"
         # --bg picks the session id itself (it ignores --session-id) and
         # prints it: "backgrounded · <id> · <name>".
-        out=$(cd "$wt" && claude "''${claude_args[@]}" -n "desk-refresh-$(date +%H%M)" "${prompt}" </dev/null 2>&1) ||
+        p=${lib.escapeShellArg prompt}
+        grep -qF ${lib.escapeShellArg stepsMarker} "$wt/forever/t52p/desk_refresh.py" 2>/dev/null && p=${lib.escapeShellArg promptSteps}
+        out=$(cd "$wt" && claude "''${claude_args[@]}" -n "desk-refresh-$(date +%H%M)" "$p" </dev/null 2>&1) ||
           { printf '%s\n' "$out"; return 1; }
         id=$(sed -n 's/^backgrounded · \([0-9a-f]*\).*/\1/p' <<<"$out" | head -1)
         if [ -z "$id" ]; then
@@ -357,7 +387,7 @@ let
             echo "session $id is no longer listed"
             break
           fi
-          sleep 15
+          sleep 5
         done
         transcript=""
         [ -n "$sid" ] && transcript=$(find "$HOME/.claude/projects" -name "$sid.jsonl" -print -quit)
@@ -385,16 +415,43 @@ let
           exit 0
         fi
         echo "pass $pass: newest source $(date -d "@$(newest)" '+%F %T')"
+        rm -f "$state/retry"
         prepare_worktree
         run_session
         printf '%s\n' "$mark" >"$hashes.tmp"
         mv "$hashes.tmp" "$hashes"
         force=0
-        if unchanged "$(current_hashes)"; then
+        if [ -e "$state/retry" ]; then
+          rm -f "$state/retry"
+          echo "the run asked to go again (a refused write); going again with fresh reads"
+        elif unchanged "$(current_hashes)"; then
           exit 0
+        else
+          echo "a source changed during the run; going again"
         fi
-        echo "a source changed during the run; going again"
       done
+    '';
+  };
+
+  # The snapshot watcher (see Sources above): wow-plan's snapshot_watch.py,
+  # copied from origin/main into its own state directory and run from there.
+  snapshotWatch = pkgs.writeShellApplication {
+    name = "wow-desk-refresh-snapshot";
+    runtimeInputs = [ pkgs.coreutils pkgs.git pkgs.python3 ];
+    text = ''
+      own=${lib.escapeShellArg snapshotState}
+      mkdir -p "$own"
+      git -C ${repo} fetch --quiet origin main || echo "fetch failed; using the last fetched main"
+      src="$own/snapshot_watch.py"
+      if git -C ${repo} show origin/main:forever/t52p/snapshot_watch.py >"$src.new" 2>/dev/null; then
+        mv -f "$src.new" "$src"
+      else
+        rm -f "$src.new"
+        echo "forever/t52p/snapshot_watch.py is not on wow-plan's main yet; trying again in 10 minutes"
+        sleep 600
+        exit 1
+      fi
+      exec python3 -I "$src" --state-dir ${lib.escapeShellArg stateDir}
     '';
   };
 
@@ -414,7 +471,7 @@ let
   };
 in
 {
-  home.packages = [ refresh ];
+  home.packages = [ refresh snapshotWatch ];
 
   systemd.user.services.wow-desk-refresh = {
     Unit = {
@@ -447,6 +504,30 @@ in
     Unit.Description = "Watch TSM's AppData.lua for the desk refresh";
     Path = {
       PathChanged = appData;
+      Unit = "wow-desk-refresh.service";
+    };
+    Install.WantedBy = [ "default.target" ];
+  };
+
+  systemd.user.services.wow-desk-refresh-snapshot = {
+    Unit = {
+      Description = "Watch for a new Battle.net auction snapshot for the desk refresh";
+      RequiresMountsFor = [ "/srv/git" ];
+    };
+    Service = {
+      Type = "simple";
+      ExecStart = "${snapshotWatch}/bin/wow-desk-refresh-snapshot";
+      NoNewPrivileges = true;
+      Restart = "always";
+      RestartSec = "30s";
+    };
+    Install.WantedBy = [ "default.target" ];
+  };
+
+  systemd.user.paths.wow-desk-refresh-snapshot = {
+    Unit.Description = "Watch the snapshot stamp for the desk refresh";
+    Path = {
+      PathChanged = "${stateDir}/snapshot";
       Unit = "wow-desk-refresh.service";
     };
     Install.WantedBy = [ "default.target" ];
