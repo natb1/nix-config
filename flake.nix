@@ -299,6 +299,9 @@
               grep -qx 'Persistent=true' "$timer" || fail "the fallback timer is not Persistent"
               grep -q '^PathChanged=.*/%I/SavedVariables/ForeverPlanLog.lua$' ${unit "wow-desk-refresh-sv@.path"} ||
                 fail "no per-account path template"
+              grep -q '^PathChanged=.*/%I/SavedVariables/GearQuestForever.lua$' ${unit "wow-desk-refresh-gq@.path"} ||
+                fail "no per-character GearQuest path template"
+              grep -qF '/*/*/*/SavedVariables/GearQuestForever.lua' ${script} || fail "GearQuest's files are not in the hashes"
               grep -q '^PathChanged=.*/\.local/state/wow-desk-refresh/snapshot$' ${unit "wow-desk-refresh-snapshot.path"} ||
                 fail "the snapshot stamp does not trigger the refresh"
               grep -qx 'NoNewPrivileges=true' ${unit "wow-desk-refresh-snapshot.service"} || fail "the snapshot watcher has no NoNewPrivileges"

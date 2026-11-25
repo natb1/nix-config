@@ -18,6 +18,12 @@
 # - The ForeverPlanLog addon's SavedVariables, one per WoW account, rewritten
 #   on a /reload, a logout and the addon's Save scan button:
 #   wow-desk-refresh-sv@<account>.path, one instance per account directory.
+# - GearQuest Forever's per-character SavedVariables (the gear targets):
+#   wow-desk-refresh-gq@<account>/<realm>/<character>.path, one instance per
+#   character directory, started by wow-desk-refresh-accounts (the folder
+#   names are found at run time, never written here). A character made after
+#   the accounts service last ran is watched from the next login; until then
+#   the refresh still reads its file on any other trigger.
 # - A new hourly Battle.net auction snapshot: wow-desk-refresh-snapshot.service
 #   runs wow-plan's forever/t52p/snapshot_watch.py, which polls the snapshot
 #   every minute with If-Modified-Since (an unchanged one answers 304, no body)
@@ -33,7 +39,8 @@
 #
 # The TSM desktop app rewrites AppData.lua about twice an hour all day, mostly
 # its realm blocks, which the refresh does not use. So a trigger only wakes
-# the script: it hashes what the refresh reads (each ForeverPlanLog.lua,
+# the script: it hashes what the refresh reads (each ForeverPlanLog.lua and
+# GearQuestForever.lua,
 # AppData.lua's Forever-US region sale and region stat lines, or the whole
 # file if those lines are not found, and the snapshot stamp) and starts a
 # session only when a hash
@@ -293,14 +300,17 @@ let
         exit 0
       fi
 
+      # Each account's ForeverPlanLog.lua, and each character's
+      # GearQuestForever.lua (the gear targets the refresh exports).
       svs() {
         shopt -s nullglob
-        local f=("${accounts}"/*/SavedVariables/ForeverPlanLog.lua)
+        local f=("${accounts}"/*/SavedVariables/ForeverPlanLog.lua
+          "${accounts}"/*/*/*/SavedVariables/GearQuestForever.lua)
         shopt -u nullglob
         [ "''${#f[@]}" = 0 ] || printf '%s\n' "''${f[@]}"
       }
 
-      # What the refresh reads: each ForeverPlanLog.lua whole, and TSM's
+      # What the refresh reads: each file svs lists whole, and TSM's
       # Forever-US region blocks (one line each), or all of AppData.lua if
       # its format changed.
       current_hashes() {
@@ -561,6 +571,16 @@ let
         unit="wow-desk-refresh-sv@$(systemd-escape "$acct").path"
         systemctl --user start "$unit"
         echo "watching $unit"
+        # Each character's folder (<realm>/<character>) with SavedVariables:
+        # its GearQuestForever.lua. The names are found here, never written
+        # into the config.
+        for cdir in "$dir"*/*/; do
+          [ -d "''${cdir}SavedVariables" ] || continue
+          rel="$acct/$(basename "$(dirname "$cdir")")/$(basename "$cdir")"
+          unit="wow-desk-refresh-gq@$(systemd-escape "$rel").path"
+          systemctl --user start "$unit"
+          echo "watching $unit"
+        done
       done
     '';
   };
@@ -635,6 +655,14 @@ in
     Unit.Description = "Watch WoW account %I's ForeverPlanLog.lua for the desk refresh";
     Path = {
       PathChanged = "${accounts}/%I/SavedVariables/ForeverPlanLog.lua";
+      Unit = "wow-desk-refresh.service";
+    };
+  };
+
+  systemd.user.paths."wow-desk-refresh-gq@" = {
+    Unit.Description = "Watch WoW character %I's GearQuestForever.lua for the desk refresh";
+    Path = {
+      PathChanged = "${accounts}/%I/SavedVariables/GearQuestForever.lua";
       Unit = "wow-desk-refresh.service";
     };
   };
