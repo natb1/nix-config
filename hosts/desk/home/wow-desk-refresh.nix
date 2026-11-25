@@ -70,6 +70,25 @@
 # The hourly timer (:50, away from the cloud run at :30) is the fallback for a
 # missed event; with Persistent= it also runs once after a boot that missed it.
 #
+# ── The fast path ─────────────────────────────────────────────────────────────
+#
+# Market deals may last minutes, so a new snapshot is analysed before anything
+# else (wow-plan README "The desk refresh", "The fast path"). When the
+# snapshot's hash changed since the last finished run, each pass, right after
+# the worktree is reset and before the 10-second settle, runs wow-plan's
+# `desk_refresh.py fast` from the worktree itself (no session): a few seconds
+# of analysis on the last run's cached reads and the new snapshot. It is best
+# effort and exits 0 on its own failures; the script guards it as well, so
+# the full run always follows. When it finds a Deal email due it either
+# - writes it into the mail spool (../wow-mail-spool.nix), which root sends
+#   within seconds, with no session; or, with no spool,
+# - writes <state dir>/fast/steps.txt: a short session (10-minute deadline)
+#   is started with that text as its prompt, to send the one email, and
+#   waited for.
+# Then the full session runs as before. A main whose desk_refresh.py lacks
+# the fast steps marker gets no fast path. `wow-desk-refresh --no-fast` (or
+# fastPath = false below) turns it off.
+#
 # ── Why a background session, not `claude -p` ─────────────────────────────────
 #
 # Probed 2026-11-21 with claude-code 2.1.326, in a fresh worktree of
@@ -139,6 +158,10 @@ let
   prompt = "Run the desk refresh exactly as README.md 'The desk refresh' says.";
   promptSteps = "Run the desk refresh: run the command python3 -I forever/t52p/desk_refresh.py prepare and follow the steps it prints, exactly.";
   stepsMarker = "desk refresh steps v2";
+  # The fast path (see above); false puts --no-fast on the service's command line.
+  fastPath = true;
+  fastMarker = "desk refresh fast steps v1";
+  spool = "${stateDir}/mail-spool";
   snapshotState = "${config.home.homeDirectory}/.local/state/wow-desk-refresh-snapshot";
   step = "python3 -I forever/t52p/desk_refresh.py";
 
@@ -204,6 +227,8 @@ let
         "Write(/${worktree}/.claude/**)"
         "Edit(/${worktree}/.git)"
         "Write(/${worktree}/.git)"
+        "Edit(/${spool}/**)"
+        "Write(/${spool}/**)"
         "Read(~/.config/blizzard/**)"
         "Read(~/.claude/.credentials.json)"
         "Read(~/.ssh/**)"
@@ -221,7 +246,7 @@ let
     "The state directory is ${stateDir}: keep the procedure's state between runs there."
     "The email recipient is the one line of ${stateDir}/recipient."
     "Bash may run only '${step} prepare', '${step} run ...' and '${step} done ...', from the worktree root, with no cd, pipes, redirects or other shell syntax."
-    "Write only under the state directory or this worktree. Never delete an artifact or an asset."
+    "Write only under the state directory (never its mail-spool) or this worktree. Never delete an artifact or an asset."
   ];
 
   # The session's command line, as a list; the flake check reads it back from
@@ -238,8 +263,14 @@ let
     name = "wow-desk-refresh";
     runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.git pkgs.jq pkgs.util-linux ];
     text = ''
-      force=0
-      [ "''${1:-}" = --force ] && force=1
+      force=0 fast=1
+      for arg in "$@"; do
+        case "$arg" in
+          --force) force=1 ;;
+          --no-fast) fast=0 ;;
+          *) echo "usage: wow-desk-refresh [--force] [--no-fast]" >&2; exit 2 ;;
+        esac
+      done
       state=${lib.escapeShellArg stateDir}
       wt=${lib.escapeShellArg worktree}
       mkdir -p "$state"
@@ -347,14 +378,17 @@ let
         fi
       }
 
+      # run_session [PROMPT NAME SECONDS]: the full refresh's session by
+      # default; the fast path passes its own prompt, name and deadline.
       run_session() {
-        local out json rec st sid seen t0 now deadline transcript result p
+        local out json rec st sid seen t0 now deadline transcript result p name limit
         [ -s "$state/recipient" ] || echo "warning: $state/recipient is missing; the refresh has no one to email"
         # --bg picks the session id itself (it ignores --session-id) and
         # prints it: "backgrounded · <id> · <name>".
-        p=${lib.escapeShellArg prompt}
+        p=${lib.escapeShellArg prompt} name=desk-refresh limit=1800
         grep -qF ${lib.escapeShellArg stepsMarker} "$wt/forever/t52p/desk_refresh.py" 2>/dev/null && p=${lib.escapeShellArg promptSteps}
-        out=$(cd "$wt" && claude "''${claude_args[@]}" -n "desk-refresh-$(date +%H%M)" "$p" </dev/null 2>&1) ||
+        if [ "$#" = 3 ]; then p=$1 name=$2 limit=$3; fi
+        out=$(cd "$wt" && claude "''${claude_args[@]}" -n "$name-$(date +%H%M)" "$p" </dev/null 2>&1) ||
           { printf '%s\n' "$out"; return 1; }
         id=$(sed -n 's/^backgrounded · \([0-9a-f]*\).*/\1/p' <<<"$out" | head -1)
         if [ -z "$id" ]; then
@@ -362,7 +396,7 @@ let
           return 1
         fi
         echo "session $id started"
-        t0=$(date +%s) deadline=$(($(date +%s) + 1800)) sid="" seen=0 json=""
+        t0=$(date +%s) deadline=$(($(date +%s) + limit)) sid="" seen=0 json=""
         # Finished once `status` is idle after it was seen busy, or once the
         # session has exited (no status). Before it is first seen busy, only
         # after two minutes, so a session still starting up is not taken for
@@ -403,11 +437,41 @@ let
         fi
       }
 
+      # True when the snapshot's hash differs from the last finished run's.
+      snapshot_changed() {
+        local now old
+        now=$(grep ' Battle.net snapshot$' <<<"$1" || true)
+        old=$(grep ' Battle.net snapshot$' "$hashes" 2>/dev/null || true)
+        [ -n "$now" ] && [ "$now" != "$old" ]
+      }
+
+      # The fast path (see "The fast path" above). Never stops the full run.
+      fast_path() {
+        if ! grep -qF ${lib.escapeShellArg fastMarker} "$wt/forever/t52p/desk_refresh.py" 2>/dev/null; then
+          echo "fast path: wow-plan main has no fast path yet; the full run sends"
+          return 0
+        fi
+        rm -f "$state/fast/steps.txt"
+        echo "fast path: a new snapshot; desk_refresh.py fast"
+        (cd "$wt" && python3 -I forever/t52p/desk_refresh.py fast) || echo "fast path failed; the full run sends"
+        if [ -s "$state/fast/steps.txt" ]; then
+          echo "fast path: a Deal email is due; a short session sends it"
+          run_session "$(cat "$state/fast/steps.txt")" desk-refresh-fast 600 ||
+            echo "fast path: the session failed; the full run sends what is still due"
+          rm -f "$state/fast/steps.txt"
+        fi
+      }
+
       if unchanged "$(current_hashes)"; then
         echo "no source changed since the last refresh"
         exit 0
       fi
       for pass in 1 2 3; do
+        rm -f "$state/retry"
+        prepare_worktree
+        if [ "$fast" = 1 ] && snapshot_changed "$(current_hashes)"; then
+          fast_path
+        fi
         settle
         mark=$(current_hashes)
         if [ "$pass" = 1 ] && unchanged "$mark"; then
@@ -415,8 +479,6 @@ let
           exit 0
         fi
         echo "pass $pass: newest source $(date -d "@$(newest)" '+%F %T')"
-        rm -f "$state/retry"
-        prepare_worktree
         run_session
         printf '%s\n' "$mark" >"$hashes.tmp"
         mv "$hashes.tmp" "$hashes"
@@ -482,7 +544,7 @@ in
     };
     Service = {
       Type = "oneshot";
-      ExecStart = "${refresh}/bin/wow-desk-refresh";
+      ExecStart = "${refresh}/bin/wow-desk-refresh${lib.optionalString (!fastPath) " --no-fast"}";
       Environment = [ "PATH=${path}" ];
       StateDirectory = "wow-desk-refresh";
       NoNewPrivileges = true;

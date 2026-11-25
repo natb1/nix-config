@@ -24,6 +24,7 @@
     ./media.nix
     ./git.nix
     ./mail.nix
+    ./wow-mail-spool.nix
     ./media-group.nix
     ./music.nix
     ./jellyfin.nix

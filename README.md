@@ -425,6 +425,12 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   trailing newline needed. Without it, the backup and scrub alerts are
   desktop pop-ups only: no email.
   Check: `printf 'Subject: test\n\nhi\n' | sudo msmtp nathan@natb1.com`.
+- `desk`'s WoW mail spool recipient, `/etc/wow-mail-spool/recipient` (root,
+  0600, one line), for `hosts/desk/wow-mail-spool.nix`: the only address the
+  spool's sender mails, the same line as the desk refresh's own
+  `~/.local/state/wow-desk-refresh/recipient`. Made with
+  `sudo install -D -m 0600 ~/.local/state/wow-desk-refresh/recipient /etc/wow-mail-spool/recipient`.
+  Without it the spool's mail waits, unsent (`journalctl -u wow-mail-spool`).
 - `desk`'s Soulseek login, `/etc/slskd/credentials` (root, 0600): the
   Soulseek account and the slskd web UI's login (`hosts/desk/soulseek.nix`).
   The API key beside it, `/etc/slskd/api.env`, is generated on first start.

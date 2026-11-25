@@ -304,6 +304,12 @@
               grep -qx 'NoNewPrivileges=true' ${unit "wow-desk-refresh-snapshot.service"} || fail "the snapshot watcher has no NoNewPrivileges"
               grep -q 'state/snapshot' ${script} || fail "the snapshot stamp is not in the hashes"
               grep -q 'state/retry' ${script} || fail "the script does not go again on a retry"
+              # The fast path: desk_refresh.py fast before the full session,
+              # and its steps' session; on unless the unit says --no-fast.
+              grep -qF 'python3 -I forever/t52p/desk_refresh.py fast' ${script} || fail "the script has no fast path"
+              grep -qF 'desk refresh fast steps v1' ${script} || fail "the fast path does not check for its steps marker"
+              grep -qF 'state/fast/steps.txt' ${script} || fail "the fast path's session is not started from fast/steps.txt"
+              grep -q '^ExecStart=.*--no-fast' "$svc" && fail "the fast path is off"
 
               # The session's command line, from the built script.
               s=${script}
@@ -326,6 +332,8 @@
                 fail "writes are allowed outside the state dir and the worktree"
               jq -e '.permissions.deny | index("Bash(git:*)") and index("Bash(gh:*)")' "$set" >/dev/null ||
                 fail "git and gh are not denied"
+              jq -e '.permissions.deny | map(select(test("^(Edit|Write)\\(.*/wow-desk-refresh/mail-spool/\\*\\*\\)$"))) | length == 2' "$set" >/dev/null ||
+                fail "the session may write into the mail spool"
 
               # The hook, run on sample calls.
               hook=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "^(Artifact|Bash)$") | .hooks[0].command' "$set")
@@ -343,6 +351,33 @@
               try 0 '{"tool_name":"Artifact","tool_input":{"url":"u","file_path":"f","asset":true}}'
               try 2 '{"tool_name":"Artifact","tool_input":{"action":"delete","url":"u"}}'
               try 2 '{"tool_name":"Artifact","tool_input":{"action":"delete","url":"u","path":"0123"}}'
+              touch "$out"
+            '';
+          # desk's mail spool (hosts/desk/wow-mail-spool.nix): the sender run
+          # on a scratch spool, and the system units as rendered: the path
+          # unit watches the spool the desk refresh writes, which is n8's and
+          # nobody else's, and the sender runs as root (msmtp's password).
+          wow-mail-spool-test = pkgs.callPackage ./tests/wow-mail-spool.test.nix { };
+          wow-mail-spool-unit =
+            let
+              lib = nixpkgs.lib;
+              c = self.nixosConfigurations.desk.config;
+              spool = "${c.users.users.n8.home}/.local/state/wow-desk-refresh/mail-spool";
+              unitFile = n: "${c.systemd.units.${n}.unit}/${n}";
+              hmSpool = "${c.home-manager.users.n8.xdg.stateHome}/wow-desk-refresh/mail-spool";
+            in
+            pkgs.runCommand "wow-mail-spool-unit" { } ''
+              fail() { echo "wow-mail-spool: $*" >&2; exit 1; }
+              [ ${lib.escapeShellArg hmSpool} = ${lib.escapeShellArg spool} ] || fail "the spool is not under the desk refresh's state dir"
+              grep -qxF 'PathChanged=${spool}' ${unitFile "wow-mail-spool.path"} || fail "the path unit does not watch the spool"
+              grep -qxF 'Unit=wow-mail-spool.service' ${unitFile "wow-mail-spool.path"} || fail "the path unit starts another unit"
+              grep -q '^User=' ${unitFile "wow-mail-spool.service"} && fail "the sender does not run as root"
+              grep -qx 'ExecStart=/nix/store/[^ ]*/bin/wow-mail-spool-send' ${unitFile "wow-mail-spool.service"} ||
+                fail "the sender is started with arguments"
+              grep -q '^OnUnitInactiveSec=' ${unitFile "wow-mail-spool.timer"} || fail "no retry timer"
+              ${lib.optionalString (!(builtins.elem "d ${spool} 0700 n8 users -" c.systemd.tmpfiles.rules)) ''
+                fail "the spool is not made 0700 n8:users by tmpfiles"
+              ''}
               touch "$out"
             '';
           # Zellij, as desk configures it. The shell integrations must stay
