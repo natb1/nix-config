@@ -18,6 +18,12 @@
 # - The ForeverPlanLog addon's SavedVariables, one per WoW account, rewritten
 #   on a /reload, a logout and the addon's Save scan button:
 #   wow-desk-refresh-sv@<account>.path, one instance per account directory.
+# - GearQuest Forever's per-character SavedVariables (the gear targets):
+#   wow-desk-refresh-gq@<account>/<realm>/<character>.path, one instance per
+#   character directory, started by wow-desk-refresh-accounts (the folder
+#   names are found at run time, never written here). A character made after
+#   the accounts service last ran is watched from the next login; until then
+#   the refresh still reads its file on any other trigger.
 # - A new hourly Battle.net auction snapshot: wow-desk-refresh-snapshot.service
 #   runs wow-plan's forever/t52p/snapshot_watch.py, which polls the snapshot
 #   every minute with If-Modified-Since (an unchanged one answers 304, no body)
@@ -33,7 +39,8 @@
 #
 # The TSM desktop app rewrites AppData.lua about twice an hour all day, mostly
 # its realm blocks, which the refresh does not use. So a trigger only wakes
-# the script: it hashes what the refresh reads (each ForeverPlanLog.lua,
+# the script: it hashes what the refresh reads (each ForeverPlanLog.lua and
+# GearQuestForever.lua,
 # AppData.lua's Forever-US region sale and region stat lines, or the whole
 # file if those lines are not found, and the snapshot stamp) and starts a
 # session only when a hash
@@ -69,6 +76,31 @@
 #
 # The hourly timer (:50, away from the cloud run at :30) is the fallback for a
 # missed event; with Persistent= it also runs once after a boot that missed it.
+#
+# ── The fast path ─────────────────────────────────────────────────────────────
+#
+# Market deals may last minutes, so a new snapshot is analysed before anything
+# else (wow-plan README "The desk refresh", "The fast path"). When the
+# snapshot's hash differs from the one the fast path last ran on
+# (<state dir>/fast-snapshot), the script runs wow-plan's
+# `desk_refresh.py fast` from the worktree itself (no session): checked right
+# after each pass's worktree reset, again after its settle (a snapshot that
+# landed meanwhile) and once after the third pass, so each new snapshot gets
+# it once, before any full session that reads it. It is a few seconds
+# of analysis on the last run's cached reads and the new snapshot. It is best
+# effort and exits 0 on its own failures; the script guards it as well, so
+# the full run always follows. When it finds a Deal email due it either
+# - writes it into the mail spool (../wow-mail-spool.nix), which root sends
+#   within seconds, with no session; the script then waits (2.5 minutes at
+#   most) for the file to leave the spool, so the full run sees whether it
+#   went (wow-plan counts it as sent only from sent/; failed or rejected, the
+#   full run's own email sends the deal); or, with no spool,
+# - writes <state dir>/fast/steps.txt: a short session (10-minute deadline)
+#   is started with that text as its prompt, to send the one email, and
+#   waited for.
+# Then the full session runs as before. A main whose desk_refresh.py lacks
+# the fast steps marker gets no fast path. `wow-desk-refresh --no-fast` (or
+# fastPath = false below) turns it off.
 #
 # ── Why a background session, not `claude -p` ─────────────────────────────────
 #
@@ -139,6 +171,10 @@ let
   prompt = "Run the desk refresh exactly as README.md 'The desk refresh' says.";
   promptSteps = "Run the desk refresh: run the command python3 -I forever/t52p/desk_refresh.py prepare and follow the steps it prints, exactly.";
   stepsMarker = "desk refresh steps v2";
+  # The fast path (see above); false puts --no-fast on the service's command line.
+  fastPath = true;
+  fastMarker = "desk refresh fast steps v1";
+  spool = "${stateDir}/mail-spool";
   snapshotState = "${config.home.homeDirectory}/.local/state/wow-desk-refresh-snapshot";
   step = "python3 -I forever/t52p/desk_refresh.py";
 
@@ -204,6 +240,8 @@ let
         "Write(/${worktree}/.claude/**)"
         "Edit(/${worktree}/.git)"
         "Write(/${worktree}/.git)"
+        "Edit(/${spool}/**)"
+        "Write(/${spool}/**)"
         "Read(~/.config/blizzard/**)"
         "Read(~/.claude/.credentials.json)"
         "Read(~/.ssh/**)"
@@ -221,7 +259,7 @@ let
     "The state directory is ${stateDir}: keep the procedure's state between runs there."
     "The email recipient is the one line of ${stateDir}/recipient."
     "Bash may run only '${step} prepare', '${step} run ...' and '${step} done ...', from the worktree root, with no cd, pipes, redirects or other shell syntax."
-    "Write only under the state directory or this worktree. Never delete an artifact or an asset."
+    "Write only under the state directory (never its mail-spool) or this worktree. Never delete an artifact or an asset."
   ];
 
   # The session's command line, as a list; the flake check reads it back from
@@ -238,10 +276,20 @@ let
     name = "wow-desk-refresh";
     runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.git pkgs.jq pkgs.util-linux ];
     text = ''
-      force=0
-      [ "''${1:-}" = --force ] && force=1
-      state=${lib.escapeShellArg stateDir}
-      wt=${lib.escapeShellArg worktree}
+      force=0 fast=1
+      for arg in "$@"; do
+        case "$arg" in
+          --force) force=1 ;;
+          --no-fast) fast=0 ;;
+          *) echo "usage: wow-desk-refresh [--force] [--no-fast]" >&2; exit 2 ;;
+        esac
+      done
+      # The WOW_DESK_REFRESH_* overrides are for the flake check, which runs
+      # this script on a scratch state dir, worktree and repo.
+      state=''${WOW_DESK_REFRESH_STATE:-${lib.escapeShellArg stateDir}}
+      wt=''${WOW_DESK_REFRESH_WORKTREE:-${lib.escapeShellArg worktree}}
+      repo=''${WOW_DESK_REFRESH_REPO:-${lib.escapeShellArg repo}}
+      spool="$state/mail-spool"
       mkdir -p "$state"
       hashes="$state/source-hashes"
       claude_args=(${lib.escapeShellArgs claudeArgs})
@@ -252,14 +300,17 @@ let
         exit 0
       fi
 
+      # Each account's ForeverPlanLog.lua, and each character's
+      # GearQuestForever.lua (the gear targets the refresh exports).
       svs() {
         shopt -s nullglob
-        local f=("${accounts}"/*/SavedVariables/ForeverPlanLog.lua)
+        local f=("${accounts}"/*/SavedVariables/ForeverPlanLog.lua
+          "${accounts}"/*/*/*/SavedVariables/GearQuestForever.lua)
         shopt -u nullglob
         [ "''${#f[@]}" = 0 ] || printf '%s\n' "''${f[@]}"
       }
 
-      # What the refresh reads: each ForeverPlanLog.lua whole, and TSM's
+      # What the refresh reads: each file svs lists whole, and TSM's
       # Forever-US region blocks (one line each), or all of AppData.lua if
       # its format changed.
       current_hashes() {
@@ -328,17 +379,17 @@ let
           claude stop "$i" >/dev/null 2>&1 || true
           claude rm "$i" >/dev/null 2>&1 || true
         done
-        git -C "${repo}" fetch --quiet origin main
-        if git -C "${repo}" worktree list --porcelain | grep -qxF "worktree $wt"; then
+        git -C "$repo" fetch --quiet origin main
+        if git -C "$repo" worktree list --porcelain | grep -qxF "worktree $wt"; then
           git -C "$wt" checkout --quiet --force --detach origin/main
           git -C "$wt" clean -ffdxq
         else
-          git -C "${repo}" worktree prune
+          git -C "$repo" worktree prune
           if [ -e "$wt" ]; then
-            echo "$wt exists but is not a worktree of ${repo}; remove it by hand"
+            echo "$wt exists but is not a worktree of $repo; remove it by hand"
             return 1
           fi
-          git -C "${repo}" worktree add --quiet --detach "$wt" origin/main
+          git -C "$repo" worktree add --quiet --detach "$wt" origin/main
         fi
         echo "worktree $wt at $(git -C "$wt" rev-parse --short HEAD)"
         if ! grep -qE '^#{2,4} The desk refresh' "$wt/README.md"; then
@@ -347,14 +398,17 @@ let
         fi
       }
 
+      # run_session [PROMPT NAME SECONDS]: the full refresh's session by
+      # default; the fast path passes its own prompt, name and deadline.
       run_session() {
-        local out json rec st sid seen t0 now deadline transcript result p
+        local out json rec st sid seen t0 now deadline transcript result p name limit
         [ -s "$state/recipient" ] || echo "warning: $state/recipient is missing; the refresh has no one to email"
         # --bg picks the session id itself (it ignores --session-id) and
         # prints it: "backgrounded · <id> · <name>".
-        p=${lib.escapeShellArg prompt}
+        p=${lib.escapeShellArg prompt} name=desk-refresh limit=1800
         grep -qF ${lib.escapeShellArg stepsMarker} "$wt/forever/t52p/desk_refresh.py" 2>/dev/null && p=${lib.escapeShellArg promptSteps}
-        out=$(cd "$wt" && claude "''${claude_args[@]}" -n "desk-refresh-$(date +%H%M)" "$p" </dev/null 2>&1) ||
+        if [ "$#" = 3 ]; then p=$1 name=$2 limit=$3; fi
+        out=$(cd "$wt" && claude "''${claude_args[@]}" -n "$name-$(date +%H%M)" "$p" </dev/null 2>&1) ||
           { printf '%s\n' "$out"; return 1; }
         id=$(sed -n 's/^backgrounded · \([0-9a-f]*\).*/\1/p' <<<"$out" | head -1)
         if [ -z "$id" ]; then
@@ -362,7 +416,7 @@ let
           return 1
         fi
         echo "session $id started"
-        t0=$(date +%s) deadline=$(($(date +%s) + 1800)) sid="" seen=0 json=""
+        t0=$(date +%s) deadline=$(($(date +%s) + limit)) sid="" seen=0 json=""
         # Finished once `status` is idle after it was seen busy, or once the
         # session has exited (no status). Before it is first seen busy, only
         # after two minutes, so a session still starting up is not taken for
@@ -403,20 +457,67 @@ let
         fi
       }
 
+      # The snapshot's hash line, and the one the fast path last ran on
+      # (<state dir>/fast-snapshot). Checked at each pass's start, again after
+      # the settle (a snapshot that landed during it) and once after the last
+      # pass, so every new snapshot gets the fast path once.
+      snap_hash() { grep ' Battle.net snapshot$' <<<"$(current_hashes)" || true; }
+      snapshot_new() {
+        local now
+        now=$(snap_hash)
+        [ -n "$now" ] && [ "$now" != "$(cat "$state/fast-snapshot" 2>/dev/null || true)" ]
+      }
+
+      # The fast path (see "The fast path" above). Never stops the full run.
+      fast_path() {
+        local h ready i
+        h=$(snap_hash)
+        printf '%s\n' "$h" >"$state/fast-snapshot"
+        if ! grep -qF ${lib.escapeShellArg fastMarker} "$wt/forever/t52p/desk_refresh.py" 2>/dev/null; then
+          echo "fast path: wow-plan main has no fast path yet; the full run sends"
+          return 0
+        fi
+        rm -f "$state/fast/steps.txt"
+        echo "fast path: a new snapshot; desk_refresh.py fast"
+        (cd "$wt" && python3 -I forever/t52p/desk_refresh.py fast) || echo "fast path failed; the full run sends"
+        if [ -s "$state/fast/steps.txt" ]; then
+          echo "fast path: a Deal email is due; a short session sends it"
+          run_session "$(cat "$state/fast/steps.txt")" desk-refresh-fast 600 ||
+            echo "fast path: the session failed; the full run sends what is still due"
+          rm -f "$state/fast/steps.txt"
+        fi
+        # A spooled email: wait (2.5 minutes at most) for root's sender to move
+        # it to sent/, failed/ or rejected/, so the full run sees how it went
+        # (deals_rp.py counts it as sent only from sent/).
+        for i in $(seq 75); do
+          shopt -s nullglob
+          ready=("$spool"/[!.]*.eml)
+          shopt -u nullglob
+          [ "''${#ready[@]}" != 0 ] || break
+          [ "$i" != 1 ] || echo "fast path: waiting for the mail spool to send ''${#ready[@]} file(s)"
+          sleep 2
+        done
+      }
+      maybe_fast() {
+        if [ "$fast" = 1 ] && snapshot_new; then fast_path; fi
+      }
+
       if unchanged "$(current_hashes)"; then
         echo "no source changed since the last refresh"
         exit 0
       fi
       for pass in 1 2 3; do
+        rm -f "$state/retry"
+        prepare_worktree
+        maybe_fast
         settle
+        maybe_fast
         mark=$(current_hashes)
         if [ "$pass" = 1 ] && unchanged "$mark"; then
           echo "no source changed since the last refresh"
           exit 0
         fi
         echo "pass $pass: newest source $(date -d "@$(newest)" '+%F %T')"
-        rm -f "$state/retry"
-        prepare_worktree
         run_session
         printf '%s\n' "$mark" >"$hashes.tmp"
         mv "$hashes.tmp" "$hashes"
@@ -430,6 +531,10 @@ let
           echo "a source changed during the run; going again"
         fi
       done
+      # Three passes used: a snapshot that landed during the last one still
+      # gets the fast path now; the rest waits for the next trigger.
+      maybe_fast
+      echo "three passes run; the next trigger refreshes the rest"
     '';
   };
 
@@ -466,6 +571,16 @@ let
         unit="wow-desk-refresh-sv@$(systemd-escape "$acct").path"
         systemctl --user start "$unit"
         echo "watching $unit"
+        # Each character's folder (<realm>/<character>) with SavedVariables:
+        # its GearQuestForever.lua. The names are found here, never written
+        # into the config.
+        for cdir in "$dir"*/*/; do
+          [ -d "''${cdir}SavedVariables" ] || continue
+          rel="$acct/$(basename "$(dirname "$cdir")")/$(basename "$cdir")"
+          unit="wow-desk-refresh-gq@$(systemd-escape "$rel").path"
+          systemctl --user start "$unit"
+          echo "watching $unit"
+        done
       done
     '';
   };
@@ -482,12 +597,15 @@ in
     };
     Service = {
       Type = "oneshot";
-      ExecStart = "${refresh}/bin/wow-desk-refresh";
+      ExecStart = "${refresh}/bin/wow-desk-refresh${lib.optionalString (!fastPath) " --no-fast"}";
       Environment = [ "PATH=${path}" ];
       StateDirectory = "wow-desk-refresh";
       NoNewPrivileges = true;
-      # Three passes of a 15-minute settle and a 30-minute session, at worst.
-      TimeoutStartSec = "150min";
+      # At worst three passes of two fast paths (each a short analysis, the
+      # 2.5-minute wait for the spool and a 10-minute session), a 15-minute
+      # settle and a 30-minute session, then one more fast path: about 240
+      # minutes.
+      TimeoutStartSec = "250min";
     };
   };
 
@@ -537,6 +655,14 @@ in
     Unit.Description = "Watch WoW account %I's ForeverPlanLog.lua for the desk refresh";
     Path = {
       PathChanged = "${accounts}/%I/SavedVariables/ForeverPlanLog.lua";
+      Unit = "wow-desk-refresh.service";
+    };
+  };
+
+  systemd.user.paths."wow-desk-refresh-gq@" = {
+    Unit.Description = "Watch WoW character %I's GearQuestForever.lua for the desk refresh";
+    Path = {
+      PathChanged = "${accounts}/%I/SavedVariables/GearQuestForever.lua";
       Unit = "wow-desk-refresh.service";
     };
   };
