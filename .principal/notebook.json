@@ -4,5 +4,11 @@
   "project": "nix-config",
   "canon": {
     "nix-config": "ti-esti"
-  }
+  },
+  "ai_root": [
+    {
+      "node": "30087371-d089",
+      "tab": "96fa114f-7229"
+    }
+  ]
 }
