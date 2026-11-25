@@ -310,6 +310,7 @@
               grep -qF 'desk refresh fast steps v1' ${script} || fail "the fast path does not check for its steps marker"
               grep -qF 'state/fast/steps.txt' ${script} || fail "the fast path's session is not started from fast/steps.txt"
               grep -q '^ExecStart=.*--no-fast' "$svc" && fail "the fast path is off"
+              grep -qx 'TimeoutStartSec=250min' "$svc" || fail "TimeoutStartSec does not cover the fast path's sessions"
 
               # The session's command line, from the built script.
               s=${script}
@@ -353,6 +354,106 @@
               try 2 '{"tool_name":"Artifact","tool_input":{"action":"delete","url":"u","path":"0123"}}'
               touch "$out"
             '';
+          # The refresh script's control flow, run with stub claude and
+          # python3 on a scratch repo, worktree and state dir: the fast path
+          # runs before any session on a new snapshot, its steps start a
+          # desk-refresh-fast session, the full session always follows (also
+          # when fast fails), --no-fast skips it, and a snapshot the fast path
+          # already ran on does not run it again.
+          wow-desk-refresh-flow =
+            let
+              hm = self.nixosConfigurations.desk.config.home-manager.users.n8;
+              script = nixpkgs.lib.head (nixpkgs.lib.splitString " " (nixpkgs.lib.head (nixpkgs.lib.toList
+                hm.systemd.user.services.wow-desk-refresh.Service.ExecStart)));
+              claudeStub = pkgs.writeShellScriptBin "claude" ''
+                set -eu
+                case "$*" in
+                  "agents --json --all")
+                    for f in "$STUB/sessions"/*; do
+                      [ -e "$f" ] || continue
+                      i=$(basename "$f"); n=$(cat "$f"); echo $((n + 1)) >"$f"
+                      if [ "$n" = 0 ]; then st=busy; else st=idle; fi
+                      printf '{"id":"%s","sessionId":"%s","status":"%s"}\n' "$i" "$i" "$st"
+                    done | ${pkgs.jq}/bin/jq -s .
+                    ;;
+                  "agents --json") echo "[]" ;;
+                  "stop "* | "rm "*) ;;
+                  *)
+                    name=""; prev=""
+                    for a in "$@"; do [ "$prev" = -n ] && name=$a; prev=$a; done
+                    k=$(ls "$STUB/sessions" | wc -l); id=$(printf 'a%x' $((k + 10)))
+                    echo 0 >"$STUB/sessions/$id"
+                    echo "session $name" >>"$STUB/log"
+                    mkdir -p "$HOME/.claude/projects/p"
+                    echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}' >"$HOME/.claude/projects/p/$id.jsonl"
+                    echo "backgrounded · $id · $name"
+                    ;;
+                esac
+              '';
+              pythonStub = pkgs.writeShellScriptBin "python3" ''
+                echo "python3 $*" >>"$STUB/log"
+                case "$*" in
+                  *"desk_refresh.py fast"*)
+                    case "$(cat "$STUB/fast-mode")" in
+                      fail) exit 1 ;;
+                      steps) mkdir -p "$WOW_DESK_REFRESH_STATE/fast"; echo "send it" >"$WOW_DESK_REFRESH_STATE/fast/steps.txt" ;;
+                    esac
+                    ;;
+                esac
+              '';
+            in
+            pkgs.runCommand "wow-desk-refresh-flow" { nativeBuildInputs = [ pkgs.git ]; } ''
+              fail() { echo "wow-desk-refresh flow: $*" >&2; [ -f "$STUB/log" ] && cat "$STUB/log" >&2; exit 1; }
+              export HOME=$TMPDIR/home XDG_RUNTIME_DIR=$TMPDIR STUB=$TMPDIR/stub
+              export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+              export WOW_DESK_REFRESH_STATE=$TMPDIR/state WOW_DESK_REFRESH_REPO=$TMPDIR/repo WOW_DESK_REFRESH_WORKTREE=$TMPDIR/wt
+              mkdir -p "$HOME" "$STUB/sessions" "$TMPDIR/src/forever/t52p" "$WOW_DESK_REFRESH_STATE"
+              printf '## The desk refresh
+' >"$TMPDIR/src/README.md"
+              printf '# desk refresh steps v2
+# desk refresh fast steps v1
+' >"$TMPDIR/src/forever/t52p/desk_refresh.py"
+              git -C "$TMPDIR/src" init -q -b main
+              git -C "$TMPDIR/src" add -A
+              git -C "$TMPDIR/src" commit -qm src
+              git clone -q "$TMPDIR/src" "$WOW_DESK_REFRESH_REPO"
+              export PATH=${claudeStub}/bin:${pythonStub}/bin:$PATH
+              go() { : >"$STUB/log"; echo "$1" >"$STUB/fast-mode"; shift; ${script} "$@" >"$TMPDIR/out.txt" 2>&1 || fail "the script failed: $(cat "$TMPDIR/out.txt")"; }
+              first() { grep -n -m 1 "$1" "$STUB/log" | cut -d: -f1; }
+
+              # A new snapshot, a Deal email due: fast, then its session, then the full session.
+              echo one >"$WOW_DESK_REFRESH_STATE/snapshot"
+              go steps
+              f=$(first 'desk_refresh.py fast') s=$(first '^session ')
+              [ -n "$f" ] && [ -n "$s" ] && [ "$f" -lt "$s" ] || fail "fast did not run before the first session"
+              [ "$(grep -c '^session ' "$STUB/log")" = 2 ] || fail "not two sessions (fast, then full)"
+              grep '^session ' "$STUB/log" | head -1 | grep -q '^session desk-refresh-fast-' || fail "the first session is not the fast one"
+              grep '^session ' "$STUB/log" | tail -1 | grep -q '^session desk-refresh-[0-9]' || fail "the full session did not follow"
+              [ "$(grep -c 'desk_refresh.py fast' "$STUB/log")" = 1 ] || fail "fast ran more than once for one snapshot"
+              [ ! -e "$WOW_DESK_REFRESH_STATE/fast/steps.txt" ] || fail "steps.txt was left behind"
+
+              # Nothing changed: nothing runs.
+              go steps
+              [ ! -s "$STUB/log" ] || fail "an unchanged source ran something"
+
+              # A new snapshot and a failing fast: the full session still runs.
+              echo two >"$WOW_DESK_REFRESH_STATE/snapshot"
+              go fail
+              grep -q 'desk_refresh.py fast' "$STUB/log" || fail "fast did not run"
+              [ "$(grep -c '^session desk-refresh-[0-9]' "$STUB/log")" = 1 ] || fail "a failing fast stopped the full session"
+
+              # --force with the snapshot fast already ran on: no fast, the full session.
+              go steps --force
+              grep -q 'desk_refresh.py fast' "$STUB/log" && fail "fast ran again for a snapshot it already ran on"
+              [ "$(grep -c '^session desk-refresh-[0-9]' "$STUB/log")" = 1 ] || fail "--force ran no full session"
+
+              # --no-fast: a new snapshot, no fast, the full session.
+              echo three >"$WOW_DESK_REFRESH_STATE/snapshot"
+              go steps --no-fast
+              grep -q 'desk_refresh.py fast' "$STUB/log" && fail "--no-fast ran fast"
+              [ "$(grep -c '^session ' "$STUB/log")" = 1 ] || fail "--no-fast ran no full session"
+              touch "$out"
+            '';
           # desk's mail spool (hosts/desk/wow-mail-spool.nix): the sender run
           # on a scratch spool, and the system units as rendered: the path
           # unit watches the spool the desk refresh writes, which is n8's and
@@ -369,7 +470,10 @@
             pkgs.runCommand "wow-mail-spool-unit" { } ''
               fail() { echo "wow-mail-spool: $*" >&2; exit 1; }
               [ ${lib.escapeShellArg hmSpool} = ${lib.escapeShellArg spool} ] || fail "the spool is not under the desk refresh's state dir"
-              grep -qxF 'PathChanged=${spool}' ${unitFile "wow-mail-spool.path"} || fail "the path unit does not watch the spool"
+              grep -qxF 'PathExistsGlob=${spool}/[!.]*.eml' ${unitFile "wow-mail-spool.path"} || fail "the path unit does not watch the spool's ready files"
+              for p in PrivateDevices ProtectKernelTunables ProtectControlGroups NoNewPrivileges; do
+                grep -qx "$p=true" ${unitFile "wow-mail-spool.service"} || fail "the sender has no $p"
+              done
               grep -qxF 'Unit=wow-mail-spool.service' ${unitFile "wow-mail-spool.path"} || fail "the path unit starts another unit"
               grep -q '^User=' ${unitFile "wow-mail-spool.service"} && fail "the sender does not run as root"
               grep -qx 'ExecStart=/nix/store/[^ ]*/bin/wow-mail-spool-send' ${unitFile "wow-mail-spool.service"} ||
@@ -377,6 +481,9 @@
               grep -q '^OnUnitInactiveSec=' ${unitFile "wow-mail-spool.timer"} || fail "no retry timer"
               ${lib.optionalString (!(builtins.elem "d ${spool} 0700 n8 users -" c.systemd.tmpfiles.rules)) ''
                 fail "the spool is not made 0700 n8:users by tmpfiles"
+              ''}
+              ${lib.optionalString (!(builtins.elem "d ${spool}/failed 0700 n8 users -" c.systemd.tmpfiles.rules)) ''
+                fail "the spool's failed/ is not made 0700 n8:users, with no cleanup, by tmpfiles"
               ''}
               touch "$out"
             '';

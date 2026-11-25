@@ -74,14 +74,20 @@
 #
 # Market deals may last minutes, so a new snapshot is analysed before anything
 # else (wow-plan README "The desk refresh", "The fast path"). When the
-# snapshot's hash changed since the last finished run, each pass, right after
-# the worktree is reset and before the 10-second settle, runs wow-plan's
-# `desk_refresh.py fast` from the worktree itself (no session): a few seconds
+# snapshot's hash differs from the one the fast path last ran on
+# (<state dir>/fast-snapshot), the script runs wow-plan's
+# `desk_refresh.py fast` from the worktree itself (no session): checked right
+# after each pass's worktree reset, again after its settle (a snapshot that
+# landed meanwhile) and once after the third pass, so each new snapshot gets
+# it once, before any full session that reads it. It is a few seconds
 # of analysis on the last run's cached reads and the new snapshot. It is best
 # effort and exits 0 on its own failures; the script guards it as well, so
 # the full run always follows. When it finds a Deal email due it either
 # - writes it into the mail spool (../wow-mail-spool.nix), which root sends
-#   within seconds, with no session; or, with no spool,
+#   within seconds, with no session; the script then waits (2.5 minutes at
+#   most) for the file to leave the spool, so the full run sees whether it
+#   went (wow-plan counts it as sent only from sent/; failed or rejected, the
+#   full run's own email sends the deal); or, with no spool,
 # - writes <state dir>/fast/steps.txt: a short session (10-minute deadline)
 #   is started with that text as its prompt, to send the one email, and
 #   waited for.
@@ -271,8 +277,12 @@ let
           *) echo "usage: wow-desk-refresh [--force] [--no-fast]" >&2; exit 2 ;;
         esac
       done
-      state=${lib.escapeShellArg stateDir}
-      wt=${lib.escapeShellArg worktree}
+      # The WOW_DESK_REFRESH_* overrides are for the flake check, which runs
+      # this script on a scratch state dir, worktree and repo.
+      state=''${WOW_DESK_REFRESH_STATE:-${lib.escapeShellArg stateDir}}
+      wt=''${WOW_DESK_REFRESH_WORKTREE:-${lib.escapeShellArg worktree}}
+      repo=''${WOW_DESK_REFRESH_REPO:-${lib.escapeShellArg repo}}
+      spool="$state/mail-spool"
       mkdir -p "$state"
       hashes="$state/source-hashes"
       claude_args=(${lib.escapeShellArgs claudeArgs})
@@ -359,17 +369,17 @@ let
           claude stop "$i" >/dev/null 2>&1 || true
           claude rm "$i" >/dev/null 2>&1 || true
         done
-        git -C "${repo}" fetch --quiet origin main
-        if git -C "${repo}" worktree list --porcelain | grep -qxF "worktree $wt"; then
+        git -C "$repo" fetch --quiet origin main
+        if git -C "$repo" worktree list --porcelain | grep -qxF "worktree $wt"; then
           git -C "$wt" checkout --quiet --force --detach origin/main
           git -C "$wt" clean -ffdxq
         else
-          git -C "${repo}" worktree prune
+          git -C "$repo" worktree prune
           if [ -e "$wt" ]; then
-            echo "$wt exists but is not a worktree of ${repo}; remove it by hand"
+            echo "$wt exists but is not a worktree of $repo; remove it by hand"
             return 1
           fi
-          git -C "${repo}" worktree add --quiet --detach "$wt" origin/main
+          git -C "$repo" worktree add --quiet --detach "$wt" origin/main
         fi
         echo "worktree $wt at $(git -C "$wt" rev-parse --short HEAD)"
         if ! grep -qE '^#{2,4} The desk refresh' "$wt/README.md"; then
@@ -437,16 +447,22 @@ let
         fi
       }
 
-      # True when the snapshot's hash differs from the last finished run's.
-      snapshot_changed() {
-        local now old
-        now=$(grep ' Battle.net snapshot$' <<<"$1" || true)
-        old=$(grep ' Battle.net snapshot$' "$hashes" 2>/dev/null || true)
-        [ -n "$now" ] && [ "$now" != "$old" ]
+      # The snapshot's hash line, and the one the fast path last ran on
+      # (<state dir>/fast-snapshot). Checked at each pass's start, again after
+      # the settle (a snapshot that landed during it) and once after the last
+      # pass, so every new snapshot gets the fast path once.
+      snap_hash() { grep ' Battle.net snapshot$' <<<"$(current_hashes)" || true; }
+      snapshot_new() {
+        local now
+        now=$(snap_hash)
+        [ -n "$now" ] && [ "$now" != "$(cat "$state/fast-snapshot" 2>/dev/null || true)" ]
       }
 
       # The fast path (see "The fast path" above). Never stops the full run.
       fast_path() {
+        local h ready i
+        h=$(snap_hash)
+        printf '%s\n' "$h" >"$state/fast-snapshot"
         if ! grep -qF ${lib.escapeShellArg fastMarker} "$wt/forever/t52p/desk_refresh.py" 2>/dev/null; then
           echo "fast path: wow-plan main has no fast path yet; the full run sends"
           return 0
@@ -460,6 +476,20 @@ let
             echo "fast path: the session failed; the full run sends what is still due"
           rm -f "$state/fast/steps.txt"
         fi
+        # A spooled email: wait (2.5 minutes at most) for root's sender to move
+        # it to sent/, failed/ or rejected/, so the full run sees how it went
+        # (deals_rp.py counts it as sent only from sent/).
+        for i in $(seq 75); do
+          shopt -s nullglob
+          ready=("$spool"/[!.]*.eml)
+          shopt -u nullglob
+          [ "''${#ready[@]}" != 0 ] || break
+          [ "$i" != 1 ] || echo "fast path: waiting for the mail spool to send ''${#ready[@]} file(s)"
+          sleep 2
+        done
+      }
+      maybe_fast() {
+        if [ "$fast" = 1 ] && snapshot_new; then fast_path; fi
       }
 
       if unchanged "$(current_hashes)"; then
@@ -469,10 +499,9 @@ let
       for pass in 1 2 3; do
         rm -f "$state/retry"
         prepare_worktree
-        if [ "$fast" = 1 ] && snapshot_changed "$(current_hashes)"; then
-          fast_path
-        fi
+        maybe_fast
         settle
+        maybe_fast
         mark=$(current_hashes)
         if [ "$pass" = 1 ] && unchanged "$mark"; then
           echo "no source changed since the last refresh"
@@ -492,6 +521,10 @@ let
           echo "a source changed during the run; going again"
         fi
       done
+      # Three passes used: a snapshot that landed during the last one still
+      # gets the fast path now; the rest waits for the next trigger.
+      maybe_fast
+      echo "three passes run; the next trigger refreshes the rest"
     '';
   };
 
@@ -548,8 +581,11 @@ in
       Environment = [ "PATH=${path}" ];
       StateDirectory = "wow-desk-refresh";
       NoNewPrivileges = true;
-      # Three passes of a 15-minute settle and a 30-minute session, at worst.
-      TimeoutStartSec = "150min";
+      # At worst three passes of two fast paths (each a short analysis, the
+      # 2.5-minute wait for the spool and a 10-minute session), a 15-minute
+      # settle and a 30-minute session, then one more fast path: about 240
+      # minutes.
+      TimeoutStartSec = "250min";
     };
   };
 

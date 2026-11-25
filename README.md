@@ -430,7 +430,9 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   spool's sender mails, the same line as the desk refresh's own
   `~/.local/state/wow-desk-refresh/recipient`. Made with
   `sudo install -D -m 0600 ~/.local/state/wow-desk-refresh/recipient /etc/wow-mail-spool/recipient`.
-  Without it the spool's mail waits, unsent (`journalctl -u wow-mail-spool`).
+  Without it (or when msmtp refuses) a spooled file moves to `failed/`,
+  unsent and kept, and the desk refresh's own email sends the deal a few
+  minutes later (`journalctl -u wow-mail-spool`).
 - `desk`'s Soulseek login, `/etc/slskd/credentials` (root, 0600): the
   Soulseek account and the slskd web UI's login (`hosts/desk/soulseek.nix`).
   The API key beside it, `/etc/slskd/api.env`, is generated on first start.
