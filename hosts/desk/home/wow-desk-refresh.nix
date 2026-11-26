@@ -586,7 +586,11 @@ let
   };
 in
 {
-  home.packages = [ refresh snapshotWatch ];
+  # nodejs: wow-plan's holds_desk.py runs the tracker's engine under node on
+  # every refresh (the Market Batch holds, computed on desk); in the profile so
+  # both the claude daemon's sessions and the service find it on PATH, and a
+  # garbage collection cannot remove it.
+  home.packages = [ refresh snapshotWatch pkgs.nodejs ];
 
   systemd.user.services.wow-desk-refresh = {
     Unit = {
