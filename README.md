@@ -128,7 +128,16 @@ short name `desk` works everywhere through MagicDNS.
    `tether-gtk` (Devices) or `tether --bt-pair <phone address>`, and on the
    phone allow **Show Notifications** and **Sync Contacts**.
    `tether --bt-setup` names anything missing.
-8. The rest (Google Drive, iCloud Photos, the restic backup) have their own
+8. **Game streaming (Sunshine,**
+   [`hosts/desk/streaming.nix`](hosts/desk/streaming.nix)**):** open
+   `https://localhost:47990` on desk (from elsewhere,
+   `ssh -L 47990:localhost:47990 desk` first and the same address there),
+   accept its self-signed certificate, and create the web UI's login. Each
+   client is paired there once: add the host `desk` in Moonlight, which
+   shows a PIN, and enter it under **PIN**. Check: Moonlight lists
+   **Desktop** and **Battle.net** under `desk`, and **Desktop** shows the
+   screen.
+9. The rest (Google Drive, iCloud Photos, the restic backup) have their own
    steps in [State this repo does not manage](#state-this-repo-does-not-manage).
 
 The printer needs nothing: the queue is declared
@@ -167,6 +176,13 @@ shows `brother` enabled and default.
    step 4.
 7. **Photos:** `http://desk:2283` in a browser, the Immich account from desk
    step 5.
+8. **WoW (and the rest of desk's screen) streamed:** open **Moonlight**
+   (beside Feishin), add the host `desk` and pair it with the PIN it shows
+   (desk step 8). In its settings, a resolution of 3440x1440 (desk's own;
+   anything else is scaled and letterboxed), 60 FPS, and **Optimize mouse
+   for remote desktop instead of games** off, so WoW's mouselook works.
+   Start **Battle.net** to open both accounts' launchers, or **Desktop** if
+   they are running.
 
 ### iPhone (once)
 
@@ -388,6 +404,10 @@ These are provisioned by hand and a clean rebuild will not recreate them:
   the media backup takes offsite (`hosts/desk/music.nix` has the restore).
   And `/etc/navidrome/login.env` (0440 n8:media), the account
   `media-playlist` logs in with, whoever in the media group runs it.
+- `desk`'s Sunshine login and paired clients (`hosts/desk/streaming.nix`),
+  in `~/.config/sunshine` (`sunshine_state.json`, and the host's key and
+  certificate under `credentials/`). Lost, the login is made again and every
+  client re-paired.
 - `desk`'s Jellyfin and Kavita accounts and libraries
   (`hosts/desk/jellyfin.nix`, `hosts/desk/kavita.nix`): the admin of each is
   created on its first visit (`http://desk:8096`, `http://desk:5000`), and the

@@ -47,7 +47,11 @@ in
   # (hosts/desk/jellyfin.nix), server http://desk:8096. It plays through mpv,
   # so most files direct-play and desk's iGPU only transcodes what mpv cannot
   # take. Linked beside Feishin.
-  home-manager.users.n8.home.packages = [ pkgs.feishin pkgs.jellyfin-desktop ];
+  #
+  # Moonlight, the game-streaming client: a client of desk's Sunshine
+  # (hosts/desk/streaming.nix), host `desk` over Tailscale, for WoW played on
+  # desk in place of GeForce Now. Linked beside Feishin.
+  home-manager.users.n8.home.packages = [ pkgs.feishin pkgs.jellyfin-desktop pkgs.moonlight-qt ];
 
   # smb://desk/media (the library, read-only from here) and
   # smb://desk/media-staging (where batches arrive), mounted at login and

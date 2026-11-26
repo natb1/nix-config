@@ -19,6 +19,7 @@
     ./disko.nix
     ./desktop.nix
     ./gaming.nix
+    ./streaming.nix
     ./tsm-history.nix
     ./gdrive.nix
     ./media.nix
