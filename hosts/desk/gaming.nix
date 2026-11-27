@@ -105,6 +105,19 @@ let
       unit="battlenet-$account"
 
       if [ -z "''${BATTLENET_UNIT:-}" ]; then
+        # A Battle.net just closed leaves its unit active for ten seconds or
+        # so while Wine shuts down; started again in that time (2026-11-27),
+        # it was taken for one still running and nothing opened. So with no
+        # Battle.net process left in the unit, wait for the unit to stop.
+        if systemctl --user is-active -q "$unit.service"; then
+          cg=$(systemctl --user show -P ControlGroup "$unit.service")
+          if ! pgrep -i --cgroup "$cg" '^battle\.net' >/dev/null; then
+            for _ in $(seq 60); do
+              systemctl --user is-active -q "$unit.service" || break
+              sleep 0.5
+            done
+          fi
+        fi
         if systemctl --user is-active -q "$unit.service"; then
           echo "battlenet: $account already running (journalctl --user -fu $unit)" >&2
           exit 0
