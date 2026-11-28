@@ -313,7 +313,7 @@
               grep -qF 'desk refresh fast steps v1' ${script} || fail "the fast path does not check for its steps marker"
               grep -qF 'state/fast/steps.txt' ${script} || fail "the fast path's session is not started from fast/steps.txt"
               grep -q '^ExecStart=.*--no-fast' "$svc" && fail "the fast path is off"
-              grep -qx 'TimeoutStartSec=250min' "$svc" || fail "TimeoutStartSec does not cover the fast path's sessions"
+              grep -qx 'TimeoutStartSec=270min' "$svc" || fail "TimeoutStartSec does not cover the fast path's and the quick table's sessions"
 
               # The session's command line, from the built script.
               s=${script}
@@ -402,6 +402,12 @@
                       steps) mkdir -p "$WOW_DESK_REFRESH_STATE/fast"; echo "send it" >"$WOW_DESK_REFRESH_STATE/fast/steps.txt" ;;
                     esac
                     ;;
+                  *"desk_refresh.py quick"*)
+                    case "$(cat "$STUB/quick-mode")" in
+                      fail) exit 1 ;;
+                      steps) mkdir -p "$WOW_DESK_REFRESH_STATE/quick"; echo "upload it" >"$WOW_DESK_REFRESH_STATE/quick/steps.txt" ;;
+                    esac
+                    ;;
                 esac
               '';
             in
@@ -410,11 +416,17 @@
               export HOME=$TMPDIR/home XDG_RUNTIME_DIR=$TMPDIR STUB=$TMPDIR/stub
               export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
               export WOW_DESK_REFRESH_STATE=$TMPDIR/state WOW_DESK_REFRESH_REPO=$TMPDIR/repo WOW_DESK_REFRESH_WORKTREE=$TMPDIR/wt
-              mkdir -p "$HOME" "$STUB/sessions" "$TMPDIR/src/forever/t52p" "$WOW_DESK_REFRESH_STATE"
+              export WOW_DESK_REFRESH_ACCOUNTS=$TMPDIR/accounts
+              sv=$WOW_DESK_REFRESH_ACCOUNTS/A/SavedVariables/ForeverPlanLog.lua
+              mkdir -p "$HOME" "$STUB/sessions" "$TMPDIR/src/forever/t52p" "$WOW_DESK_REFRESH_STATE" "$(dirname "$sv")"
+              echo save0 >"$sv"
+              touch -d '-1 hour' "$sv"
+              echo none >"$STUB/quick-mode"
               printf '## The desk refresh
 ' >"$TMPDIR/src/README.md"
               printf '# desk refresh steps v2
 # desk refresh fast steps v1
+# desk refresh quick steps v1
 ' >"$TMPDIR/src/forever/t52p/desk_refresh.py"
               git -C "$TMPDIR/src" init -q -b main
               git -C "$TMPDIR/src" add -A
@@ -455,6 +467,42 @@
               go steps --no-fast
               grep -q 'desk_refresh.py fast' "$STUB/log" && fail "--no-fast ran fast"
               [ "$(grep -c '^session ' "$STUB/log")" = 1 ] || fail "--no-fast ran no full session"
+
+              # A game save, a new table: quick, then its session, then the full session
+              # (the snapshot --no-fast left gets its fast path first).
+              save() { echo "$1" >"$sv"; touch -d '-1 hour' "$sv"; echo "$2" >"$STUB/quick-mode"; }
+              save save1 steps
+              go steps
+              q=$(first 'desk_refresh.py quick') s=$(first '^session desk-refresh-quick-') f=$(first '^session desk-refresh-[0-9]')
+              [ -n "$q" ] && [ -n "$s" ] && [ -n "$f" ] && [ "$q" -lt "$s" ] && [ "$s" -lt "$f" ] ||
+                fail "not quick, then its session, then the full session"
+              [ "$(grep -c 'desk_refresh.py quick' "$STUB/log")" = 1 ] || fail "quick ran more than once for one save"
+              [ "$(grep -c '^session desk-refresh-[0-9]' "$STUB/log")" = 1 ] || fail "not one full session"
+              [ ! -e "$WOW_DESK_REFRESH_STATE/quick/steps.txt" ] || fail "quick's steps.txt was left behind"
+
+              # --force with that save already exported: no quick.
+              go steps --force
+              grep -q 'desk_refresh.py quick' "$STUB/log" && fail "quick ran for a save the full run already exported"
+              [ "$(grep -c '^session desk-refresh-[0-9]' "$STUB/log")" = 1 ] || fail "--force ran no full session"
+
+              # A save and no new table: quick, no session of its own, the full session.
+              save save2 none
+              go steps
+              grep -q 'desk_refresh.py quick' "$STUB/log" || fail "quick did not run"
+              grep -q 'desk_refresh.py fast' "$STUB/log" && fail "a game save ran fast"
+              [ "$(grep -c '^session ' "$STUB/log")" = 1 ] || fail "quick with no new table started a session"
+
+              # A failing quick: the full session still runs.
+              save save3 fail
+              go steps
+              grep -q 'desk_refresh.py quick' "$STUB/log" || fail "quick did not run"
+              [ "$(grep -c '^session desk-refresh-[0-9]' "$STUB/log")" = 1 ] || fail "a failing quick stopped the full session"
+
+              # --no-quick: a save, no quick, the full session.
+              save save4 steps
+              go steps --no-quick
+              grep -q 'desk_refresh.py quick' "$STUB/log" && fail "--no-quick ran quick"
+              [ "$(grep -c '^session ' "$STUB/log")" = 1 ] || fail "--no-quick ran no full session"
               touch "$out"
             '';
           # desk's mail spool (hosts/desk/wow-mail-spool.nix): the sender run
