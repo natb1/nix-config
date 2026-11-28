@@ -102,6 +102,24 @@
 # the fast steps marker gets no fast path. `wow-desk-refresh --no-fast` (or
 # fastPath = false below) turns it off.
 #
+# ── The quick table ───────────────────────────────────────────────────────────
+#
+# A game save (a /reload after an auction scan) should reach the Deals page
+# in about a minute and a half, not after the full session's reads and
+# writes (wow-plan README "The desk refresh", "The quick table"). When the
+# hashes of the SavedVariables (each ForeverPlanLog.lua and
+# GearQuestForever.lua) differ from both the last finished run's and the ones
+# the quick table last ran on (<state dir>/quick-sv), the script runs
+# wow-plan's `desk_refresh.py quick` from the worktree (no session) after the
+# settle, before the full session: about 20 seconds of export and analysis on
+# the last run's cached reads and the live snapshot. When it leaves
+# <state dir>/quick/steps.txt (a table that differs from the page's), a short
+# session (5-minute deadline) uploads the table and points the page at it.
+# Then the full session runs as before. Best effort, like the fast path: a
+# failure never stops the full run. A main whose desk_refresh.py lacks the
+# quick steps marker gets none. `wow-desk-refresh --no-quick` (or
+# quickPath = false below) turns it off.
+#
 # ── Why a background session, not `claude -p` ─────────────────────────────────
 #
 # Probed 2026-11-21 with claude-code 2.1.326, in a fresh worktree of
@@ -174,6 +192,9 @@ let
   # The fast path (see above); false puts --no-fast on the service's command line.
   fastPath = true;
   fastMarker = "desk refresh fast steps v1";
+  # The quick table (see above); false puts --no-quick on the command line.
+  quickPath = true;
+  quickMarker = "desk refresh quick steps v1";
   spool = "${stateDir}/mail-spool";
   snapshotState = "${config.home.homeDirectory}/.local/state/wow-desk-refresh-snapshot";
   step = "python3 -I forever/t52p/desk_refresh.py";
@@ -276,12 +297,13 @@ let
     name = "wow-desk-refresh";
     runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.git pkgs.jq pkgs.util-linux ];
     text = ''
-      force=0 fast=1
+      force=0 fast=1 quick=1
       for arg in "$@"; do
         case "$arg" in
           --force) force=1 ;;
           --no-fast) fast=0 ;;
-          *) echo "usage: wow-desk-refresh [--force] [--no-fast]" >&2; exit 2 ;;
+          --no-quick) quick=0 ;;
+          *) echo "usage: wow-desk-refresh [--force] [--no-fast] [--no-quick]" >&2; exit 2 ;;
         esac
       done
       # The WOW_DESK_REFRESH_* overrides are for the flake check, which runs
@@ -289,6 +311,7 @@ let
       state=''${WOW_DESK_REFRESH_STATE:-${lib.escapeShellArg stateDir}}
       wt=''${WOW_DESK_REFRESH_WORKTREE:-${lib.escapeShellArg worktree}}
       repo=''${WOW_DESK_REFRESH_REPO:-${lib.escapeShellArg repo}}
+      accounts=''${WOW_DESK_REFRESH_ACCOUNTS:-${lib.escapeShellArg accounts}}
       spool="$state/mail-spool"
       mkdir -p "$state"
       hashes="$state/source-hashes"
@@ -304,8 +327,8 @@ let
       # GearQuestForever.lua (the gear targets the refresh exports).
       svs() {
         shopt -s nullglob
-        local f=("${accounts}"/*/SavedVariables/ForeverPlanLog.lua
-          "${accounts}"/*/*/*/SavedVariables/GearQuestForever.lua)
+        local f=("$accounts"/*/SavedVariables/ForeverPlanLog.lua
+          "$accounts"/*/*/*/SavedVariables/GearQuestForever.lua)
         shopt -u nullglob
         [ "''${#f[@]}" = 0 ] || printf '%s\n' "''${f[@]}"
       }
@@ -502,6 +525,36 @@ let
         if [ "$fast" = 1 ] && snapshot_new; then fast_path; fi
       }
 
+      # The quick table (see "The quick table" above): the SavedVariables'
+      # hash lines, against the last finished run's and the ones the quick
+      # table last ran on (<state dir>/quick-sv). Never stops the full run.
+      sv_lines() { grep -v -e ' TSM region data$' -e ' Battle.net snapshot$' || true; }
+      quick_path() {
+        printf '%s\n' "$1" >"$state/quick-sv"
+        if ! grep -qF ${lib.escapeShellArg quickMarker} "$wt/forever/t52p/desk_refresh.py" 2>/dev/null; then
+          echo "quick table: wow-plan main has no quick table yet; the full run uploads it"
+          return 0
+        fi
+        rm -f "$state/quick/steps.txt"
+        echo "quick table: a game save; desk_refresh.py quick"
+        (cd "$wt" && python3 -I forever/t52p/desk_refresh.py quick) || echo "quick table failed; the full run uploads it"
+        if [ -s "$state/quick/steps.txt" ]; then
+          echo "quick table: a new table; a short session uploads it"
+          run_session "$(cat "$state/quick/steps.txt")" desk-refresh-quick 300 ||
+            echo "quick table: the session failed; the full run uploads the table"
+          rm -f "$state/quick/steps.txt"
+        fi
+      }
+      maybe_quick() {
+        local now
+        [ "$quick" = 1 ] || return 0
+        now=$(current_hashes | sv_lines)
+        [ -n "$now" ] || return 0
+        [ "$now" != "$(sv_lines <"$hashes" 2>/dev/null)" ] || return 0
+        [ "$now" != "$(cat "$state/quick-sv" 2>/dev/null || true)" ] || return 0
+        quick_path "$now"
+      }
+
       if unchanged "$(current_hashes)"; then
         echo "no source changed since the last refresh"
         exit 0
@@ -517,6 +570,7 @@ let
           echo "no source changed since the last refresh"
           exit 0
         fi
+        maybe_quick
         echo "pass $pass: newest source $(date -d "@$(newest)" '+%F %T')"
         run_session
         printf '%s\n' "$mark" >"$hashes.tmp"
@@ -601,15 +655,15 @@ in
     };
     Service = {
       Type = "oneshot";
-      ExecStart = "${refresh}/bin/wow-desk-refresh${lib.optionalString (!fastPath) " --no-fast"}";
+      ExecStart = "${refresh}/bin/wow-desk-refresh${lib.optionalString (!fastPath) " --no-fast"}${lib.optionalString (!quickPath) " --no-quick"}";
       Environment = [ "PATH=${path}" ];
       StateDirectory = "wow-desk-refresh";
       NoNewPrivileges = true;
       # At worst three passes of two fast paths (each a short analysis, the
       # 2.5-minute wait for the spool and a 10-minute session), a 15-minute
-      # settle and a 30-minute session, then one more fast path: about 240
-      # minutes.
-      TimeoutStartSec = "250min";
+      # settle, a quick table (a short analysis and a 5-minute session) and a
+      # 30-minute session, then one more fast path: about 260 minutes.
+      TimeoutStartSec = "270min";
     };
   };
 
